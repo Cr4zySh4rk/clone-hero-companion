@@ -30,8 +30,8 @@ def _ydl_opts(**extra) -> dict:
         p = shutil.which(rt)
         if p:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
-    opts = {"quiet": True, "no_warnings": True, "noplaylist": True,
-            "socket_timeout": 15, "retries": 2, "noprogress": True}
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 15,
+            "retries": 5, "fragment_retries": 5, "noprogress": True}
     if runtimes:
         opts["js_runtimes"] = runtimes
     opts.update(extra)
@@ -151,6 +151,19 @@ class YouTube:
         with self._lock:
             self._cache[video_id] = (expire, res)
         return res
+
+    def download_audio(self, video_id: str, dest_noext: str) -> str:
+        from yt_dlp import YoutubeDL
+        last = None
+        for fmt in ("bestaudio[ext=m4a]/bestaudio", "bestaudio[acodec=opus]/bestaudio", "worstaudio"):
+            try:
+                opts = _ydl_opts(format=fmt, outtmpl=dest_noext + ".%(ext)s", overwrites=True)
+                with YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+                    return ydl.prepare_filename(info)
+            except Exception as e:  # sporadic 403s: try another format
+                last = e
+        raise last  # type: ignore[misc]
 
     def download(self, video_id: str, dest_noext: str, progress=None) -> str:
         """Download the video-only stream to dest_noext.<ext>; returns the final path."""

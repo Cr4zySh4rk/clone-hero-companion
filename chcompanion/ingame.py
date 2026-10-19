@@ -126,7 +126,8 @@ def lyrics_for_game(song: Song) -> list[dict]:
 
 # --------------------------------------------------------------- video download
 def _ffmpeg() -> str | None:
-    return shutil.which("ffmpeg")
+    from .align import ffmpeg_path
+    return ffmpeg_path()
 
 
 def _to_vp8(src: Path, dst: Path) -> None:
@@ -156,6 +157,20 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         if progress and total:
             progress(f"downloading video {done * 100 // total}%")
     path = Path(yt.download(vid, str(tmpdir / "video"), progress=prog))
+    if not per_manual_offset(store, song):
+        try:
+            if progress:
+                progress("lining the video up with the song")
+            off, conf = auto_offset(song, yt, vid, tmpdir)
+            if conf >= ALIGN_MIN_Z:
+                store.update_song(song.key, video_offset=round(off, 3), video_offset_auto=True)
+                log.info("Video for %s lined up: start %+0.2fs into the video (confidence %.0f)",
+                         song.display, off, conf)
+            else:
+                log.info("Video for %s: no reliable audio match (confidence %.1f); starting at 0",
+                         song.display, conf)
+        except Exception as e:
+            log.warning("Could not line up the video for %s: %s", song.display, e)
     target = os.environ.get("CHC_TARGET_OS", sys.platform)
     if target.startswith("linux") or (path.suffix.lower() == ".webm" and "vp8" not in _codec(path)):
         if progress:
@@ -166,6 +181,31 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         out = out.rename(tmpdir / "video.webm")
         return out
     return path
+
+
+ALIGN_MIN_Z = 6.0
+
+
+def per_manual_offset(store: Store, song: Song) -> bool:
+    per = store.song(song.key)
+    return "video_offset" in per and not per.get("video_offset_auto")
+
+
+def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path) -> tuple[float, float]:
+    from . import align
+    names = align.chart_audio_files(song.list_files())
+    if not names:
+        return 0.0, 0.0
+    paths = []
+    for n in names:
+        if song.is_sng:
+            p = tmpdir / ("stem_" + n)
+            p.write_bytes(song.read_file(n) or b"")
+            paths.append(p)
+        else:
+            paths.append(song.path / n)
+    audio = Path(yt.download_audio(vid, str(tmpdir / "yt_audio")))
+    return align.find_offset(paths, audio)
 
 
 def _codec(p: Path) -> str:
@@ -215,6 +255,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         vpath = None
         if want_video:
             vpath = download_video(song, yt, store, progress)
+            per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
         off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
         try:
@@ -228,6 +269,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         changes = {}
         if result["video"]:
             changes["game_video"] = result["video"]
+            changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
         if result["lyrics"] == "added":
             changes["game_lyrics"] = True
         if changes:

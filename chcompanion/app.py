@@ -179,8 +179,10 @@ class Companion:
         per = self.store.song(song.key)
         try:
             if local and choose_index is None and not per.get("prefer_youtube"):
+                # song.ini's video_start_time already contains the offset we wrote; the page adds
+                # the stored per-song offset, so only add the part not yet written to the ini.
                 video = {"kind": "local", "src": f"/media/local?t={token}", "name": local.name,
-                         "startOffset": song.video_start_s}
+                         "startOffset": song.video_start_s - float(per.get("video_offset_written", 0.0) or 0.0)}
             elif self.use_youtube:
                 cands = per.get("candidates")
                 vid = per.get("video_id")
