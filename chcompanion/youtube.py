@@ -80,9 +80,9 @@ def score_candidate(entry: dict, song: Song) -> float:
         score -= 2
     if chan.endswith(" topic") or "provided to youtube" in title:
         score -= 7  # auto-generated "Topic" uploads are a static album-art image
+    dur, length = entry.get("duration"), song.length_s
     if dur and dur < 60:
         score -= 6  # shorts / clips
-    dur, length = entry.get("duration"), song.length_s
     if dur and length:
         score -= min(4.0, abs(dur - length) / 25.0)
         if dur > length * 1.6 + 60:
