@@ -40,14 +40,14 @@ def chart_audio_files(names: list[str]) -> list[str]:
     return out
 
 
-def decode(paths: list[Path], seconds: float = 240.0):
+def decode(paths: list[Path], seconds: float = 240.0, start: float = 0.0):
     import numpy as np
     ff = ffmpeg_path()
     if not ff:
         raise RuntimeError("ffmpeg not available")
     cmd = [ff, "-hide_banner", "-loglevel", "error"]
     for p in paths:
-        cmd += ["-t", str(seconds), "-i", str(p)]
+        cmd += ["-ss", str(start), "-t", str(seconds), "-i", str(p)]
     if len(paths) > 1:
         cmd += ["-filter_complex", f"amix=inputs={len(paths)}:normalize=0:duration=longest"]
     cmd += ["-ac", "1", "-ar", str(SR), "-f", "f32le", "-"]
@@ -71,28 +71,40 @@ def onset_curve(x):
     return d / s if s > 0 else d
 
 
-def find_offset(song_audio: list[Path], video_audio: Path, max_lag: float = 90.0) -> tuple[float, float]:
-    """Returns (offset_seconds, confidence). offset > 0: skip that much video."""
+def _xcorr(a, b, max_lag_s: float, min_lag_s: float):
+    """Best lag k (in hops) maximising sum a[t]*b[t+k], k in [min, max]; returns (k, z)."""
     import numpy as np
-    a = onset_curve(decode(song_audio))
-    b = onset_curve(decode([video_audio], seconds=240.0 + max_lag))
     n = 1
     while n < len(a) + len(b):
         n *= 2
-    fa, fb = np.fft.rfft(a, n), np.fft.rfft(b, n)
-    corr = np.fft.irfft(np.conj(fa) * fb, n)   # corr[k] = sum a[t] * b[t+k]
-    max_k = int(max_lag * SR / HOP)
-    lags = np.concatenate([np.arange(0, max_k + 1), np.arange(-max_k, 0)])
-    vals = np.concatenate([corr[: max_k + 1], corr[n - max_k:]])
+    corr = np.fft.irfft(np.conj(np.fft.rfft(a, n)) * np.fft.rfft(b, n), n)
+    lo, hi = int(min_lag_s * SR / HOP), int(max_lag_s * SR / HOP)
+    ks = np.arange(lo, hi + 1)
+    vals = corr[ks % n]
     i = int(np.argmax(vals))
-    best = vals[i]
-    overlap = min(len(a), len(b))
-    peak = best / max(overlap, 1)
-    # confidence: how far the peak stands above the rest of the lag range
     mask = np.ones_like(vals, dtype=bool)
     mask[max(0, i - 50): i + 50] = False
     rest = vals[mask]
-    z = (best - rest.mean()) / (rest.std() + 1e-9) if rest.size else 0.0
-    offset = lags[i] * HOP / SR
-    log.debug("alignment: offset %.2fs peak %.3f z %.1f", offset, peak, z)
-    return float(offset), float(z)
+    z = (vals[i] - rest.mean()) / (rest.std() + 1e-9) if rest.size else 0.0
+    return int(ks[i]), float(z)
+
+
+def find_offset(song_audio: list[Path], video_audio: Path, max_lag: float = 90.0) -> tuple[float, float]:
+    """Returns (offset_seconds, confidence). offset > 0: skip that much video.
+    The song is matched in two separate windows; confidence is 0 unless both agree."""
+    vid = onset_curve(decode([video_audio], seconds=420.0))
+    results = []
+    for start, dur in ((5.0, 70.0), (75.0, 70.0)):
+        seg = onset_curve(decode(song_audio, seconds=dur, start=start))
+        if len(seg) < 1000 or not seg.any():
+            continue
+        # seg[t] (song time start+t) matches vid[t + k]  =>  offset = k*hop - start
+        k, z = _xcorr(seg, vid, max_lag_s=start + max_lag, min_lag_s=max(0.0, start - max_lag))
+        results.append((k * HOP / SR - start, z))
+    if not results:
+        return 0.0, 0.0
+    if len(results) == 2 and abs(results[0][0] - results[1][0]) > 0.15:
+        log.debug("alignment windows disagree: %s", results)
+        return results[0][0] if results[0][1] > results[1][1] else results[1][0], 0.0
+    off = sum(r[0] for r in results) / len(results)
+    return float(off), float(min(r[1] for r in results))
