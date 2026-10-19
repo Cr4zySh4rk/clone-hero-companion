@@ -27,7 +27,7 @@ from .midi import TempoMap, build_track, chunk_track_name, encode_varlen, parse_
 from .paths import config_dir
 from .sng import open_sng, write_sng
 from .store import Store
-from .youtube import YouTube
+from .youtube import MIN_SCORE, YouTube
 
 log = logging.getLogger(__name__)
 BACKUP = ".chc-backup"
@@ -145,8 +145,9 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
     vid = info.get("video_id")
     if not vid:
         cands = yt.search(song)
-        if not cands:
-            raise InGameError("no video found on YouTube")
+        if not cands or cands[0]["score"] < MIN_SCORE:
+            store.update_song(song.key, candidates=cands[:8], video_failed=True)
+            raise InGameError("no matching music video found on YouTube")
         vid = cands[0]["id"]
         store.update_song(song.key, video_id=vid, candidates=cands[:8])
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))

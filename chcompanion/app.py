@@ -189,7 +189,7 @@ class Companion:
                         cands = self.yt.search(song)
                     if choose_index is not None and cands:
                         vid = cands[choose_index % len(cands)]["id"]
-                    elif not vid and cands:
+                    elif not vid and cands and cands[0]["score"] >= youtube.MIN_SCORE:
                         vid = cands[0]["id"]
                     self.store.update_song(song.key, candidates=cands[:8], video_id=vid)
                 if vid:

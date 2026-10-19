@@ -13,6 +13,7 @@ from .lyrics import clean_title
 
 log = logging.getLogger(__name__)
 
+MIN_SCORE = 4.0
 BAD_WORDS = ["lyric", "lyrics", "cover", "reaction", "karaoke", "tutorial", "lesson",
              "guitar", "drum", "drums", "bass", "instrumental", "remix", "slowed", "reverb",
              "8d", "sped up", "nightcore", "clone hero", "rock band", "guitar hero", "fortnite",
@@ -76,7 +77,11 @@ def score_candidate(entry: dict, song: Song) -> float:
         if f" {w} " in f" {title} " and w not in full_name:
             score -= 4
     if " live" in f" {title}" and "live" not in full_name:
-        score -= 3
+        score -= 2
+    if chan.endswith(" topic") or "provided to youtube" in title:
+        score -= 7  # auto-generated "Topic" uploads are a static album-art image
+    if dur and dur < 60:
+        score -= 6  # shorts / clips
     dur, length = entry.get("duration"), song.length_s
     if dur and length:
         score -= min(4.0, abs(dur - length) / 25.0)
@@ -105,6 +110,11 @@ class YouTube:
                         "score": round(score_candidate(e, song), 2)})
         out.sort(key=lambda c: -c["score"])
         return out
+
+    def best(self, song: Song) -> dict | None:
+        """Best candidate, or None if nothing looks like this song's video."""
+        c = self.search(song)
+        return c[0] if c and c[0]["score"] >= MIN_SCORE else None
 
     def format_selector(self, for_game: bool = False) -> str:
         h = self.max_height
