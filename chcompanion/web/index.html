@@ -175,6 +175,7 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     <button data-act="toggle" title="Hide or show the video (V)">Video on/off</button>
     <button data-act="full" title="Fullscreen (F)">Fullscreen</button>
     <button data-act="help" title="Shortcuts (?)">?</button>
+    <button data-act="quit" title="Stop the companion app">Quit</button>
   </div>
 </nav>
 <div id="toast" role="status"></div>
@@ -468,6 +469,10 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     },
     full: () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); },
     help: () => $("help").classList.toggle("on"),
+    quit: async () => {
+      if (!confirm("Stop Clone Hero Companion? Start it again from its app file.")) return;
+      await post("/api/quit"); setStatus("offline", "Companion stopped"); es.close();
+    },
     hide: () => { hideUI = !hideUI; document.body.classList.toggle("idle-ui", hideUI); },
   };
   $("controls").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) actions[b.dataset.act](e.shiftKey); });

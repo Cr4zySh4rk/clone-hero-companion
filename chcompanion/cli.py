@@ -159,9 +159,29 @@ def cmd_install(args) -> int:
     return 0 if not failed else 1
 
 
+def _running_instance(port: int) -> str | None:
+    import json
+    import urllib.request
+    url = f"http://127.0.0.1:{port}/"
+    try:
+        with urllib.request.urlopen(url + "api/state", timeout=1.5) as r:
+            if "clock" in json.loads(r.read().decode("utf-8")):
+                return url
+    except Exception:
+        pass
+    return None
+
+
 def cmd_run(args) -> int:
     data_dir, lib = _load(args)
     print(BANNER.format(v=__version__))
+    # Already running? Just show the existing page.
+    existing = _running_instance(args.port)
+    if existing:
+        logging.info("Clone Hero Companion is already running at %s", existing)
+        if not args.no_browser:
+            webbrowser.open(existing)
+        return 0
     logging.info("Clone Hero data folder: %s", data_dir)
     lib.scan()
     store = Store(config_dir() / "config.json")
@@ -190,7 +210,7 @@ def cmd_run(args) -> int:
             except Exception:
                 pass
     threading.Thread(target=rescan, daemon=True).start()
-    stop = threading.Event()
+    stop = comp.quit_requested
     try:
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
     except Exception:

@@ -49,6 +49,7 @@ class Companion:
         self.prepare_token = 0
         self.install_status: dict[str, str] = {}
         self.clock = ClockState()
+        self.quit_requested = threading.Event()
         self.watcher = LogWatcher(data_dir, self._on_clock,
                                   start_lead=lambda: float(self.store.get("start_lead", 2.0)),
                                   learn_lead=self._learn_lead)
@@ -414,6 +415,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/install":
             return self._json({"status": c.install_current()})
+        if p == "/api/quit":
+            self._json({"ok": True})
+            c.quit_requested.set()
+            return
         if p == "/api/simulate":
             c.simulate(str(b.get("song", "")))
             return self._json({"ok": True})
