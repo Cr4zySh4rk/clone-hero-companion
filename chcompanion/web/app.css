@@ -208,3 +208,19 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 .card .pv { top: 36px; bottom: auto; background: rgba(20,12,40,.85); font-size: 12px; padding: 4px 9px; }
 .results { grid-auto-rows: max-content; }
 .card .art, .card .body { flex: none; }
+
+/* ---------- setup (game & folders) ---------- */
+.dot.warn.on { background: var(--amber, #f5b942); box-shadow: 0 0 8px var(--amber, #f5b942); }
+.setup h2 { margin: 0; }
+.setup .pickrow { display: flex; gap: 8px; }
+.setup .pickrow input { flex: 1; min-width: 0; }
+.setup .chips.found { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.setup .chips.found button { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setup .status { font-size: 13px; min-height: 1em; }
+.setup .status.ok { color: var(--green); }
+.setup .status.bad { color: #ff6b6b; }
+.setup .dirlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.setup .dirlist li { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,.04); }
+.setup .dirlist .p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.setup-actions { display: flex; gap: 14px; align-items: center; }
+.favbtn.fav-on { color: var(--spot); border-color: var(--spot); }

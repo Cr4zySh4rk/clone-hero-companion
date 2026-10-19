@@ -54,14 +54,167 @@ def candidate_data_dirs() -> list[Path]:
     return c
 
 
+def looks_like_data_dir(p: Path) -> bool:
+    try:
+        return (p / "settings.ini").is_file() or (p / "Logs").is_dir()
+    except OSError:
+        return False
+
+
 def find_data_dir(explicit: str | None = None) -> Path | None:
     if explicit:
         p = Path(explicit).expanduser()
         return p if p.exists() else None
     for p in candidate_data_dirs():
-        if (p / "settings.ini").exists() or (p / "Logs").is_dir():
+        if looks_like_data_dir(p):
             return p
+    for g in find_games():               # portable installs keep their data next to the game
+        d = game_dir(g)
+        if looks_like_data_dir(d):
+            return d
     return None
+
+
+# ---------------------------------------------------------------- game location
+def _game_names() -> tuple[str, ...]:
+    if sys.platform == "darwin":
+        return ("Clone Hero.app", "CloneHero.app", "clonehero.app")
+    if sys.platform == "win32":
+        return ("Clone Hero.exe", "CloneHero.exe", "clonehero.exe")
+    return ("clonehero", "Clone Hero", "clonehero.x86_64", "Clone Hero.x86_64", "CloneHero.AppImage",
+            "clonehero.AppImage", "Clone Hero.AppImage")
+
+
+def is_game(p: Path) -> bool:
+    try:
+        if sys.platform == "darwin":
+            return p.suffix.lower() == ".app" and p.is_dir() and "clone" in p.name.lower()
+        squashed = p.name.lower().replace(" ", "").replace("_", "").replace("-", "")
+        return p.is_file() and (p.name.lower() in {n.lower() for n in _game_names()}
+                                or (squashed.startswith("clonehero")
+                                    and not squashed.endswith((".ini", ".log", ".txt", ".json", ".dll", ".so"))))
+    except OSError:
+        return False
+
+
+def game_dir(game: Path) -> Path:
+    """Folder that holds the game (for an .app bundle, the folder the bundle is in)."""
+    return game.parent
+
+
+def _search_roots() -> list[Path]:
+    home = Path.home()
+    roots = [home, home / "Desktop", home / "Downloads", home / "Documents", home / "Games", home / "Applications"]
+    if sys.platform == "darwin":
+        roots += [Path("/Applications")]
+    elif sys.platform == "win32":
+        for k in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "ProgramW6432"):
+            v = os.environ.get(k)
+            if v:
+                roots += [Path(v), Path(v) / "Programs"]
+        docs = _windows_documents()
+        if docs:
+            roots.append(docs)
+        for drive in "CDEFG":
+            for sub in ("Games", "Program Files", "Clone Hero"):
+                roots.append(Path(f"{drive}:/") / sub)
+    else:
+        roots += [home / ".local" / "share", home / "bin", Path("/opt"), Path("/usr/local/games"), Path("/usr/games")]
+    return roots
+
+
+def find_games(configured: str | None = None, limit: int = 8) -> list[Path]:
+    """Clone Hero installs: the configured one first, then a shallow search of the usual places."""
+    out: list[Path] = []
+    seen: set[str] = set()
+
+    def add(p: Path):
+        k = str(p)
+        if k not in seen and is_game(p):
+            seen.add(k)
+            out.append(p)
+
+    if configured:
+        add(Path(configured).expanduser())
+    names = _game_names()
+    for root in _search_roots():
+        if len(out) >= limit:
+            break
+        try:
+            if not root.is_dir():
+                continue
+        except OSError:
+            continue
+        # depth 0-2 below each root, only looking into folders that mention clone hero (cheap)
+        for n in names:
+            add(root / n)
+        try:
+            kids = [c for c in root.iterdir() if c.is_dir() and not c.name.startswith(".")]
+        except OSError:
+            continue
+        for c in kids:
+            low = c.name.lower().replace(" ", "")
+            if "clone" not in low and "hero" not in low:
+                continue
+            add(c)                                     # e.g. /Applications/Clone Hero.app
+            for n in names:
+                add(c / n)
+            try:
+                for g in c.iterdir():
+                    if g.is_dir():
+                        add(g)
+                        for n in names:
+                            add(g / n)
+            except OSError:
+                pass
+    return out[:limit]
+
+
+def detect(configured_game: str | None = None) -> dict:
+    """Everything we can find automatically, for the setup screen."""
+    games = find_games(configured_game)
+    datas: list[Path] = []
+    for p in candidate_data_dirs() + [game_dir(g) for g in games]:
+        if p not in datas and looks_like_data_dir(p):
+            datas.append(p)
+    songs: list[Path] = []
+    for d in datas:
+        for s in song_dirs(d):
+            if s not in songs:
+                songs.append(s)
+    for g in games:
+        s = game_dir(g) / "Songs"
+        if s.is_dir() and s not in songs:
+            songs.append(s)
+    return {"games": [str(g) for g in games], "dataDirs": [str(d) for d in datas],
+            "songDirs": [str(s) for s in songs], "platform": sys.platform,
+            "defaultDataDir": str(candidate_data_dirs()[0] if candidate_data_dirs() else Path.home() / "Clone Hero")}
+
+
+def describe_dir(p: str | Path, kind: str) -> dict:
+    """Quick validation info for a chosen folder."""
+    p = Path(p).expanduser()
+    d = {"path": str(p), "exists": p.exists()}
+    if kind == "data":
+        d.update(settingsIni=(p / "settings.ini").is_file(), logs=(p / "Logs").is_dir(),
+                 ok=looks_like_data_dir(p))
+    elif kind == "songs":
+        n = 0
+        if p.is_dir():
+            try:
+                for _root, _dirs, files in os.walk(p):
+                    low = [f.lower() for f in files]
+                    if "song.ini" in low:
+                        n += 1
+                    n += sum(1 for f in low if f.endswith(".sng"))
+                    if n >= 5000:
+                        break
+            except OSError:
+                pass
+        d.update(songs=n, ok=p.is_dir())
+    elif kind == "game":
+        d.update(ok=is_game(p))
+    return d
 
 
 def read_settings(data_dir: Path) -> configparser.ConfigParser:
@@ -73,7 +226,20 @@ def read_settings(data_dir: Path) -> configparser.ConfigParser:
     return cp
 
 
-def song_dirs(data_dir: Path, extra: list[str] | None = None) -> list[Path]:
+def song_dirs(data_dir: Path, extra: list[str] | None = None, only: list[str] | None = None) -> list[Path]:
+    """Song folders: the ones chosen in setup (`only`), else Clone Hero's own list + <data>/Songs."""
+    if only:
+        out = []
+        for e in only:
+            p = Path(e).expanduser()
+            if p.is_dir() and p not in out:
+                out.append(p)
+        for e in extra or []:
+            p = Path(e).expanduser()
+            if p.is_dir() and p not in out:
+                out.append(p)
+        if out:
+            return out
     dirs: list[Path] = []
     cp = read_settings(data_dir)
     for sect in ("directories", "custom_content_directories"):

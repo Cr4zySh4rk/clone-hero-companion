@@ -98,22 +98,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _load(args) -> tuple:
     explicit = args.data_dir
+    try:
+        saved = Store(config_dir() / "config.json").get("settings", {}) or {}
+    except Exception:
+        saved = {}
     if not explicit:
-        try:
-            explicit = (Store(config_dir() / "config.json").get("settings", {}) or {}).get("data_dir") or None
-        except Exception:
-            explicit = None
+        explicit = saved.get("data_dir") or None
     data_dir = find_data_dir(explicit)
+    if data_dir is None and explicit and not args.data_dir:
+        data_dir = find_data_dir(None)       # saved folder vanished: fall back to auto-detect
     if data_dir is None and getattr(args, "window", False):
         from .paths import candidate_data_dirs
-        data_dir = candidate_data_dirs()[0]
-        (data_dir / "Songs").mkdir(parents=True, exist_ok=True)
-        logging.warning("Clone Hero data folder not found; using %s (change it in Settings)", data_dir)
+        data_dir = candidate_data_dirs()[0]     # placeholder until the setup screen picks one
+        logging.warning("Clone Hero data folder not found; the app will ask for it (Setup)")
     if data_dir is None:
         print("Could not find your Clone Hero data folder.\n"
               "Start Clone Hero once, or pass it with --data-dir \"/path/to/Clone Hero\".")
         sys.exit(2)
-    roots = song_dirs(data_dir, args.songs_dir)
+    roots = song_dirs(data_dir, args.songs_dir, only=saved.get("song_dirs") or None)
     lib = Library(roots)
     return data_dir, lib
 

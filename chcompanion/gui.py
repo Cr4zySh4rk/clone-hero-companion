@@ -75,6 +75,34 @@ def open_extra_window(url: str, title: str = "Now Playing", fullscreen: bool = F
     return "browser"
 
 
+def pick_path(kind: str = "folder", start: str = "") -> str | None:
+    """Native folder/file picker (kind: 'folder' or 'game'). None when no native window exists."""
+    wv = _extra["webview"]
+    if wv is None or not wv.windows:
+        return None
+    win = wv.windows[0]
+    try:
+        FD = getattr(wv, "FileDialog", None)
+        folder_t = FD.FOLDER if FD else wv.FOLDER_DIALOG
+        open_t = FD.OPEN if FD else wv.OPEN_DIALOG
+        if kind == "game" and sys.platform == "darwin":
+            # an .app bundle is a folder; the open dialog lets you pick it
+            res = win.create_file_dialog(open_t, directory=start or "/Applications", allow_multiple=False,
+                                         file_types=("Applications (*.app)", "All files (*.*)"))
+        elif kind == "game":
+            ft = ("Clone Hero (*.exe)", "All files (*.*)") if sys.platform == "win32" else ("All files (*.*)",)
+            res = win.create_file_dialog(open_t, directory=start or str(Path.home()), allow_multiple=False,
+                                         file_types=ft)
+        else:
+            res = win.create_file_dialog(folder_t, directory=start or str(Path.home()))
+    except Exception as e:
+        log.warning("file dialog failed: %s", e)
+        return ""
+    if not res:
+        return ""
+    return str(res[0] if isinstance(res, (list, tuple)) else res)
+
+
 def run_window(url: str, quit_event: threading.Event, profile: Path) -> None:
     _extra["profile"] = str(profile)
     """Blocks until the window is closed or quit_event is set."""

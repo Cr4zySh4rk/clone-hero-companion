@@ -37,7 +37,13 @@ function ask({ title, text = "", input = null, select = null, ok = "OK", danger 
 
 /* ================================================================ navigation */
 let currentView = "library";
+function setFilter(f) {
+  st.filter = f;
+  $$("#libFilters button").forEach((b) => b.classList.toggle("on", b.dataset.f === f));
+  applyFilters();
+}
 function show(view) {
+  if (view === "favs") { show("library"); setFilter("fav"); $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === "favs")); return; }
   currentView = view;
   $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   $$(".view").forEach((v) => v.classList.toggle("on", v.id === "view-" + view));
@@ -47,10 +53,15 @@ function show(view) {
   if (view === "setlists") loadSetlists();
   if (view === "dupes") loadDupes();
   if (view === "settings") loadSettings();
+  if (view === "setup") loadSetup();
   if (view === "jobs") renderJobs();
   if (view === "charts" && !charts.loaded) searchCharts(1);
 }
-$("#nav").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.view); });
+$("#nav").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.view === "library" && st.filter === "fav") setFilter("all");
+  show(b.dataset.view);
+});
 $("#launchGame").onclick = async () => { try { await api("/api/game/launch", {}); toast("Starting Clone Hero…"); } catch (e) { toast(e.message, 4000); } };
 
 /* ================================================================ library */
@@ -68,6 +79,7 @@ async function loadLibrary() {
   const gsel = $("#libGroup"), cur = gsel.value;
   gsel.innerHTML = `<option value="">All folders</option>` + groups.map((g) => `<option${g === cur ? " selected" : ""}>${esc(g)}</option>`).join("");
   $("#navLibCount").textContent = d.songs.filter((s) => !s.disabled).length || "";
+  updateFavCount();
   $("#sideStatus").textContent = d.enriching ? `Checking songs… ${d.enrich[0]}/${d.enrich[1]}` : "";
   applyFilters();
   if (activeId && lib.byId.has(activeId) && currentView === "library") refreshDetail();
@@ -126,7 +138,8 @@ function applyFilters() {
   $$("#libHead .sortable").forEach((h) => { h.classList.toggle("asc", h.dataset.k === k && d > 0); h.classList.toggle("desc", h.dataset.k === k && d < 0); });
   const empty = $("#libEmpty");
   empty.hidden = rows.length > 0;
-  empty.textContent = lib.songs.length ? "No songs match this view." : "No songs found yet. Check the Clone Hero folder in Settings.";
+  empty.textContent = st.filter === "fav" && !lib.songs.some((s) => s.fav) ? "No favourites yet. Click the ☆ on any song, select songs and choose “Add to favourites”, or press F."
+    : lib.songs.length ? "No songs match this view." : "No songs found yet. Check the Clone Hero folder in Settings.";
   renderTable(true);
   updateSelbar();
 }
@@ -189,8 +202,7 @@ spacer.addEventListener("click", async (e) => {
   const id = el.dataset.id, i = el._i;
   if (e.target.closest(".fav")) {
     const s = lib.byId.get(id);
-    await api("/api/songs/action", { ids: [id], action: "favorite", value: !s.fav });
-    s.fav = !s.fav; renderTable(true); return;
+    await setFav([id], !s.fav); return;
   }
   if (e.target.matches("input[type=checkbox]") || e.metaKey || e.ctrlKey) {
     st.sel.has(id) ? st.sel.delete(id) : st.sel.add(id); st.anchor = i;
@@ -227,6 +239,8 @@ function updateSelbar() {
   const anyDisabled = [...st.sel].some((id) => lib.byId.get(id)?.disabled);
   $("#disableBtn").textContent = anyDisabled ? "Enable" : "Disable";
   $("#disableBtn").dataset.act = anyDisabled ? "enable" : "disable";
+  const allFav = n > 0 && [...st.sel].every((id) => lib.byId.get(id)?.fav);
+  $("#favBtn").textContent = allFav ? "☆ Remove from favourites" : "★ Add to favourites";
 }
 
 /* run batch */
@@ -251,7 +265,7 @@ $("#selbar").addEventListener("click", async (e) => {
   const ids = [...st.sel], act = b.dataset.act;
   try {
     if (act === "clear") { st.sel.clear(); renderTable(false); updateSelbar(); return; }
-    if (act === "favorite") { await api("/api/songs/action", { ids, action: "favorite", value: true }); ids.forEach((i) => lib.byId.get(i) && (lib.byId.get(i).fav = true)); renderTable(true); return toast("Added to favourites"); }
+    if (act === "favorite") return setFav(ids, !ids.every((i) => lib.byId.get(i)?.fav));
     if (act === "setlist") return addToSetlist(ids);
     if (act === "pack") {
       const r = await ask({ title: "Export chart pack", text: `${ids.length} songs into one .zip (saved in the “Chart Packs” folder).`, input: "My Chart Pack", ok: "Export" });
@@ -276,6 +290,27 @@ $("#selbar").addEventListener("click", async (e) => {
     }
   } catch (err) { toast(err.message, 4500); }
 });
+
+/* ================================================================ favourites */
+function updateFavCount() {
+  const n = lib.songs.filter((s) => s.fav).length;
+  $("#navFavCount").textContent = n || "";
+}
+async function setFav(ids, value) {
+  ids = ids.filter((i) => lib.byId.has(i));
+  if (!ids.length) return;
+  await api("/api/songs/action", { ids, action: "favorite", value });
+  const keys = new Set(ids.map((i) => lib.byId.get(i).key));   // duplicate charts of a song share the star
+  lib.songs.forEach((x) => { if (keys.has(x.key)) x.fav = value; });
+  updateFavCount(); renderTable(true); updateSelbar();
+  if (detail && ids.includes(detail.id)) { detail.fav = value; paintDetailFav(); }
+  toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " songs to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " songs from"} favourites`);
+}
+function paintDetailFav() {
+  const b = $("#dFav"); if (!b || !detail) return;
+  const on = lib.byId.get(detail.id)?.fav;
+  b.textContent = on ? "★ Favourite" : "☆ Add to favourites"; b.classList.toggle("fav-on", !!on);
+}
 
 /* ================================================================ detail */
 async function openDetail(id) {
@@ -305,6 +340,7 @@ async function refreshDetail() {
         <span>Length</span><span>${fmtLen(d.length) || "—"}</span><span>Folder</span><span title="${esc(d.path)}">${esc(d.rel)}</span></div>
       <div class="status-line" id="dStatus">${esc(d.status || "")}</div>
       <div class="d-row">
+        <button id="dFav" class="favbtn"></button>
         <button class="primary" id="dRun">Get video, lyrics &amp; metadata</button>
         <button id="dMeta">Metadata only</button>
         <button id="dPlay">Play song</button>
@@ -339,6 +375,8 @@ async function refreshDetail() {
 function updateDetailStatus() { const s = $("#dStatus"); if (s && detail) s.textContent = detail.status || ""; }
 function bindDetail(d) {
   $("#dRun").onclick = () => startRunOne(d.id, "full");
+  paintDetailFav();
+  $("#dFav").onclick = () => setFav([d.id], !lib.byId.get(d.id)?.fav);
   $("#dMeta").onclick = () => startRunOne(d.id, "metadata");
   $("#dPlay").onclick = () => playSong(d.id);
   $("#dReveal").onclick = () => api("/api/songs/action", { ids: [d.id], action: "reveal" });
@@ -628,19 +666,20 @@ async function loadSettings() {
       ${chk("in_game", "Add videos and lyrics", "Put videos and lyrics into your songs so Clone Hero shows them")}
       ${chk("prefetch", "Prepare while browsing", "Start on a song as soon as it's highlighted in Clone Hero's song list")}
       ${chk("game_lyrics", "Lyrics", "Write lyrics into charts that have none (gives that chart a fresh high-score list)")}
-      <div class="row2"><span>Clone Hero app</span><input type="text" data-k="game_path" value="${esc(s.game_path)}" placeholder="${esc(d.game || "Not found — paste its location")}"></div>
     </section>
     <section><h3>Processing</h3>
       <div class="row2"><span>Workers</span><select data-k="workers">${[0, 1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}"${Number(s.workers) === n ? " selected" : ""}>${n ? n : "Automatic"}</option>`).join("")}</select>
         <small>Songs processed at the same time. YouTube requests are paced across all workers.</small></div>
       ${chk("metadata_overwrite", "Metadata", "Overwrite album, year and genre that are already filled in")}
+      ${chk("fav_setlist", "Favourites in the game", "Keep a “Favourites” setlist in Clone Hero with your favourite songs (Clone Hero loads setlists at start-up)")}
       ${chk("auto_process_downloads", "New charts", "Add video, lyrics and metadata to charts right after downloading")}
       <div class="row2"><span>Download into</span><input type="text" data-k="download_subdir" value="${esc(s.download_subdir)}" placeholder="Songs folder (or a sub-folder name, e.g. Downloads)"></div>
     </section>
     <section><h3>Folders</h3>
-      <div class="row2"><span>Clone Hero data folder</span><input type="text" data-k="data_dir" value="${esc(s.data_dir || "")}" placeholder="${esc(d.dataDir)}"><small>Restart the app after changing it.</small></div>
-      <div class="row2"><span>Song folders</span><span>${d.songDirs.map(esc).join("<br>")}</span></div>
-      <div class="row2"><span></span><span><button id="setOpen">Open data folder</button> <button id="setRescan">Rescan library</button></span></div>
+      <div class="row2"><span>Clone Hero</span><span>${esc(d.game || "Not found")}</span></div>
+      <div class="row2"><span>Data folder</span><span>${esc(d.dataDir)}</span></div>
+      <div class="row2"><span>Song folders</span><span>${d.songDirs.map(esc).join("<br>") || "None"}</span></div>
+      <div class="row2"><span></span><span><button id="setChange" class="primary">Change game &amp; folders…</button> <button id="setOpen">Open data folder</button> <button id="setRescan">Rescan library</button></span></div>
     </section>
     <section><h3>About</h3>
       <div class="row2"><span>Version</span><span>${esc(d.version)} · yt-dlp ${esc(d.ytdlp)} (updates itself) · ffmpeg ${d.ffmpeg ? "included" : "missing"}</span></div>
@@ -650,9 +689,103 @@ async function loadSettings() {
     if (["pref_p", "workers"].includes(k)) v = Number(v);
     try { await api("/api/settings", { settings: { [k]: v } }); toast("Saved"); } catch (e) { toast(e.message); }
   }));
+  $("#setChange").onclick = () => show("setup");
   $("#setOpen").onclick = () => api("/api/open", {});
   $("#setRescan").onclick = async () => { await api("/api/library/rescan", {}); toast("Rescanning…"); };
 }
+
+/* ================================================================ setup (game & folders) */
+const setup = { songs: [], detected: null };
+const PLAT_HINT = {
+  darwin: { game: "Usually /Applications/Clone Hero.app, but it can be anywhere.",
+            data: "Usually the “Clone Hero” folder in your home folder (~/Clone Hero) or in Documents." },
+  win32: { game: "The folder you unzipped Clone Hero into, e.g. C:\\Games\\Clone Hero\\Clone Hero.exe.",
+           data: "Usually Documents\\Clone Hero (it can be inside OneDrive\\Documents)." },
+  linux: { game: "The clonehero program in the folder you extracted Clone Hero into.",
+           data: "Usually ~/.clonehero (or the folder next to the game for portable installs)." },
+};
+async function checkPath(kind, path, statusSel) {
+  const el = $(statusSel);
+  if (!path) { el.textContent = ""; el.className = "status"; return null; }
+  const d = await api("/api/setup/check", { kind, path });
+  let msg;
+  if (kind === "game") msg = d.ok ? "✓ Clone Hero found" : "✗ This is not the Clone Hero game";
+  else if (kind === "data") msg = d.ok ? `✓ ${d.settingsIni ? "settings.ini" : ""}${d.settingsIni && d.logs ? " and " : ""}${d.logs ? "Logs" : ""} found`
+    : d.exists ? "✗ No settings.ini or Logs here. Start Clone Hero once, or pick the folder it writes to." : "✗ Folder not found";
+  el.textContent = msg; el.className = "status " + (d.ok ? "ok" : "bad");
+  return d;
+}
+function renderSongDirs() {
+  $("#suSongs").innerHTML = setup.songs.length ? setup.songs.map((s, i) => `<li data-i="${i}"><span class="p">${esc(s.path)}</span>
+    <span class="status ${s.ok ? (s.songs ? "ok" : "") : "bad"}">${s.ok ? `${s.songs}${s.songs >= 5000 ? "+" : ""} songs` : "not found"}</span>
+    <button class="ghost" data-rm="${i}" title="Remove">×</button></li>`).join("") : `<li class="hint">No song folders yet.</li>`;
+  const det = (setup.detected?.songDirs || []).filter((p) => !setup.songs.some((s) => s.path === p));
+  $("#suSongsFound").innerHTML = det.length ? `<span class="hint">Found:</span>` + det.map((p) => `<button data-addsong="${esc(p)}">+ ${esc(p)}</button>`).join("") : "";
+}
+async function addSongDir(p) {
+  p = (p || "").trim();
+  if (!p || setup.songs.some((s) => s.path === p)) return;
+  const d = await api("/api/setup/check", { kind: "songs", path: p });
+  setup.songs.push(d); renderSongDirs();
+}
+function foundChips(sel, list, target) {
+  $(sel).innerHTML = list.length > 0 ? `<span class="hint">Found:</span>` + list.map((p) => `<button data-use="${esc(p)}" data-target="${target}">${esc(p)}</button>`).join("") : `<span class="hint">Nothing found automatically. Use Browse.</span>`;
+}
+async function loadSetup() {
+  const d = await api("/api/setup");
+  setup.detected = d.detected;
+  const h = PLAT_HINT[d.detected.platform] || PLAT_HINT.linux;
+  $("#suGameHint").textContent = h.game; $("#suDataHint").textContent = h.data;
+  $("#suGame").value = d.current.game || ""; $("#suData").value = d.current.dataDir || "";
+  foundChips("#suGameFound", d.detected.games, "suGame");
+  foundChips("#suDataFound", d.detected.dataDirs, "suData");
+  setup.songs = d.check.songs;
+  renderSongDirs();
+  checkPath("game", $("#suGame").value, "#suGameStatus");
+  checkPath("data", $("#suData").value, "#suDataStatus");
+  $("#navSetup").classList.toggle("on", !d.setupDone || !d.dataOk);
+  return d;
+}
+$("#setupForm").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.browse) {
+    const input = $("#" + b.dataset.target);
+    const r = await api("/api/browse", { kind: b.dataset.browse, start: input.value });
+    if (r.path === null) { toast("Paste the path into the box (no file picker in this window)", 4000); input.focus(); return; }
+    if (!r.path) return;
+    input.value = r.path; input.dispatchEvent(new Event("change"));
+    if (b.dataset.target === "suSongAdd") { await addSongDir(r.path); input.value = ""; }
+  } else if (b.dataset.use) {
+    const input = $("#" + b.dataset.target); input.value = b.dataset.use; input.dispatchEvent(new Event("change"));
+  } else if (b.dataset.addsong) {
+    await addSongDir(b.dataset.addsong);
+  } else if (b.dataset.rm !== undefined) {
+    setup.songs.splice(Number(b.dataset.rm), 1); renderSongDirs();
+  } else if (b.id === "suSongAddBtn") {
+    await addSongDir($("#suSongAdd").value); $("#suSongAdd").value = "";
+  } else if (b.id === "suSave") {
+    const st2 = $("#suSaveStatus"); st2.textContent = "Saving…"; st2.className = "status";
+    try {
+      const r = await api("/api/setup", { game: $("#suGame").value, dataDir: $("#suData").value,
+                                          songDirs: setup.songs.filter((s) => s.ok).map((s) => s.path), createData: true });
+      st2.textContent = `✓ Saved. Reading ${r.songDirs.length} song folder${r.songDirs.length === 1 ? "" : "s"}…`; st2.className = "status ok";
+      $("#navSetup").classList.remove("on");
+      lib.version = -1; setTimeout(() => { loadLibrary(); show("library"); }, 1500);
+    } catch (err) { st2.textContent = "✗ " + err.message; st2.className = "status bad"; }
+  }
+});
+$("#suGame").addEventListener("change", async () => {
+  const d = await checkPath("game", $("#suGame").value.trim(), "#suGameStatus");
+  if (d && d.ok) {   // a portable install: its data and Songs live next to it
+    if (d.dataDir && !$("#suData").value) { $("#suData").value = d.dataDir; checkPath("data", d.dataDir, "#suDataStatus"); }
+    if (d.songsDir) addSongDir(d.songsDir);
+  }
+});
+$("#suData").addEventListener("change", async () => {
+  const d = await checkPath("data", $("#suData").value.trim(), "#suDataStatus");
+  if (d && d.songDirs) for (const p of d.songDirs) await addSongDir(p);
+});
+$("#suSongAdd").addEventListener("keydown", async (e) => { if (e.key === "Enter") { await addSongDir(e.target.value); e.target.value = ""; } });
 
 /* ================================================================ keyboard */
 document.addEventListener("keydown", (e) => {
@@ -660,8 +793,18 @@ document.addEventListener("keydown", (e) => {
   if (currentView !== "library") return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); rows.forEach((s) => st.sel.add(s.id)); renderTable(false); updateSelbar(); }
   if (e.key === "Escape") { st.sel.clear(); renderTable(false); updateSelbar(); }
+  if (e.key.toLowerCase() === "f" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    const ids = st.sel.size ? [...st.sel] : activeId ? [activeId] : [];
+    if (ids.length) { e.preventDefault(); setFav(ids, !ids.every((i) => lib.byId.get(i)?.fav)); }
+  }
   if (e.key === "/") { e.preventDefault(); $("#libSearch").focus(); }
 });
 
 loadLibrary().then(() => { pollLibrary(); pollJobs(); });
+// First run (or the data folder vanished): open the setup screen.
+api("/api/setup").then((d) => {
+  const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found
+  $("#navSetup").classList.toggle("on", !d.setupDone || !d.dataOk);
+  if (need) show("setup");
+}).catch(() => {});
 })();

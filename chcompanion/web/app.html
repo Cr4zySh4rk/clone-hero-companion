@@ -18,12 +18,14 @@
     </div>
     <nav id="nav">
       <button data-view="library" class="on">Library <span class="badge" id="navLibCount"></span></button>
+      <button data-view="favs">★ Favourites <span class="badge" id="navFavCount"></span></button>
       <button data-view="charts">Get charts</button>
       <button data-view="spotify">Spotify import</button>
       <button data-view="setlists">Setlists</button>
       <button data-view="dupes">Duplicates</button>
       <button data-view="jobs">Jobs <span class="badge hot" id="navJobs"></span></button>
       <button data-view="now">Now playing <span class="dot" id="navNow"></span></button>
+      <button data-view="setup">Game &amp; folders <span class="dot warn" id="navSetup"></span></button>
       <button data-view="settings">Settings</button>
     </nav>
     <button id="launchGame" class="launch">Launch Clone Hero</button>
@@ -56,7 +58,7 @@
           <label><input type="checkbox" id="optForce"> Replace videos the songs already have</label>
         </div>
         <span class="sep"></span>
-        <button data-act="favorite">Favourite</button>
+        <button data-act="favorite" id="favBtn">★ Add to favourites</button>
         <button data-act="setlist">Add to setlist…</button>
         <button data-act="pack">Export pack</button>
         <button data-act="rename">Rename folders</button>
@@ -159,6 +161,36 @@
         <button id="nowFull" class="primary">Separate window, fullscreen</button>
       </header>
       <iframe id="nowFrame" title="Now playing" src="about:blank"></iframe>
+    </section>
+
+    <!-- ============ SETUP ============ -->
+    <section class="view" id="view-setup">
+      <div class="settings setup" id="setupForm">
+        <h2>Where is Clone Hero?</h2>
+        <p class="hint">The app needs three locations. Anything found automatically is filled in; check it, or use Browse to pick a different place. This works wherever Clone Hero and your songs are kept, on any drive.</p>
+        <section>
+          <h3>1 · The game</h3>
+          <p class="hint" id="suGameHint"></p>
+          <div class="pickrow"><input type="text" id="suGame" placeholder="Location of Clone Hero"><button data-browse="game" data-target="suGame">Browse…</button></div>
+          <div class="chips found" id="suGameFound"></div>
+          <div class="status" id="suGameStatus"></div>
+        </section>
+        <section>
+          <h3>2 · Clone Hero's data folder</h3>
+          <p class="hint" id="suDataHint"></p>
+          <div class="pickrow"><input type="text" id="suData" placeholder="Folder with settings.ini and Logs"><button data-browse="folder" data-target="suData">Browse…</button></div>
+          <div class="chips found" id="suDataFound"></div>
+          <div class="status" id="suDataStatus"></div>
+        </section>
+        <section>
+          <h3>3 · Song folders</h3>
+          <p class="hint">Every folder Clone Hero scans for songs. Add the same folders you set in Clone Hero under Settings → General → Song folders.</p>
+          <ul class="dirlist" id="suSongs"></ul>
+          <div class="pickrow"><input type="text" id="suSongAdd" placeholder="Add a song folder (paste a path or Browse)"><button data-browse="folder" data-target="suSongAdd">Browse…</button><button id="suSongAddBtn">Add</button></div>
+          <div class="chips found" id="suSongsFound"></div>
+        </section>
+        <div class="setup-actions"><button class="primary" id="suSave">Use these locations</button><span class="status" id="suSaveStatus"></span></div>
+      </div>
     </section>
 
     <!-- ============ SETTINGS ============ -->

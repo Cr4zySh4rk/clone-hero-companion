@@ -57,6 +57,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         n = 0
         if act == "favorite":
             lm.set_flag(ids, fav=bool(body.get("value", True)) or None)
+        elif act == "fav_sync":
+            n = lm.sync_fav_setlist()
         elif act == "rate":
             lm.set_flag(ids, rating=int(body.get("value", 0)) or None)
         elif act == "disable":
@@ -279,6 +281,57 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
         return _json(h, {"settings": c.update_settings(s)}) or True
+    if path == "/api/setup" and method == "GET":
+        from . import paths as P
+        s = c.settings()
+        det = P.detect(s.get("game_path") or None)
+        game = find_game(c.data_dir, s.get("game_path"))
+        cur = {"game": str(game) if game else "", "dataDir": str(c.data_dir),
+               "songDirs": [str(r) for r in c.library.roots]}
+        return _json(h, {"detected": det, "current": cur, "setupDone": bool(s.get("setup_done")),
+                         "dataOk": P.looks_like_data_dir(c.data_dir),
+                         "check": {"game": P.describe_dir(cur["game"], "game") if cur["game"] else None,
+                                   "data": P.describe_dir(c.data_dir, "data"),
+                                   "songs": [P.describe_dir(r, "songs") for r in cur["songDirs"]]}}) or True
+    if path == "/api/setup/check" and method == "POST":
+        from . import paths as P
+        kind = body.get("kind", "songs")
+        p = (body.get("path") or "").strip()
+        if not p:
+            return _json(h, {"ok": False}) or True
+        d = P.describe_dir(p, kind)
+        if kind == "data" and d.get("ok"):
+            d["songDirs"] = [str(x) for x in P.song_dirs(Path(p).expanduser())]
+        if kind == "game" and d.get("ok"):
+            gd = P.game_dir(Path(p).expanduser())
+            d["dataDir"] = str(gd) if P.looks_like_data_dir(gd) else None
+            d["songsDir"] = str(gd / "Songs") if (gd / "Songs").is_dir() else None
+        return _json(h, d) or True
+    if path == "/api/setup" and method == "POST":
+        from . import paths as P
+        data = Path((body.get("dataDir") or "").strip() or str(c.data_dir)).expanduser()
+        songs = [str(Path(x.strip()).expanduser()) for x in (body.get("songDirs") or []) if x and x.strip()]
+        game = (body.get("game") or "").strip()
+        problems = []
+        if game and not P.is_game(Path(game).expanduser()):
+            problems.append(f"Clone Hero was not found at {game}")
+        if body.get("createData") and not data.exists():
+            data.mkdir(parents=True, exist_ok=True)
+        if not data.is_dir():
+            problems.append(f"The data folder {data} does not exist")
+        missing = [x for x in songs if not Path(x).is_dir()]
+        if missing:
+            problems.append("Song folder not found: " + ", ".join(missing))
+        if problems:
+            return _json(h, {"error": "; ".join(problems)}, 400) or True
+        c.update_settings({"data_dir": str(data), "song_dirs": songs, "game_path": game, "setup_done": True})
+        roots = P.song_dirs(data, only=songs or None)
+        c.reconfigure(data, roots)
+        return _json(h, {"ok": True, "dataDir": str(data), "songDirs": [str(r) for r in roots]}) or True
+    if path == "/api/browse" and method == "POST":
+        from .gui import pick_path
+        res = pick_path(body.get("kind", "folder"), body.get("start") or "")
+        return _json(h, {"path": res, "native": res is not None or None}) or True
     if path == "/api/window" and method == "POST":
         from .gui import open_extra_window
         port = h.server.server_address[1]

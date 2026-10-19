@@ -219,10 +219,45 @@ class LibraryManager:
         tmp.replace(self.cache_path)
 
     # ------------------------------------------------------------ actions
+    FAV_SETLIST = "Favourites"
+
     def set_flag(self, ids: list[str], **values):
         for s in self.songs(ids):
             self.store.update_song(s.key, **values)
         self.version += 1
+        if "fav" in values and self.fav_setlist_enabled():
+            threading.Thread(target=self.sync_fav_setlist, daemon=True, name="fav-setlist").start()
+
+    def fav_setlist_enabled(self) -> bool:
+        s = self.store.get("settings", {}) or {}
+        return s.get("fav_setlist", True) is not False
+
+    def fav_ids(self) -> list[str]:
+        with self.lock:
+            if not self.by_id:
+                self._reindex()
+            items = list(self.by_id.items())
+        return [sid for sid, s in items if self.store.song(s.key).get("fav")]
+
+    def sync_fav_setlist(self) -> int:
+        """Keep a 'Favourites' setlist in Clone Hero matching the favourites here (newest last)."""
+        try:
+            with self.lock:
+                self._hash_index()
+                hashes = []
+                for sid in self.fav_ids():
+                    s = self.by_id.get(sid)
+                    h = s and self.cache.get(str(s.path), {}).get("md5")
+                    if h and h not in hashes:
+                        hashes.append(h)
+            p = setlists.setlists_dir(self.data_dir) / (self.FAV_SETLIST + ".setlist")
+            if not hashes and not p.exists():
+                return 0
+            setlists.save(self.data_dir, self.FAV_SETLIST, [(h, 100) for h in hashes])
+            return len(hashes)
+        except Exception as e:
+            log.warning("Could not update the Favourites setlist: %s", e)
+            return 0
 
     def disable(self, ids: list[str], enable: bool = False) -> int:
         n = 0
@@ -383,9 +418,11 @@ def reveal(path: Path):
 
 
 def find_game(data_dir: Path, configured: str | None = None) -> Path | None:
+    from .paths import find_games
+    found = find_games(configured, limit=1)
+    if found:
+        return found[0]
     cands = []
-    if configured:
-        cands.append(Path(configured))
     home = Path.home()
     if sys.platform == "darwin":
         cands += [data_dir / "Clone Hero.app", Path("/Applications/Clone Hero.app"), home / "Applications/Clone Hero.app"]

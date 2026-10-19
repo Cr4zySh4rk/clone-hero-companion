@@ -281,7 +281,25 @@ class Companion:
     # ------------------------------------------------------------ settings / jobs
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
-                "replace_low_res": True, "game_path": "", "data_dir": ""}
+                "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
+                "setup_done": False, "fav_setlist": True}
+
+    def reconfigure(self, data_dir: Path, roots: list[Path]) -> None:
+        """Switch Clone Hero data folder / song folders without restarting."""
+        self.data_dir = data_dir
+        self.library.roots = list(roots)
+        lm = self.libmgr
+        lm.data_dir = data_dir
+        lm.disabled_dir = data_dir / "Disabled Songs"
+        self.watcher.logs_dir = data_dir / "Logs"
+        self.watcher.current_file = None
+        log.info("Using Clone Hero data folder %s, song folders: %s", data_dir,
+                 ", ".join(map(str, roots)) or "(none)")
+
+        def work():
+            lm.rescan()
+            self.build_preview_index()
+        threading.Thread(target=work, daemon=True, name="rescan").start()
 
     def settings(self) -> dict:
         s = dict(self.DEFAULTS)
