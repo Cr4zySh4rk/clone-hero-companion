@@ -355,12 +355,28 @@ class YouTube:
                     tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                     progress(d.get("downloaded_bytes", 0), tot)
             hooks.append(hook)
-        opts = _ydl_opts(format=fmt["format_id"], outtmpl=dest_noext + ".%(ext)s",
+        # Download with a fresh extraction (re-using cached format URLs gets HTTP 403).
+        # Fallbacks stay within the HD rule; the result is checked again below.
+        selector = (f"{fmt['format_id']}/bestvideo[vcodec^=avc1][width>=1138][height<=1100]"
+                    f"/bestvideo[width>=1138][height<=1100]/bestvideo[height>={MIN_P}][height<=1100]")
+        opts = _ydl_opts(format=selector, outtmpl=dest_noext + ".%(ext)s",
                          progress_hooks=hooks, overwrites=True, continuedl=False,
                          concurrent_fragment_downloads=4)
         with download_slot(), YoutubeDL(opts) as ydl:
-            done = ydl.process_ie_result(dict(info), download=True)
+            done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
             path = ydl.prepare_filename(done)
+        got = (done.get("requested_formats") or [done])[0]
+        got_res = res_class(got.get("width"), got.get("height"))
+        if got_res and got_res < MIN_P:
+            import os
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise NoHDVideo(f"only {got_res}p was delivered")
+        if got.get("format_id") != fmt.get("format_id"):
+            fmt = dict(got)
+            fmt["res_class"] = got_res or fmt.get("res_class")
         return path, fmt
 
     def download_audio(self, video_id: str, dest_noext: str) -> str:

@@ -235,6 +235,13 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
             log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
             reasons.append("below 640p")
             continue
+        except Exception as e:
+            if type(e).__name__ == "BotDetected":
+                shutil.rmtree(tmpdir, ignore_errors=True)
+                raise
+            log.info("Skipping %s for %s: download failed (%s)", cand, song.display, str(e)[:120])
+            reasons.append("download failed")
+            continue
         p = Path(p)
         if not chosen and looks_static(p):
             log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
@@ -245,7 +252,8 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         break
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        store.update_song(song.key, video_failed=True)
+        if any(r != "download failed" for r in reasons):
+            store.update_song(song.key, video_failed=True)
         why = ", ".join(sorted(set(reasons))) or "no usable video"
         raise InGameError(f"no HD music video found ({why})")
     store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None)
