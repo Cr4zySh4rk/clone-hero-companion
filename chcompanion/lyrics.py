@@ -141,16 +141,20 @@ def from_midi(data: bytes, delay_s: float = 0.0) -> list[dict]:
 _CHART_LINE = re.compile(r'^\s*(\d+)\s*=\s*(\w+)\s+(.*)$')
 
 
-def from_chart(text: str, delay_s: float = 0.0) -> list[dict]:
+def parse_chart_sections(text: str) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {}
     cur = None
     for line in text.splitlines():
-        line = line.strip().lstrip("﻿")
+        line = line.strip().lstrip("\ufeff")
         if line.startswith("[") and line.endswith("]"):
             cur = line[1:-1]
             sections[cur] = []
         elif cur and line not in ("{", "}"):
             sections[cur].append(line)
+    return sections
+
+
+def chart_timing(sections: dict[str, list[str]]) -> tuple[int, float, TempoMap]:
     res, offset = 192, 0.0
     for l in sections.get("Song", []):
         k, _, v = l.partition("=")
@@ -169,7 +173,12 @@ def from_chart(text: str, delay_s: float = 0.0) -> list[dict]:
             bpm = int(m.group(3).split()[0]) / 1000.0
             if bpm > 0:
                 tempos.append((int(m.group(1)), int(60e6 / bpm)))
-    tm = TempoMap(res, tempos)
+    return res, offset, TempoMap(res, tempos)
+
+
+def from_chart(text: str, delay_s: float = 0.0) -> list[dict]:
+    sections = parse_chart_sections(text)
+    _res, offset, tm = chart_timing(sections)
     events, phrases, pstart = [], [], None
     for l in sections.get("Events", []):
         m = _CHART_LINE.match(l)

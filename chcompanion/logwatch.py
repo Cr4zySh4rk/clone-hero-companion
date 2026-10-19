@@ -61,6 +61,7 @@ class LogWatcher(threading.Thread):
         super().__init__(daemon=True, name="logwatch")
         self.logs_dir = data_dir / "Logs"
         self.on_change = on_change
+        self.on_preview: Callable[[float], None] | None = None
         self.start_lead = start_lead
         self.learn_lead = learn_lead
         self.poll = poll
@@ -111,8 +112,15 @@ class LogWatcher(threading.Thread):
                 s.pause_x = None
                 self._emit("load")
                 return
-            if s.status == "idle":
-                return
+            if s.status in ("idle", "ended"):
+                m = RE_SEEK.search(line)
+                if m and self.on_preview:
+                    try:
+                        self.on_preview(float(m.group(1)))
+                    except Exception:
+                        log.exception("on_preview failed")
+                if s.status == "idle":
+                    return
             m = RE_SPEED.search(line)
             if m and "scores" in line and s.status in ("playing", "paused"):
                 sp = int(m.group(1)) / 100.0

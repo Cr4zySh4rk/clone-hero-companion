@@ -58,6 +58,20 @@ class TempoMap:
             last_tick, last_us = tick, us
             self.points.append((tick, secs, us))
 
+    def ticks(self, seconds: float) -> int:
+        """Inverse of seconds()."""
+        if seconds <= 0:
+            return 0
+        lo, hi = 0, len(self.points) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self.points[mid][1] <= seconds:
+                lo = mid
+            else:
+                hi = mid - 1
+        ptick, psec, us = self.points[lo]
+        return int(round(ptick + (seconds - psec) * 1e6 * self.res / us))
+
     def seconds(self, tick: int) -> float:
         # binary search for last point <= tick
         lo, hi = 0, len(self.points) - 1
@@ -69,6 +83,54 @@ class TempoMap:
                 hi = mid - 1
         ptick, psec, us = self.points[lo]
         return psec + (tick - ptick) * us / 1e6 / self.res
+
+
+def split_chunks(data: bytes) -> tuple[bytes, list[bytes]]:
+    """Return (header chunk, [raw track chunks incl. 'MTrk'+len])."""
+    hlen = struct.unpack(">I", data[4:8])[0]
+    header = data[:8 + hlen]
+    pos, chunks = 8 + hlen, []
+    while pos + 8 <= len(data):
+        clen = struct.unpack(">I", data[pos + 4:pos + 8])[0]
+        chunks.append(data[pos:pos + 8 + clen])
+        pos += 8 + clen
+    return header, chunks
+
+
+def chunk_track_name(chunk: bytes) -> str:
+    if chunk[:4] != b"MTrk":
+        return ""
+    t = _parse_track(chunk, 8, len(chunk), keep=None)
+    return t.name
+
+
+def encode_varlen(n: int) -> bytes:
+    out = [n & 0x7F]
+    n >>= 7
+    while n:
+        out.insert(0, (n & 0x7F) | 0x80)
+        n >>= 7
+    return bytes(out)
+
+
+def build_track(name: str, events: list[tuple[int, int, bytes]]) -> bytes:
+    """events: (tick, order, raw_event_without_delta). Returns an MTrk chunk."""
+    body = bytearray()
+    nm = name.encode("utf-8")
+    body += b"\x00\xff\x03" + encode_varlen(len(nm)) + nm
+    last = 0
+    for tick, _order, raw in sorted(events, key=lambda e: (e[0], e[1])):
+        body += encode_varlen(tick - last) + raw
+        last = tick
+    body += b"\x00\xff\x2f\x00"
+    return b"MTrk" + struct.pack(">I", len(body)) + bytes(body)
+
+
+def assemble(header: bytes, chunks: list[bytes]) -> bytes:
+    fmt, _n, div = struct.unpack(">HHH", header[8:14])
+    new_header = header[:8] + struct.pack(">HHH", 1 if fmt == 0 and len(chunks) > 1 else fmt,
+                                          len(chunks), div) + header[14:]
+    return new_header + b"".join(chunks)
 
 
 def _varlen(data: bytes, pos: int) -> tuple[int, int]:

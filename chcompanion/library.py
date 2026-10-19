@@ -130,14 +130,46 @@ class Song:
                 return p.read_bytes()
         return None
 
+    @property
+    def preview_ms(self) -> int | None:
+        try:
+            v = int(float(self.meta.get("preview_start_time", "-1") or -1))
+            return v if v >= 0 else None
+        except ValueError:
+            return None
+
     def local_video(self) -> Path | None:
         if self.is_sng:
-            return None
+            return self._sng_video()
         names = {p.name.lower(): p for p in self.path.iterdir() if p.is_file()}
         for n in VIDEO_NAMES:
             if n in names:
                 return names[n]
         return None
+
+    def _sng_video(self) -> Path | None:
+        """Extract a video packed in the .sng to a cache file (for the companion page)."""
+        try:
+            sng = open_sng(str(self.path))
+        except Exception:
+            return None
+        name = next((n for n in sng.files if n.lower() in VIDEO_NAMES), None)
+        if not name:
+            return None
+        import hashlib
+        from .paths import config_dir
+        st = self.path.stat()
+        h = hashlib.sha1(f"{self.path}|{st.st_size}|{st.st_mtime}".encode()).hexdigest()[:16]
+        out = config_dir() / "cache" / f"{h}{Path(name).suffix.lower()}"
+        if not out.exists():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            data = sng.read(name)
+            if not data:
+                return None
+            tmp = out.with_suffix(".tmp")
+            tmp.write_bytes(data)
+            tmp.replace(out)
+        return out
 
     def art_file(self) -> tuple[str, bytes] | None:
         files = {f.lower(): f for f in self.list_files()}

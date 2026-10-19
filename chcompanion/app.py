@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, net, youtube
-from .installer import InstallError, install_video
+from . import ingame
 from .library import Library, Song
 from .logwatch import ClockState, LogWatcher
 from .lyrics import fetch_lrclib
@@ -30,14 +30,19 @@ YT_ID = re.compile(r"(?:v=|youtu\.be/|/embed/|/shorts/|^)([A-Za-z0-9_-]{11})(?:[
 class Companion:
     def __init__(self, data_dir: Path, library: Library, store: Store, *,
                  use_youtube: bool = True, use_lrclib: bool = True,
-                 auto_install: bool = False, max_height: int = 1080):
+                 in_game: bool = True, prefetch: bool = True, max_height: int = 1080,
+                 game_max_height: int = 720, game_lyrics: bool = True):
         self.data_dir = data_dir
         self.library = library
         self.store = store
         self.use_youtube = use_youtube and youtube.available()
         self.use_lrclib = use_lrclib
-        self.auto_install = auto_install
+        self.in_game = in_game and self.use_youtube
+        self.prefetch = prefetch
+        self.game_lyrics = game_lyrics
         self.yt = youtube.YouTube(max_height=max_height)
+        self.game_yt = youtube.YouTube(max_height=game_max_height)
+        self.preparer = Preparer(self)
         self.clients: list[queue.Queue] = []
         self.clients_lock = threading.Lock()
         self.song: Song | None = None
@@ -53,6 +58,31 @@ class Companion:
         self.watcher = LogWatcher(data_dir, self._on_clock,
                                   start_lead=lambda: float(self.store.get("start_lead", 2.0)),
                                   learn_lead=self._learn_lead)
+        self.watcher.on_preview = self._on_preview
+        self.preview_index: dict[int, list[Song]] = {}
+        self.build_preview_index()
+
+    def build_preview_index(self):
+        idx: dict[int, list[Song]] = {}
+        for s in self.library.songs:
+            ms = s.preview_ms
+            if ms is not None:
+                idx.setdefault(ms, []).append(s)
+        self.preview_index = idx
+
+    def _on_preview(self, x: float):
+        """A song preview started in the menu: get its video/lyrics ready before it is picked."""
+        if not (self.in_game and self.prefetch):
+            return
+        ms = int(round(x * 1000))
+        cands = []
+        for k in (ms, ms - 1, ms + 1):
+            cands += self.preview_index.get(k, [])
+        if 0 < len(cands) <= 4:
+            for s in cands:
+                if self.preparer.needs(s):
+                    log.info("Highlighted in the menu: %s - preparing in-game video/lyrics", s.display)
+                    self.preparer.add(s, priority=0)
 
     # ------------------------------------------------------------ state
     def _learn_lead(self, v: float):
@@ -72,7 +102,9 @@ class Companion:
                         "video": float(per.get("video_offset", 0.0)),
                         "globalLyrics": float(self.store.get("lyrics_offset", 0.0))},
             "notice": self.notice,
-            "install": self.install_status.get(key) if key else None,
+            "install": self.preparer.status.get(key) if key else None,
+            "inGame": self.in_game,
+            "queue": self.preparer.pending(),
             "lyricsSource": self.lyrics.get("source"),
         }
         if full:
@@ -98,6 +130,8 @@ class Companion:
                 self.library.scan()
                 song = self.library.find(name)
             self.set_song(song, name)
+            if song is not None and self.in_game and self.preparer.needs(song):
+                self.preparer.add(song, priority=2)  # done after this play, ready for the next
         elif why in ("quit", "cancel", "game-restarted"):
             self.notice = None
             self.broadcast(full=False)
@@ -175,8 +209,6 @@ class Companion:
             return
         self.video = video
         self.broadcast()
-        if (self.auto_install and not song.is_sng and not local and video.get("kind") == "youtube"):
-            self.install_current(background=True)
 
     # ------------------------------------------------------------ actions
     def adjust_offset(self, kind: str, delta: float | None = None, value: float | None = None):
@@ -218,30 +250,23 @@ class Companion:
                          args=(self.song, self.prepare_token, None), daemon=True).start()
         return True
 
-    def install_current(self, background: bool = True) -> str:
+    def install_current(self) -> str:
+        """Re-do the in-game video/lyrics for the current song (e.g. after choosing a
+        different video or changing offsets). Applied once the song is not playing."""
         song = self.song
         if not song:
             return "no song"
-        if song.is_sng:
-            self.install_status[song.key] = "unsupported: .sng package"
-            self.broadcast(full=False)
-            return self.install_status[song.key]
+        self.preparer.add(song, priority=1, force=True)
+        return "queued"
 
-        def work():
-            def prog(msg):
-                self.install_status[song.key] = msg
-                self.broadcast(full=False)
-            try:
-                prog("starting")
-                p = install_video(song, self.yt, self.store, force=True, progress=prog)
-                prog(f"installed {p.name} - shows in-game next time you play this song")
-            except (InstallError, Exception) as e:
-                prog(f"failed: {e}")
-        if background:
-            threading.Thread(target=work, daemon=True).start()
-            return "started"
-        work()
-        return self.install_status.get(song.key, "")
+    def prepare_library(self) -> int:
+        n = 0
+        for s in self.library.songs:
+            if self.preparer.needs(s):
+                self.preparer.add(s, priority=5)
+                n += 1
+        log.info("Queued %d songs for in-game video/lyrics", n)
+        return n
 
     def simulate(self, name: str):
         """Pretend the game loaded a song (for testing without the game)."""
@@ -249,6 +274,9 @@ class Companion:
 
     def start(self):
         self.watcher.start()
+        self.preparer.start()
+        if self.in_game and self.store.get("prepare_library"):
+            self.prepare_library()
 
 
 # ======================================================================== HTTP
@@ -415,6 +443,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/install":
             return self._json({"status": c.install_current()})
+        if p == "/api/prepare-library":
+            c.store.set("prepare_library", True)
+            return self._json({"queued": c.prepare_library()})
         if p == "/api/quit":
             self._json({"ok": True})
             c.quit_requested.set()
@@ -476,3 +507,88 @@ def serve(companion: Companion, host: str, port: int) -> Server:
         except OSError as e:
             last_err = e
     raise last_err  # type: ignore[misc]
+
+
+class Preparer(threading.Thread):
+    """Background worker that puts videos/lyrics into song folders for Clone Hero."""
+
+    def __init__(self, comp: Companion):
+        super().__init__(daemon=True, name="preparer")
+        self.c = comp
+        self.items: dict[str, tuple[int, float, Song, bool]] = {}
+        self.cv = threading.Condition()
+        self.status: dict[str, str] = {}
+        self.failed: set[str] = set()
+
+    def needs(self, song: Song) -> bool:
+        if song.key in self.failed:
+            return False
+        per = self.c.store.song(song.key)
+        if per.get("game_skip"):
+            return False
+        if not ingame.has_video(song) and not per.get("video_failed"):
+            return True
+        if (self.c.game_lyrics and not per.get("game_lyrics") and not per.get("lyrics_none")
+                and not song.chart_lyrics()):
+            return True
+        return False
+
+    def add(self, song: Song, priority: int, force: bool = False):
+        with self.cv:
+            cur = self.items.get(song.key)
+            if cur is None or priority < cur[0] or force:
+                self.items[song.key] = (priority, time.time(), song, force or (cur[3] if cur else False))
+            self.cv.notify()
+
+    def pending(self) -> int:
+        with self.cv:
+            return len(self.items)
+
+    def _busy_with(self, song: Song) -> bool:
+        st = self.c.clock
+        return (self.c.song is not None and self.c.song.key == song.key
+                and st.status in ("playing", "paused"))
+
+    def _next(self):
+        with self.cv:
+            while True:
+                ready = [(p, -t, k) for k, (p, t, s, f) in self.items.items() if not self._busy_with(s)]
+                if ready:
+                    ready.sort()
+                    _p, _t, key = ready[0]
+                    return self.items.pop(key)
+                self.cv.wait(timeout=3)
+
+    def run(self):
+        while True:
+            prio, _t, song, force = self._next()
+            key = song.key
+
+            def prog(msg, key=key):
+                self.status[key] = msg
+                if self.c.song and self.c.song.key == key:
+                    self.c.broadcast(full=False)
+            try:
+                if force:
+                    ingame.restore(song, self.c.store)
+                prog("preparing")
+                r = ingame.prepare(song, self.c.game_yt, self.c.store, force_video=force,
+                                   lyrics=self.c.game_lyrics, progress=prog)
+                if r.get("lyrics") == "none found":
+                    self.c.store.update_song(key, lyrics_none=True)
+                parts = []
+                if r.get("video"):
+                    parts.append("video")
+                if r.get("lyrics") == "added":
+                    parts.append("lyrics")
+                msg = ("added " + " + ".join(parts) + " - shows in Clone Hero next time you play it") if parts \
+                    else "already set up"
+                log.info("In-game: %s: %s", song.display, msg)
+                prog(msg)
+            except Exception as e:
+                log.warning("In-game setup failed for %s: %s", song.display, e)
+                self.failed.add(key)
+                if "video" in str(e).lower() or "youtube" in str(e).lower():
+                    self.c.store.update_song(key, video_failed=True)
+                prog(f"failed: {e}")
+            time.sleep(0.5 if prio < 5 else 2)

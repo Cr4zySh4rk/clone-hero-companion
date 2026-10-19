@@ -72,6 +72,48 @@ class LyricsTests(unittest.TestCase):
         self.assertAlmostEqual(lines[0]["start"], 0.5)
 
 
+class InGameTests(unittest.TestCase):
+    def test_midi_injection_roundtrip(self):
+        from chcompanion import ingame, midi
+        res = 480
+        t0 = track([meta(0, 0x03, b"tempo"), meta(0, 0x51, (500000).to_bytes(3, "big"))])
+        t1 = track([meta(0, 0x03, b"PART GUITAR")])
+        orig = b"MThd" + struct.pack(">IHHH", 6, 1, 2, res) + t0 + t1
+        lines = lyrics.parse_lrc("[00:02.00] Hello there world\n[00:06.00] Second line")
+        out = ingame.midi_with_lyrics(orig, lines, delay_s=0.0, offset_s=0.0)
+        self.assertEqual(struct.unpack(">H", out[10:12])[0], 3)
+        back = lyrics.from_midi(out)
+        self.assertEqual([l["text"] for l in back], ["Hello there world", "Second line"])
+        self.assertAlmostEqual(back[0]["start"], 2.0, places=2)
+        with self.assertRaises(ingame.InGameError):
+            ingame.midi_with_lyrics(out, lines, 0.0, 0.0)
+        tm = midi.parse_midi(out).tempo_map()
+        self.assertEqual(tm.ticks(tm.seconds(1234)), 1234)
+
+    def test_chart_injection_roundtrip(self):
+        from chcompanion import ingame
+        chart = "[Song]\n{\n  Resolution = 192\n}\n[SyncTrack]\n{\n  0 = B 120000\n}\n[Events]\n{\n  768 = E \"section Intro\"\n}\n[ExpertSingle]\n{\n  0 = N 0 0\n}\n"
+        lines = lyrics.parse_lrc("[00:01.00] Hey you")
+        out = ingame.chart_with_lyrics(chart, lines, 0.0, 0.0)
+        back = lyrics.from_chart(out)
+        self.assertEqual(back[0]["text"], "Hey you")
+        self.assertAlmostEqual(back[0]["start"], 1.0, places=2)
+        self.assertIn('768 = E "section Intro"', out)
+        self.assertIn("[ExpertSingle]", out)
+
+    def test_sng_roundtrip(self):
+        import os
+        import tempfile
+        from chcompanion import sng
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "a.sng")
+        payload = os.urandom(5000)
+        sng.write_sng(p, {"name": "X"}, {"notes.mid": b"MThd123", "video.webm": payload})
+        s = sng.open_sng(p)
+        self.assertEqual(s.metadata["name"], "X")
+        self.assertEqual(s.read("video.webm"), payload)
+
+
 class ClockTests(unittest.TestCase):
     def setUp(self):
         self.events = []

@@ -11,7 +11,7 @@ import webbrowser
 
 from . import __version__, youtube
 from .app import Companion, serve
-from .installer import InstallError, install_video
+from . import ingame
 from .library import Library
 from .paths import config_dir, find_data_dir, read_settings, song_dirs
 from .store import Store
@@ -45,20 +45,36 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--host", default="127.0.0.1",
                      help="address to listen on (use 0.0.0.0 to open the page from a TV/phone on your network)")
     run.add_argument("--port", type=int, default=47823)
-    run.add_argument("--no-browser", action="store_true", help="don't open the page automatically")
+    run.add_argument("--no-browser", action="store_true", help="never open the page automatically")
     run.add_argument("--no-youtube", action="store_true", help="only use video files found in song folders")
     run.add_argument("--no-lrclib", action="store_true", help="only use lyrics contained in the charts")
-    run.add_argument("--auto-install", action="store_true",
-                     help="also save each played song's video into its folder so Clone Hero shows it in-game")
-    run.add_argument("--max-height", type=int, default=1080, help="max video height to stream (default 1080)")
+    run.add_argument("--no-in-game", action="store_true",
+                     help="don't put videos/lyrics into song folders (companion page only)")
+    run.add_argument("--no-prefetch", action="store_true",
+                     help="don't prepare songs while they are highlighted in the menu")
+    run.add_argument("--no-game-lyrics", action="store_true",
+                     help="don't write LRCLIB lyrics into charts that have none (keeps chart checksums/scores unchanged)")
+    run.add_argument("--prepare-library", action="store_true",
+                     help="prepare every song in the library in the background")
+    run.add_argument("--open-browser", action="store_true", help="open the companion page on start")
+    run.add_argument("--max-height", type=int, default=1080, help="max video height for the companion page")
+    run.add_argument("--game-max-height", type=int, default=720,
+                     help="max height of videos saved for Clone Hero (default 720)")
 
-    inst = sub.add_parser("install-videos", help="download music videos into song folders for in-game playback")
-    _common(inst)
-    inst.add_argument("filter", nargs="*", help="only songs whose 'Artist - Name' contains these words")
-    inst.add_argument("--force", action="store_true", help="replace existing video files")
-    inst.add_argument("--limit", type=int, default=0, help="stop after N downloads")
-    inst.add_argument("--max-height", type=int, default=720)
-    inst.add_argument("--dry-run", action="store_true", help="only show which video would be used")
+    prep = sub.add_parser("prepare", aliases=["install-videos"],
+                          help="put music videos and lyrics into song folders so Clone Hero shows them")
+    _common(prep)
+    prep.add_argument("filter", nargs="*", help="only songs whose 'Artist - Name' contains these words")
+    prep.add_argument("--no-video", action="store_true")
+    prep.add_argument("--no-lyrics", action="store_true")
+    prep.add_argument("--force", action="store_true", help="replace videos that are already there")
+    prep.add_argument("--limit", type=int, default=0, help="stop after N songs")
+    prep.add_argument("--max-height", type=int, default=720)
+    prep.add_argument("--dry-run", action="store_true", help="only show which video each song would get")
+
+    rest = sub.add_parser("restore", help="undo everything the companion changed in your songs")
+    _common(rest)
+    rest.add_argument("filter", nargs="*")
 
     doc = sub.add_parser("doctor", help="check the setup")
     _common(doc)
@@ -119,44 +135,64 @@ def cmd_lyrics(args) -> int:
     return 0
 
 
-def cmd_install(args) -> int:
+def _filtered(lib, words):
+    words = [w.lower() for w in words]
+    return [s for s in sorted(lib.songs, key=lambda s: s.display.lower())
+            if all(w in s.display.lower() for w in words)]
+
+
+def cmd_prepare(args) -> int:
     data_dir, lib = _load(args)
     lib.scan()
     store = Store(config_dir() / "config.json")
     yt = youtube.YouTube(max_height=args.max_height)
-    words = [w.lower() for w in args.filter]
-    todo = [s for s in sorted(lib.songs, key=lambda s: s.display.lower())
-            if all(w in s.display.lower() for w in words)]
     done = skipped = failed = 0
-    for s in todo:
-        if s.is_sng:
-            skipped += 1
-            continue
-        if s.local_video() and not args.force:
-            skipped += 1
-            continue
+    for s in _filtered(lib, args.filter):
         if args.limit and done >= args.limit:
             break
+        if args.dry_run:
+            c = yt.search(s)
+            print(f"{s.display}: {c[0]['title'] if c else 'nothing found'} "
+                  f"({'https://youtu.be/' + c[0]['id'] if c else ''})")
+            continue
+        need_v = not args.no_video and (args.force or not ingame.has_video(s))
+        per = store.song(s.key)
+        need_l = (not args.no_lyrics and not per.get("game_lyrics") and not per.get("lyrics_none")
+                  and not s.chart_lyrics())
+        if not need_v and not need_l:
+            skipped += 1
+            continue
+        print(f"{s.display} ...", end=" ", flush=True)
         try:
-            if args.dry_run:
-                c = yt.search(s)
-                print(f"{s.display}: {c[0]['title'] if c else 'nothing found'} "
-                      f"({'https://youtu.be/' + c[0]['id'] if c else ''})")
-                continue
-            print(f"{s.display} ...", end=" ", flush=True)
-            p = install_video(s, yt, store, force=args.force,
-                              progress=lambda m: print(f"\r{s.display} ... {m}   ", end="", flush=True)
-                              if isinstance(m, str) else None)
-            print(f"\r{s.display} ... saved {p.name}            ")
+            r = ingame.prepare(s, yt, store, video=need_v, lyrics=need_l, force_video=args.force,
+                               progress=lambda m, d=s.display: print(f"\r{d} ... {m}      ", end="", flush=True))
+            if r.get("lyrics") == "none found":
+                store.update_song(s.key, lyrics_none=True)
+            parts = [p for p in (r.get("video") and "video", r.get("lyrics") == "added" and "lyrics") if p]
+            print(f"\r{s.display} ... {'added ' + ' + '.join(parts) if parts else 'nothing new'}            ")
             done += 1
-        except (InstallError, Exception) as e:
-            print(f"\r{s.display} ... failed: {e}")
+        except Exception as e:
+            print(f"\r{s.display} ... failed: {e}            ")
             failed += 1
-    print(f"\nDone: {done} installed, {skipped} skipped (.sng or already have a video), {failed} failed.")
+    print(f"\nDone: {done} prepared, {skipped} already set up, {failed} failed.")
     cp = read_settings(data_dir)
     if cp.get("custom", "song_videos", fallback="1") == "0":
-        print("Note: turn on Settings > Custom Content > Song Videos in Clone Hero to see them.")
+        print("Note: turn on Settings > Custom Content > Song Videos in Clone Hero to see the videos.")
     return 0 if not failed else 1
+
+
+def cmd_restore(args) -> int:
+    _, lib = _load(args)
+    lib.scan()
+    store = Store(config_dir() / "config.json")
+    n = 0
+    for s in _filtered(lib, args.filter):
+        changed = ingame.restore(s, store)
+        if changed:
+            n += 1
+            print(f"{s.display}: restored {', '.join(changed)}")
+    print(f"Restored {n} songs.")
+    return 0
 
 
 def _running_instance(port: int) -> str | None:
@@ -186,8 +222,11 @@ def cmd_run(args) -> int:
     lib.scan()
     store = Store(config_dir() / "config.json")
     comp = Companion(data_dir, lib, store, use_youtube=not args.no_youtube,
-                     use_lrclib=not args.no_lrclib, auto_install=args.auto_install,
-                     max_height=args.max_height)
+                     use_lrclib=not args.no_lrclib, in_game=not args.no_in_game,
+                     prefetch=not args.no_prefetch, max_height=args.max_height,
+                     game_max_height=args.game_max_height, game_lyrics=not args.no_game_lyrics)
+    if args.prepare_library:
+        store.set("prepare_library", True)
     if not args.no_youtube and not youtube.available():
         logging.warning("yt-dlp not available - YouTube videos disabled")
     srv = serve(comp, args.host, args.port)
@@ -198,7 +237,14 @@ def cmd_run(args) -> int:
     if args.host not in ("127.0.0.1", "localhost"):
         logging.info("Listening on %s:%d for other devices on your network", args.host, port)
     logging.info("Waiting for Clone Hero... (Ctrl+C to quit)")
-    if not args.no_browser:
+    if comp.in_game:
+        logging.info("In-game mode: videos and lyrics are added to your songs so Clone Hero shows them.")
+        cp = read_settings(data_dir)
+        if cp.get("custom", "song_videos", fallback="1") == "0":
+            logging.warning("Clone Hero's Song Videos setting is OFF - turn it on in Settings > Custom Content.")
+    first_run = not store.get("opened_once")
+    if not args.no_browser and (args.open_browser or first_run):
+        store.set("opened_once", True)
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
     # periodic rescan so newly added songs are found
@@ -231,5 +277,5 @@ def main(argv=None) -> int:
         argv = ["run"] + argv
     args = ap.parse_args(argv)
     _setup_logging(getattr(args, "verbose", False))
-    return {"run": cmd_run, "install-videos": cmd_install, "doctor": cmd_doctor,
-            "lyrics": cmd_lyrics}[args.cmd](args)
+    return {"run": cmd_run, "prepare": cmd_prepare, "install-videos": cmd_prepare,
+            "restore": cmd_restore, "doctor": cmd_doctor, "lyrics": cmd_lyrics}[args.cmd](args)
