@@ -50,6 +50,10 @@ class LyricsTests(unittest.TestCase):
         self.assertAlmostEqual(s[1]["t"], 0.5, places=3)
         self.assertAlmostEqual(s[1]["e"], 0.75, places=3)
 
+    def test_slide_marker(self):
+        lines = lyrics._build_lines([(0.0, None, "Ooh"), (0.5, 1.2, "+"), (2.0, 2.5, "yeah")], [])
+        self.assertEqual(lines[0]["syls"][0]["e"], 1.2)
+
     def test_clean(self):
         self.assertEqual(lyrics._clean_syllable("Hel-"), ("Hel", True))
         self.assertEqual(lyrics._clean_syllable("know#"), ("know", False))

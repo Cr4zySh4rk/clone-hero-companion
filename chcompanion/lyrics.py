@@ -50,7 +50,7 @@ def _build_lines(events: list[tuple[float, float | None, str]],
         text, join = c
         if text == "+":
             if syls and e:
-                syls[-1]["e"] = max(syls[-1]["e"], e)
+                syls[-1]["e"] = max(syls[-1]["e"] or syls[-1]["t"], e)
             continue
         syls.append({"t": round(t, 3), "e": e, "x": text, "j": join})
     # fill missing / overlapping ends
