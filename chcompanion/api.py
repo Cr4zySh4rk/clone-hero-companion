@@ -182,6 +182,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         _stream_audio(h, lm, s, float(q.get("t", 0) or 0))
         return True
 
+    if path == "/media/chart-preview":
+        _chart_preview(h, q.get("url", ""), float(q.get("t", 0) or 0))
+        return True
+
     # ---------------------------------------------------------------- online sources
     if path == "/api/search":
         from .sources import encore, rhythmverse
@@ -302,6 +306,67 @@ def _ytdlp_version() -> str:
         return v
     except Exception:
         return "missing"
+
+
+_preview_lock = threading.Lock()
+
+
+def _chart_preview(h, url: str, start: float):
+    """Stream 30 s of a Chorus Encore chart's audio before it is downloaded."""
+    import hashlib
+    import tempfile
+    import urllib.request
+    from .align import chart_audio_files, ffmpeg_path
+    from .net import urlopen
+    from .paths import config_dir
+    from .sng import open_sng
+    if not url.startswith("https://files.enchor.us/") or not url.endswith(".sng"):
+        h._send(400, b"", "text/plain")
+        return
+    cache = config_dir() / "previews"
+    cache.mkdir(exist_ok=True)
+    f = cache / (hashlib.sha1(url.encode()).hexdigest()[:16] + ".sng")
+    with _preview_lock:
+        if not f.exists():
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CloneHeroCompanion"})
+            with urlopen(req, timeout=60) as r:
+                tmp = f.with_suffix(".part")
+                tmp.write_bytes(r.read())
+                tmp.replace(f)
+            olds = sorted(cache.glob("*.sng"), key=lambda p: p.stat().st_mtime)
+            for o in olds[:-20]:   # keep the cache small
+                o.unlink(missing_ok=True)
+    sng = open_sng(str(f))
+    names = chart_audio_files(list(sng.files))
+    ff = ffmpeg_path()
+    if not names or not ff:
+        h._send(404, b"", "text/plain")
+        return
+    tmpd = Path(tempfile.mkdtemp(prefix="chc-pv-", dir=config_dir()))
+    cmd = [ff, "-hide_banner", "-loglevel", "error"]
+    for n in names:
+        p = tmpd / n
+        p.write_bytes(sng.read(n) or b"")
+        cmd += ["-ss", f"{start:.1f}", "-t", "30", "-i", str(p)]
+    if len(names) > 1:
+        cmd += ["-filter_complex", f"amix=inputs={len(names)}:normalize=0,alimiter=limit=0.95"]
+    cmd += ["-ac", "2", "-c:a", "libmp3lame", "-b:a", "160k", "-f", "mp3", "-"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        h.send_response(200)
+        h.send_header("Content-Type", "audio/mpeg")
+        h.end_headers()
+        while True:
+            chunk = proc.stdout.read(32768)
+            if not chunk:
+                break
+            h.wfile.write(chunk)
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+        pass
+    finally:
+        proc.kill()
+        shutil.rmtree(tmpd, ignore_errors=True)
 
 
 def _stream_audio(h, lm, s, start: float):

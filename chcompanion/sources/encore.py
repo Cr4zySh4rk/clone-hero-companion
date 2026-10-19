@@ -61,6 +61,7 @@ def normalize(c: dict) -> dict:
         "length": (c.get("song_length") or 0) / 1000 or None, "difficulties": _diffs(c),
         "hasVideo": bool(c.get("hasVideoBackground")), "hasVocals": bool((c.get("notesData") or {}).get("hasVocals")),
         "pack": c.get("packName"), "modified": c.get("modifiedTime"),
+        "previewStart": (c.get("preview_start_time") or 0) / 1000 if (c.get("preview_start_time") or 0) > 0 else None,
         "artUrl": f"{FILES}/{art}.jpg" if art else None,
         "downloadUrl": f"{FILES}/{md5}.sng" if md5 else None,
         "pageUrl": f"https://www.enchor.us/chart/{md5}" if md5 else None,

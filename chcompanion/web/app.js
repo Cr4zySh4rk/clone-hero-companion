@@ -494,6 +494,7 @@ function renderCharts() {
       <input type="checkbox" class="chk"${charts.sel.has(c.id) ? " checked" : ""}>
       ${c.owned ? '<span class="pill ok owned">In library</span>' : ""}
       <div class="art"${c.artUrl ? ` style="background-image:url('${esc(c.artUrl)}')"` : ""}></div>
+      ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="Listen before downloading">▶ Preview</button>' : ""}
       <div class="body"><b>${esc(c.name)}</b><span>${esc(c.artist)}</span><span>${esc(c.charter)}${c.length ? " · " + fmtLen(c.length) : ""}</span>
       <div class="tags">${instHtml(c.difficulties || {})}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div></div></div>`).join("")
     || '<p class="hint">No charts found.</p>';
@@ -505,6 +506,13 @@ function renderCharts() {
 $("#chartResults").addEventListener("click", (e) => {
   const card = e.target.closest(".card"); if (!card) return;
   const c = charts.items[Number(card.dataset.i)];
+  if (e.target.closest(".pv")) {
+    const a = $("#plAudio");
+    a.src = `/media/chart-preview?url=${encodeURIComponent(c.downloadUrl)}&t=${c.previewStart ?? Math.round((c.length || 120) * 0.35)}`;
+    a.play().catch(() => {});
+    $("#player").hidden = false; $("#plTitle").textContent = `Preview: ${c.artist} — ${c.name}`; $("#plToggle").textContent = "Pause";
+    return toast("Loading preview…", 1500);
+  }
   if (!c.downloadUrl) { if (c.pageUrl) window.open(c.pageUrl, "_blank"); return toast(c.needsConversion ? "Rock Band charts need conversion, which isn't supported here" : "This one has to be downloaded from its page", 3500); }
   charts.sel.has(c.id) ? charts.sel.delete(c.id) : charts.sel.set(c.id, c);
   card.classList.toggle("sel"); card.querySelector(".chk").checked = charts.sel.has(c.id); updateChartSel();

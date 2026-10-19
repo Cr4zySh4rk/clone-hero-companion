@@ -202,3 +202,9 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 #shell.detail-open .thead, #shell.detail-open .row { grid-template-columns: 34px 46px minmax(150px, 1fr) 0 0 50px 0 92px 66px 60px 26px; }
 #shell.detail-open .c-album, #shell.detail-open .c-year, #shell.detail-open .c-charter, #shell.detail-open .row .h1 { visibility: hidden; overflow: hidden; }
 .selbar button { padding: 5px 10px; }
+.card .pv { position: absolute; left: 8px; bottom: calc(100% - 8px - 30px); top: auto; display: none; }
+.card .art { position: relative; }
+.card:hover .pv { display: block; }
+.card .pv { top: 36px; bottom: auto; background: rgba(20,12,40,.85); font-size: 12px; padding: 4px 9px; }
+.results { grid-auto-rows: max-content; }
+.card .art, .card .body { flex: none; }
