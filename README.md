@@ -41,6 +41,9 @@ Charts with a vocals part already show lyrics. For the rest, time-synced lyrics 
 - **Per-song sync editor** with live video and audio preview, plus a video picker that only offers HD candidates
 - Built-in player to listen to any chart's audio
 
+<p align="center"><img src="docs/screenshots/sync-panel.jpg" width="360" alt="Sync editor in the song panel, previewing the music video"><br>
+<sub>The sync editor: preview the music video against the song and nudge the video or lyrics until they line up, then save it to the game.</sub></p>
+
 ### ⭐ Favourites, also in the game
 
 <img src="docs/screenshots/favourites.jpg" alt="Favourites view" width="100%">
