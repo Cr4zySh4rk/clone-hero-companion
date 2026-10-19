@@ -243,7 +243,7 @@ def auto_lyrics_offset(song: Song, entry: dict, yt: YouTube) -> float | None:
                                            entry.get("track") or song.name, float(entry["duration"]))
                 if cand:
                     audio = Path(yt.download_audio(cand["id"], str(tmp / "album")))
-                    off, z = align.find_offset(chart, audio, max_lag=60.0)
+                    off, z = align.find_offset(chart, audio, max_lag=60.0, tolerance=0.5)
                     if z >= ALIGN_MIN_Z:
                         log.info("Lyrics for %s lined up via the album audio: %+0.2fs (confidence %.0f)",
                                  song.display, -off, z)

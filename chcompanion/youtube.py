@@ -123,11 +123,14 @@ class YouTube:
         name = norm_key(track)
         for e in (info or {}).get("entries") or []:
             d = e.get("duration") if e else None
-            if not d or abs(d - duration) > 2.0:
+            if not d or abs(d - duration) > 6.0:
                 continue
             title = norm_key(e.get("title") or "")
             chan = norm_key(e.get("channel") or e.get("uploader") or "")
             if name and name.split()[0] not in title:
+                continue
+            if any(w in title.split() for w in ("live", "lyrics", "lyric", "cover", "remix", "karaoke", "instrumental")) \
+                    and not any(w in name.split() for w in ("live", "remix")):
                 continue
             key = (chan.endswith(" topic"), "audio" in title.split(), -abs(d - duration))
             if best_key is None or key > best_key:

@@ -89,25 +89,31 @@ def _xcorr(a, b, max_lag_s: float, min_lag_s: float):
     return int(ks[i]), float(z)
 
 
-def find_offset(song_audio: list[Path], video_audio: Path, max_lag: float = 90.0) -> tuple[float, float]:
+def find_offset(song_audio: list[Path], video_audio: Path, max_lag: float = 90.0,
+                tolerance: float = 0.15) -> tuple[float, float]:
     """Returns (offset_seconds, confidence). offset > 0: skip that much video.
-    The song is matched in two separate windows; confidence is 0 unless both agree."""
-    vid = onset_curve(decode([video_audio], seconds=420.0))
+    The song is matched in three separate windows; at least two must agree within
+    `tolerance`, otherwise the confidence is 0."""
+    vid = onset_curve(decode([video_audio], seconds=480.0))
     results = []
-    for start, dur in ((5.0, 70.0), (75.0, 70.0)):
-        seg = onset_curve(decode(song_audio, seconds=dur, start=start))
+    for start in (5.0, 75.0, 145.0):
+        seg = onset_curve(decode(song_audio, seconds=70.0, start=start))
         if len(seg) < 1000 or not seg.any():
             continue
         # seg[t] (song time start+t) matches vid[t + k]  =>  offset = k*hop - start
         k, z = _xcorr(seg, vid, max_lag_s=start + max_lag, min_lag_s=max(0.0, start - max_lag))
         results.append((k * HOP / SR - start, z))
-    if not results:
-        return 0.0, 0.0
-    if len(results) == 2 and abs(results[0][0] - results[1][0]) > 0.15:
+    best = None
+    for i, (o, z) in enumerate(results):
+        group = [r for r in results if abs(r[0] - o) <= tolerance]
+        if len(group) >= 2:
+            cand = (sum(r[0] for r in group) / len(group), min(r[1] for r in group), len(group))
+            if best is None or (cand[2], cand[1]) > (best[2], best[1]):
+                best = cand
+    if best is None:
         log.debug("alignment windows disagree: %s", results)
-        return results[0][0] if results[0][1] > results[1][1] else results[1][0], 0.0
-    off = sum(r[0] for r in results) / len(results)
-    return float(off), float(min(r[1] for r in results))
+        return (max(results, key=lambda r: r[1])[0] if results else 0.0), 0.0
+    return float(best[0]), float(best[1])
 
 
 def vocal_activity(paths: list[Path], seconds: float = 600.0):
