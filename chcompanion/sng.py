@@ -33,6 +33,16 @@ class SngFile:
             raw = f.read(entry.size)
         return _xor(raw, self.xor_mask)
 
+    def head(self, name: str, n: int = 16) -> bytes | None:
+        """First n bytes of a file inside the package (cheap: no full read)."""
+        entry = next((v for k, v in self.files.items() if k.lower() == name.lower()), None)
+        if entry is None:
+            return None
+        with open(self.path, "rb") as f:
+            f.seek(entry.offset)
+            raw = f.read(min(n, entry.size))
+        return _xor(raw, self.xor_mask)
+
 
 def open_sng(path: str) -> SngFile:
     with open(path, "rb") as f:

@@ -198,6 +198,69 @@ def _to_h264(src: Path, dst: Path) -> None:
         raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
 
 
+STD_MP4_BRANDS = {b"isom", b"mp42", b"mp41", b"avc1", b"M4V ", b"qt  ", b"iso2"}
+
+
+def mp4_needs_remux(head: bytes | None) -> bool:
+    """YouTube DASH downloads are fragmented MP4s ('dash' brand). AVFoundation (macOS:
+    Clone Hero's video player and the app's preview) won't play them; a plain MP4 works
+    everywhere."""
+    return bool(head) and len(head) >= 12 and head[4:8] == b"ftyp" and head[8:12] not in STD_MP4_BRANDS
+
+
+def _remux_mp4(src: Path, dst: Path) -> None:
+    """Lossless rewrite into a standard, fast-start MP4 (video stream copied as-is)."""
+    ff = _ffmpeg()
+    if not ff:
+        raise InGameError("ffmpeg not available")
+    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", "-c:v", "copy",
+                        "-movflags", "+faststart", "-f", "mp4", str(dst)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise InGameError("ffmpeg remux failed: " + r.stderr.strip()[-300:])
+
+
+def repair_fragmented_videos(songs, progress=None) -> int:
+    """Rewrite DASH-fragmented video.mp4 files (in folders and inside .sng) as standard MP4."""
+    from .sng import open_sng, write_sng
+    fixed = 0
+    for song in songs:
+        try:
+            if song.is_sng:
+                src = open_sng(str(song.path))
+                name = next((n for n in src.files if n.lower() in ("video.mp4", "video.m4v")), None)
+                if not name or not mp4_needs_remux(src.head(name)):
+                    continue
+                tmpdir = Path(tempfile.mkdtemp(prefix="chc-remux-", dir=config_dir()))
+                try:
+                    a, b = tmpdir / "in.mp4", tmpdir / "out.mp4"
+                    a.write_bytes(src.read(name))
+                    _remux_mp4(a, b)
+                    files: dict[str, bytes | str] = {n: n for n in src.files if n != name}
+                    files["video.mp4"] = b.read_bytes()
+                    write_sng(str(song.path), dict(src.metadata), files, src=src)
+                finally:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+            else:
+                for n in ("video.mp4", "video.m4v"):
+                    p = song.path / n
+                    if not p.is_file():
+                        continue
+                    with open(p, "rb") as f:
+                        head = f.read(16)
+                    if not mp4_needs_remux(head):
+                        continue
+                    tmp = song.path / ".chc-remux.mp4"
+                    _remux_mp4(p, tmp)
+                    os.replace(tmp, p)
+            fixed += 1
+            log.info("Rewrote the video of %s as a standard MP4 (plays on macOS now)", song.display)
+            if progress:
+                progress(fixed)
+        except Exception as e:
+            log.warning("Could not rewrite the video of %s: %s", getattr(song, "display", song), e)
+    return fixed
+
+
 def video_res(p: Path) -> int:
     """Resolution class (e.g. 720) of a video file, 0 if unknown."""
     from .youtube import res_class
@@ -290,6 +353,14 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         _to_h264(path, out)
         path.unlink(missing_ok=True)
         return out.rename(tmpdir / "video.mp4")
+    elif path.suffix.lower() in (".mp4", ".m4v"):
+        with open(path, "rb") as f:
+            head = f.read(16)
+        if mp4_needs_remux(head):
+            out = tmpdir / "video_std.mp4"
+            _remux_mp4(path, out)
+            path.unlink(missing_ok=True)
+            return out.rename(tmpdir / "video.mp4")
     return path
 
 

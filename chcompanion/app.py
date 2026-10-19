@@ -284,6 +284,20 @@ class Companion:
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True}
 
+    def repair_videos(self) -> int:
+        """Rewrite videos we downloaded as DASH fragments (v2.0.0) into standard MP4s."""
+        from .ingame import repair_fragmented_videos
+        with self.jobs.lock:
+            active = {j.song_id for j in self.jobs.jobs.values() if j.status in ("queued", "running", "waiting")}
+        playing = song_id(self.song) if self.song and self.clock.status in ("playing", "paused") else None
+        todo = [s for s in self.library.songs
+                if self.store.song(s.key).get("game_video") and song_id(s) not in active and song_id(s) != playing]
+        n = repair_fragmented_videos(todo)
+        if n:
+            log.info("Fixed %d videos so they play on macOS", n)
+            self.libmgr.version += 1
+        return n
+
     def reconfigure(self, data_dir: Path, roots: list[Path]) -> None:
         """Switch Clone Hero data folder / song folders without restarting."""
         self.data_dir = data_dir
@@ -416,7 +430,10 @@ class Companion:
     def start(self):
         self.watcher.start()
         self.jobs.start()
-        threading.Thread(target=self.libmgr.rescan, daemon=True).start()
+        def scan_then_repair():
+            self.libmgr.rescan()
+            self.repair_videos()
+        threading.Thread(target=scan_then_repair, daemon=True).start()
         if self.in_game and self.store.get("prepare_library"):
             self.prepare_library()
 

@@ -1,0 +1,37 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! The more detail, the faster it gets fixed.
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options: [macOS (Apple Silicon), macOS (Intel), Windows 10/11, Linux]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in Settings → About
+      placeholder: "2.0.1"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead? Song names help.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        Attach or paste the end of `companion.log` from the app's settings folder:
+        macOS `~/Library/Application Support/CloneHeroCompanion/`, Windows `%APPDATA%\CloneHeroCompanion\`, Linux `~/.config/CloneHeroCompanion/`.
+      render: text
