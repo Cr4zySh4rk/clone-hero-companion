@@ -226,3 +226,4 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 #fdaCard ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 .setup-actions { display: flex; gap: 14px; align-items: center; }
 .favbtn.fav-on { color: var(--spot); border-color: var(--spot); }
+#fdaCard [hidden] { display: none !important; }

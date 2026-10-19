@@ -39,9 +39,13 @@ ffmpeg is built in. Nothing else to install.
 ## Using it
 
 1. In Clone Hero, turn on *Settings → Custom Content → Song Videos* (and keep *Lyrics* on).
-2. Open Clone Hero Companion. It finds your Clone Hero folder and lists your songs. If it can't, set the folder in *Settings*.
+2. Open Clone Hero Companion. On first start the **Game & folders** screen shows what it found: the Clone Hero game, its data folder (the one with `settings.ini` and `Logs`) and every song folder. Confirm them, or use **Browse…** to point at any other location or drive; Clone Hero and your songs can be anywhere, on all three platforms. You can change them later from the same screen.
 3. Select songs (click, ⌘/Ctrl-click, Shift-click, ⌘/Ctrl-A for everything shown), press **Run**, pick what to get (video, lyrics, metadata, replace existing videos) and **Start**. Progress shows at the bottom and in *Jobs*.
 4. Keep the app open while you play, and new songs get prepared as you browse.
+
+**Favourites:** click the ☆ on any song, select songs and choose *Add to favourites*, or press **F**. *★ Favourites* in the sidebar lists them, and a **Favourites** setlist is kept in sync so they're one click away inside Clone Hero too (you can turn that off in Settings).
+
+**macOS and Full Disk Access:** without it, macOS asks separately before the app may look into Documents, Desktop, Downloads or external drives. *Game & folders → Grant Full Disk Access…* opens the right page of System Settings: switch **Clone Hero Companion** on, then choose *Quit & Reopen* (or *Restart the app*). The app is ad-hoc signed, so after installing a new version you may need to switch it off and on again.
 
 After adding or downloading charts, run *Settings → Scan Songs* in Clone Hero so the game sees them. Setlist changes show after restarting the game.
 
