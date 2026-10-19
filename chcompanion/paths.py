@@ -65,7 +65,8 @@ def find_data_dir(explicit: str | None = None) -> Path | None:
     if explicit:
         p = Path(explicit).expanduser()
         return p if p.exists() else None
-    for p in candidate_data_dirs():
+    cands = candidate_data_dirs()
+    for p in [c for c in cands if not is_protected(c)] + [c for c in cands if is_protected(c)]:
         if looks_like_data_dir(p):
             return p
     for g in find_games():               # portable installs keep their data next to the game
@@ -86,6 +87,8 @@ def _game_names() -> tuple[str, ...]:
 
 
 def is_game(p: Path) -> bool:
+    if "companion" in p.name.lower():      # that's us, not the game
+        return False
     try:
         if sys.platform == "darwin":
             return p.suffix.lower() == ".app" and p.is_dir() and "clone" in p.name.lower()
@@ -123,8 +126,25 @@ def _search_roots() -> list[Path]:
     return roots
 
 
-def find_games(configured: str | None = None, limit: int = 8) -> list[Path]:
-    """Clone Hero installs: the configured one first, then a shallow search of the usual places."""
+def _protected_roots() -> list[Path]:
+    """macOS asks the user before an app may look inside these; only go there when nothing
+    was found elsewhere (a folder picked with Browse is always allowed)."""
+    if sys.platform != "darwin":
+        return []
+    home = Path.home()
+    return [home / "Desktop", home / "Documents", home / "Downloads", home / "Library" / "Mobile Documents"]
+
+
+def is_protected(p: Path) -> bool:
+    for r in _protected_roots():
+        if p == r or r in p.parents:
+            return True
+    return False
+
+
+def find_games(configured: str | None = None, limit: int = 8, deep: bool = False) -> list[Path]:
+    """Clone Hero installs: the configured one first, then a shallow search of the usual places.
+    On macOS, Desktop/Documents/Downloads are searched only if nothing else turned up (or deep)."""
     out: list[Path] = []
     seen: set[str] = set()
 
@@ -137,7 +157,11 @@ def find_games(configured: str | None = None, limit: int = 8) -> list[Path]:
     if configured:
         add(Path(configured).expanduser())
     names = _game_names()
-    for root in _search_roots():
+    roots = [r for r in _search_roots() if not is_protected(r)]
+    late = [r for r in _search_roots() if is_protected(r)]
+    for root in roots + late:
+        if root in late and out and not deep:
+            break
         if len(out) >= limit:
             break
         try:
@@ -174,9 +198,14 @@ def detect(configured_game: str | None = None) -> dict:
     """Everything we can find automatically, for the setup screen."""
     games = find_games(configured_game)
     datas: list[Path] = []
-    for p in candidate_data_dirs() + [game_dir(g) for g in games]:
+    cands = candidate_data_dirs() + [game_dir(g) for g in games]
+    for p in [c for c in cands if not is_protected(c)]:
         if p not in datas and looks_like_data_dir(p):
             datas.append(p)
+    if not datas:                          # only now look in places macOS asks about
+        for p in [c for c in cands if is_protected(c)]:
+            if p not in datas and looks_like_data_dir(p):
+                datas.append(p)
     songs: list[Path] = []
     for d in datas:
         for s in song_dirs(d):
