@@ -192,6 +192,7 @@ class Companion:
                         cands = self.yt.search(song)
                     if choose_index is not None and cands:
                         vid = cands[choose_index % len(cands)]["id"]
+                        self.store.update_song(song.key, video_manual=True)
                     elif not vid and cands and cands[0]["score"] >= youtube.MIN_SCORE:
                         vid = cands[0]["id"]
                     self.store.update_song(song.key, candidates=cands[:8], video_id=vid)
@@ -248,7 +249,8 @@ class Companion:
         cands = per.get("candidates") or []
         if not any(c["id"] == vid for c in cands):
             cands = [{"id": vid, "title": "(chosen manually)", "score": 99}] + cands
-        self.store.update_song(self.song.key, video_id=vid, candidates=cands, prefer_youtube=True)
+        self.store.update_song(self.song.key, video_id=vid, candidates=cands, prefer_youtube=True,
+                               video_manual=True)
         threading.Thread(target=self._prepare_video,
                          args=(self.song, self.prepare_token, None), daemon=True).start()
         return True

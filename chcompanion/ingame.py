@@ -145,22 +145,58 @@ def _to_vp8(src: Path, dst: Path) -> None:
         raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
 
 
+def _probe(p: Path) -> tuple[tuple[int, int], int]:
+    """((width, height), overall kb/s) of a video file, zeros if unknown."""
+    ff = _ffmpeg()
+    if not ff:
+        return (0, 0), 0
+    try:
+        err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+    except Exception:
+        return (0, 0), 0
+    m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", err)
+    b = re.search(r"bitrate:\s*(\d+)\s*kb/s", err)
+    return ((int(m.group(1)), int(m.group(2))) if m else (0, 0)), (int(b.group(1)) if b else 0)
+
+
+def looks_static(p: Path) -> bool:
+    """Album-art uploads: square frame and/or almost no video bitrate."""
+    (w, h), kbps = _probe(p)
+    if w and h and abs(w - h) <= 2:
+        return True
+    return bool(kbps) and kbps < 90
+
+
 def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path:
     info = store.song(song.key)
-    vid = info.get("video_id")
-    if not vid:
+    chosen = info.get("video_id") if info.get("video_manual") else None
+    if chosen:
+        order = [chosen]
+    else:
         cands = yt.search(song)
-        if not cands or cands[0]["score"] < MIN_SCORE:
-            store.update_song(song.key, candidates=cands[:8], video_failed=True)
+        store.update_song(song.key, candidates=cands[:8])
+        order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:3]
+        if not order:
+            store.update_song(song.key, video_failed=True)
             raise InGameError("no matching music video found on YouTube")
-        vid = cands[0]["id"]
-        store.update_song(song.key, video_id=vid, candidates=cands[:8])
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
 
     def prog(done, total):
         if progress and total:
             progress(f"downloading video {done * 100 // total}%")
-    path = Path(yt.download(vid, str(tmpdir / "video"), progress=prog))
+    path, vid = None, None
+    for cand in order:
+        p = Path(yt.download(cand, str(tmpdir / "video"), progress=prog))
+        if chosen or not looks_static(p):
+            path, vid = p, cand
+            break
+        log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
+        p.unlink(missing_ok=True)
+    if path is None:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        store.update_song(song.key, video_failed=True)
+        raise InGameError("only still-image uploads found on YouTube")
+    store.update_song(song.key, video_id=vid)
     if not per_manual_offset(store, song):
         try:
             if progress:
