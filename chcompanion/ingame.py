@@ -27,7 +27,7 @@ from .midi import TempoMap, build_track, chunk_track_name, encode_varlen, parse_
 from .paths import config_dir
 from .sng import open_sng, write_sng
 from .store import Store
-from .youtube import MIN_SCORE, YouTube
+from .youtube import MIN_P as MIN_HD, MIN_SCORE, YouTube
 
 log = logging.getLogger(__name__)
 BACKUP = ".chc-backup"
@@ -187,15 +187,38 @@ def looks_static(p: Path) -> bool:
     return bool(kbps) and kbps < 90
 
 
+def _to_h264(src: Path, dst: Path) -> None:
+    ff = _ffmpeg()
+    if not ff:
+        raise InGameError("ffmpeg not available to convert the video")
+    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart", str(dst)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+
+
+def video_res(p: Path) -> int:
+    """Resolution class (e.g. 720) of a video file, 0 if unknown."""
+    from .youtube import res_class
+    (w, h), _ = _probe(p)
+    return res_class(w, h)
+
+
 def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path:
+    """Download the best matching HD (>= 640p) music video for the song, lined up and
+    in a codec Clone Hero plays on this OS. Raises InGameError if there is none."""
+    from .youtube import NoHDVideo
     info = store.song(song.key)
     chosen = info.get("video_id") if info.get("video_manual") else None
     if chosen:
         order = [chosen]
     else:
+        if progress:
+            progress("searching YouTube")
         cands = yt.search(song)
         store.update_song(song.key, candidates=cands[:8])
-        order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:3]
+        order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:4]
         if not order:
             store.update_song(song.key, video_failed=True)
             raise InGameError("no matching music video found on YouTube")
@@ -204,19 +227,28 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
     def prog(done, total):
         if progress and total:
             progress(f"downloading video {done * 100 // total}%")
-    path, vid = None, None
+    path, vid, fmt, reasons = None, None, None, []
     for cand in order:
-        p = Path(yt.download(cand, str(tmpdir / "video"), progress=prog))
-        if chosen or not looks_static(p):
-            path, vid = p, cand
-            break
-        log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
-        p.unlink(missing_ok=True)
+        try:
+            p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
+        except NoHDVideo:
+            log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
+            reasons.append("below 640p")
+            continue
+        p = Path(p)
+        if not chosen and looks_static(p):
+            log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
+            reasons.append("still image")
+            p.unlink(missing_ok=True)
+            continue
+        path, vid, fmt = p, cand, f
+        break
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
         store.update_song(song.key, video_failed=True)
-        raise InGameError("only still-image uploads found on YouTube")
-    store.update_song(song.key, video_id=vid)
+        why = ", ".join(sorted(set(reasons))) or "no usable video"
+        raise InGameError(f"no HD music video found ({why})")
+    store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None)
     if not per_manual_offset(store, song):
         try:
             if progress:
@@ -230,16 +262,26 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
                 log.info("Video for %s: no reliable audio match (confidence %.1f); starting at 0",
                          song.display, conf)
         except Exception as e:
+            if "BotDetected" in type(e).__name__:
+                raise
             log.warning("Could not line up the video for %s: %s", song.display, e)
     target = os.environ.get("CHC_TARGET_OS", sys.platform)
-    if target.startswith("linux") or (path.suffix.lower() == ".webm" and "vp8" not in _codec(path)):
+    codec = (fmt.get("vcodec") or "").lower()
+    if target.startswith("linux"):
+        if not (path.suffix.lower() == ".webm" and codec.startswith("vp8")):
+            if progress:
+                progress("converting video for Clone Hero (VP8)")
+            out = tmpdir / "video_vp8.webm"
+            _to_vp8(path, out)
+            path.unlink(missing_ok=True)
+            return out.rename(tmpdir / "video.webm")
+    elif not (codec.startswith("avc1") or codec.startswith("h264")):
         if progress:
-            progress("converting video")
-        out = tmpdir / "video_vp8.webm"
-        _to_vp8(path, out)
+            progress("converting video for Clone Hero (H.264)")
+        out = tmpdir / "video_h264.mp4"
+        _to_h264(path, out)
         path.unlink(missing_ok=True)
-        out = out.rename(tmpdir / "video.webm")
-        return out
+        return out.rename(tmpdir / "video.mp4")
     return path
 
 
@@ -352,8 +394,38 @@ def has_video(song: Song) -> bool:
     return song.local_video() is not None
 
 
+def current_video_res(song: Song, store: Store) -> int:
+    """Resolution class of the video the song already has (cached by size/mtime)."""
+    try:
+        if song.is_sng:
+            sng = open_sng(str(song.path))
+            name = next((n for n in sng.files if n.lower().startswith("video.")), None)
+            if not name:
+                return 0
+            st = song.path.stat()
+            sig = f"{st.st_size}:{int(st.st_mtime)}"
+            per = store.song(song.key)
+            if per.get("video_probe", {}).get("sig") == sig:
+                return per["video_probe"]["res"]
+            p = song.local_video()   # extracted cache copy
+        else:
+            p = song.local_video()
+            if not p:
+                return 0
+            st = p.stat()
+            sig = f"{st.st_size}:{int(st.st_mtime)}"
+            per = store.song(song.key)
+            if per.get("video_probe", {}).get("sig") == sig:
+                return per["video_probe"]["res"]
+        res = video_res(p) if p else 0
+        store.update_song(song.key, video_probe={"sig": sig, "res": res})
+        return res
+    except Exception:
+        return 0
+
+
 def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics: bool = True,
-            force_video: bool = False, progress=None) -> dict:
+            force_video: bool = False, replace_low_res: bool = True, progress=None) -> dict:
     """Put video and lyrics into the song for Clone Hero. Returns a summary dict."""
     with _lock_for(song.key):
         result = {"video": None, "lyrics": None}
@@ -374,7 +446,8 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
                 if shift is not None:
                     store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
                     per = store.song(song.key)
-        want_video = video and (force_video or not has_video(song))
+        want_video = video and (force_video or not has_video(song)
+                                or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD))
         vpath = None
         if want_video:
             vpath = download_video(song, yt, store, progress)
@@ -503,6 +576,98 @@ def _set_ini(song: Song, key: str, value) -> None:
         lines.insert(idx + 1, f"{key} = {value}")
     ini.write_text(nl.join(lines), encoding=enc)
     song.meta[key] = str(value)
+
+
+def resync(song: Song, yt: YouTube, store: Store, progress=None) -> dict:
+    """Apply changed video/lyrics offsets to a song that is already set up, without
+    downloading the video again when only video_start_time has to change."""
+    with _lock_for(song.key):
+        per = store.song(song.key)
+        result: dict = {"video": None, "lyrics": None}
+        off_v = float(per.get("video_offset", 0.0) or 0.0)
+        padded = float(per.get("video_padded") or 0.0)
+        if has_video(song):
+            if padded or off_v <= -0.05:
+                if per.get("video_id"):
+                    # the black lead-in is baked into the file: rebuild it
+                    pass_result = None
+                    store.update_song(song.key, video_offset_auto=None)
+                    pass_result = _redo_video(song, yt, store, progress)
+                    result["video"] = pass_result
+            else:
+                if progress:
+                    progress("updating the video start time")
+                ms = int(round(off_v * 1000))
+                if song.is_sng:
+                    src = open_sng(str(song.path))
+                    meta = dict(src.metadata)
+                    meta["video_start_time"] = str(ms)
+                    _backup(song.path)
+                    write_sng(str(song.path), meta, {n: n for n in src.files}, src=src)
+                    song.meta["video_start_time"] = str(ms)
+                else:
+                    _set_ini(song, "video_start_time", ms)
+                store.update_song(song.key, video_offset_written=off_v)
+                result["video"] = f"start {off_v:+.2f}s"
+        if per.get("game_lyrics"):
+            if progress:
+                progress("moving the lyrics")
+            entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
+            if entry and entry["lines"]:
+                off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
+                if song.is_sng:
+                    orig = open_sng(str(song.path) + BACKUP) if Path(str(song.path) + BACKUP).exists() else None
+                    src = open_sng(str(song.path))
+                    files: dict[str, bytes | str] = {n: n for n in src.files}
+                    names = {n.lower(): n for n in src.files}
+                    if orig:
+                        onames = {n.lower(): n for n in orig.files}
+                        if "notes.mid" in onames:
+                            files[names["notes.mid"]] = midi_with_lyrics(orig.read(onames["notes.mid"]),
+                                                                         entry["lines"], song.delay_s, off_l)
+                        elif "notes.chart" in onames:
+                            files[names["notes.chart"]] = chart_with_lyrics(
+                                orig.read(onames["notes.chart"]).decode("utf-8-sig", "replace"),
+                                entry["lines"], song.delay_s, off_l).encode("utf-8")
+                        write_sng(str(song.path), dict(src.metadata), files, src=src)
+                        result["lyrics"] = "moved"
+                else:
+                    mid, chart = song.path / ("notes.mid" + BACKUP), song.path / ("notes.chart" + BACKUP)
+                    if mid.exists():
+                        _atomic_write(song.path / "notes.mid",
+                                      midi_with_lyrics(mid.read_bytes(), entry["lines"], song.delay_s, off_l))
+                        result["lyrics"] = "moved"
+                    elif chart.exists():
+                        _atomic_write(song.path / "notes.chart", chart_with_lyrics(
+                            chart.read_bytes().decode("utf-8-sig", "replace"), entry["lines"], song.delay_s,
+                            off_l).encode("utf-8"))
+                        result["lyrics"] = "moved"
+                if result["lyrics"]:
+                    store.update_song(song.key, lyrics_offset_written=off_l)
+        return result
+
+
+def _redo_video(song: Song, yt: YouTube, store: Store, progress=None) -> str | None:
+    """Download the chosen video again and write it with the current offset."""
+    store.update_song(song.key, video_manual=True)
+    vpath = download_video(song, yt, store, progress)
+    per = store.song(song.key)
+    off_v = float(per.get("video_offset", 0.0) or 0.0)
+    write_v = off_v
+    try:
+        if off_v <= -0.05:
+            vpath = pad_video_start(vpath, -off_v)
+            write_v = 0.0
+        result: dict = {"video": None, "lyrics": None}
+        if song.is_sng:
+            _apply_sng(song, vpath, [], 0.0, write_v, result)
+        else:
+            _apply_folder(song, vpath, [], 0.0, write_v, result)
+    finally:
+        shutil.rmtree(vpath.parent, ignore_errors=True)
+    store.update_song(song.key, game_video=result["video"], video_offset_written=off_v,
+                      video_padded=round(off_v - write_v, 3) or None)
+    return result["video"]
 
 
 def restore(song: Song, store: Store) -> list[str]:

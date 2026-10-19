@@ -21,6 +21,13 @@ AUDIO_EXT = (".ogg", ".opus", ".mp3", ".wav", ".flac", ".m4a")
 
 
 def ffmpeg_path() -> str | None:
+    import sys
+    base = getattr(sys, "_MEIPASS", None)
+    if base:   # ffmpeg bundled with the app (universal binary on macOS)
+        for name in ("ffmpeg.exe", "ffmpeg"):
+            b = Path(base) / "bin" / name
+            if b.exists():
+                return str(b)
     p = shutil.which("ffmpeg")
     if p:
         return p

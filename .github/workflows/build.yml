@@ -1,8 +1,10 @@
-name: Build executables
+name: Build apps
 
-# Every push builds and smoke-tests the app on all three platforms.
-# Pushing a tag like v1.2.3 also publishes the executables as a GitHub Release
-# (uploaded straight to the release, so no Actions artifact storage is used).
+# Every push builds and smoke-tests the apps. Pushing a tag like v2.0.0 publishes
+# them as a GitHub Release (uploaded straight to the release, no artifact storage).
+#   macOS:   universal (Apple Silicon + Intel) .app in a .dmg
+#   Windows: single .exe
+#   Linux:   single binary in a .tar.gz
 
 on:
   push:
@@ -39,22 +41,82 @@ jobs:
             --title "Clone Hero Companion $GITHUB_REF_NAME" --generate-notes \
             $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
 
-  build:
+  macos:
     needs: [test, release]
     if: ${{ !cancelled() && needs.test.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            asset: CloneHeroCompanion-windows-x64.exe
-          - os: macos-14
-            asset: CloneHeroCompanion-macos-arm64.zip
-          - os: macos-15-intel
-            asset: CloneHeroCompanion-macos-x64.zip
-          - os: ubuntu-22.04
-            asset: CloneHeroCompanion-linux-x64.tar.gz
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-14
+    env:
+      PY: /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+      ASSET: CloneHeroCompanion-macOS-universal.dmg
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install universal2 Python from python.org
+        run: |
+          curl -sSL -o py.pkg https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          sudo installer -pkg py.pkg -target /
+          $PY -c "import platform,sys; print(sys.version, platform.machine())"
+          lipo -archs "$($PY -c 'import sys; print(sys.executable)')"
+      - name: Install dependencies (universal2)
+        run: |
+          $PY -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip wheel
+          pip install pyinstaller delocate pillow "yt-dlp>=2026.8.19" yt-dlp-ejs certifi send2trash pywebview
+          # numpy has no universal2 wheel: fuse the arm64 and x86_64 wheels
+          mkdir -p wheels/arm wheels/x86 wheels/fused
+          pip download numpy==2.2.6 --no-deps --only-binary=:all: --platform macosx_11_0_arm64 -d wheels/arm
+          pip download numpy==2.2.6 --no-deps --only-binary=:all: --platform macosx_10_13_x86_64 -d wheels/x86
+          delocate-merge wheels/arm/*.whl wheels/x86/*.whl -w wheels/fused
+          pip install wheels/fused/*.whl
+          python scripts/fuse_ffmpeg_mac.py build/bin/ffmpeg
+          python -c "import numpy, webview, yt_dlp; print('numpy', numpy.__version__)"
+      - name: Build universal .app
+        run: |
+          source venv/bin/activate
+          python scripts/make_icon.py build/icon
+          iconutil -c icns build/icon/icon.iconset -o build/icon/icon.icns
+          pyinstaller --noconfirm --windowed --onedir --target-arch universal2 \
+            --name "Clone Hero Companion" --icon build/icon/icon.icns \
+            --osx-bundle-identifier com.cr4zysh4rk.clonehero-companion \
+            --add-data "chcompanion/web:chcompanion/web" \
+            --add-binary "build/bin/ffmpeg:bin" \
+            --collect-data yt_dlp_ejs --hidden-import yt_dlp \
+            --exclude-module tkinter run.py
+          APP="dist/Clone Hero Companion.app"
+          PLIST="$APP/Contents/Info.plist"
+          plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true,"NSAllowsArbitraryLoads":true}' "$PLIST"
+          plutil -replace CFBundleShortVersionString -string "${GITHUB_REF_NAME#v}" "$PLIST" || true
+          plutil -replace NSHighResolutionCapable -bool true "$PLIST" || plutil -insert NSHighResolutionCapable -bool true "$PLIST"
+          codesign --force --deep --sign - "$APP"
+          echo "Main executable:"; lipo -archs "$APP/Contents/MacOS/Clone Hero Companion"
+          echo "numpy:"; lipo -archs "$(find "$APP" -name '_multiarray_umath*.so' | head -1)"
+          echo "ffmpeg:"; lipo -archs "$(find "$APP" -path '*bin/ffmpeg' | head -1)"
+      - name: Smoke test (arm64 and x86_64 under Rosetta)
+        run: |
+          BIN="dist/Clone Hero Companion.app/Contents/MacOS/Clone Hero Companion"
+          mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
+          printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
+          "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
+          grep -q "ffmpeg      : /" doctor.txt
+          (softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true)
+          arch -x86_64 "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" || echo "x86_64 run not possible on this runner"
+      - name: Make .dmg
+        run: |
+          mkdir -p dmg && cp -R "dist/Clone Hero Companion.app" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Clone Hero Companion" -srcfolder dmg -ov -format UDZO "$ASSET"
+          ls -la "$ASSET"
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+
+  windows:
+    needs: [test, release]
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
+    runs-on: windows-latest
+    env:
+      ASSET: CloneHeroCompanion-windows-x64.exe
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -63,40 +125,62 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt pyinstaller pillow pywebview py7zr send2trash
       - name: Build
         shell: bash
         run: |
-          pyinstaller --noconfirm --onefile --console --name CloneHeroCompanion \
+          python scripts/make_icon.py build/icon
+          pyinstaller --noconfirm --onefile --windowed --name CloneHeroCompanion --icon build/icon/icon.ico \
             --add-data "chcompanion/web:chcompanion/web" \
-            --collect-data yt_dlp_ejs \
-            --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
-            --hidden-import yt_dlp \
-            run.py
+            --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
+            --hidden-import yt_dlp --exclude-module tkinter run.py
       - name: Smoke test
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then BIN=dist/CloneHeroCompanion.exe; else BIN=dist/CloneHeroCompanion; fi
-          "$BIN" --version
           mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
-          "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
-          grep -q "ffmpeg      : /" doctor.txt || grep -q "ffmpeg      : [A-Z]:" doctor.txt || grep -qi "imageio" doctor.txt
-      - name: Package
-        shell: bash
-        run: |
-          mkdir -p out
-          case "$RUNNER_OS" in
-            Windows) cp dist/CloneHeroCompanion.exe "out/${{ matrix.asset }}" ;;
-            macOS)   chmod +x dist/CloneHeroCompanion
-                     (cd dist && zip -q -X "../out/${{ matrix.asset }}" CloneHeroCompanion) ;;
-            Linux)   chmod +x dist/CloneHeroCompanion
-                     tar -C dist -czf "out/${{ matrix.asset }}" CloneHeroCompanion ;;
-          esac
-          ls -la out
+          ./dist/CloneHeroCompanion.exe doctor --data-dir "$RUNNER_TEMP/ch" --report "$RUNNER_TEMP/doctor.txt"
+          cat "$RUNNER_TEMP/doctor.txt"
+          grep -q "Songs       : 1" "$RUNNER_TEMP/doctor.txt"
+          cp dist/CloneHeroCompanion.exe "$ASSET"
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" "out/${{ matrix.asset }}" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+
+  linux:
+    needs: [test, release]
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
+    runs-on: ubuntu-22.04
+    env:
+      ASSET: CloneHeroCompanion-linux-x64.tar.gz
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller py7zr send2trash
+      - name: Build
+        run: |
+          pyinstaller --noconfirm --onefile --console --name CloneHeroCompanion \
+            --add-data "chcompanion/web:chcompanion/web" \
+            --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
+            --hidden-import yt_dlp --exclude-module tkinter run.py
+      - name: Smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
+          printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
+          ./dist/CloneHeroCompanion doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
+          grep -q "Songs       : 1" doctor.txt
+          chmod +x dist/CloneHeroCompanion
+          tar -C dist -czf "$ASSET" CloneHeroCompanion
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber

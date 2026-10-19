@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clone Hero Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="shell">
+  <aside id="side">
+    <div class="brand">
+      <div class="frets" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="brand-name">Clone Hero<br>Companion</div>
+    </div>
+    <nav id="nav">
+      <button data-view="library" class="on">Library <span class="badge" id="navLibCount"></span></button>
+      <button data-view="charts">Get charts</button>
+      <button data-view="spotify">Spotify import</button>
+      <button data-view="setlists">Setlists</button>
+      <button data-view="dupes">Duplicates</button>
+      <button data-view="jobs">Jobs <span class="badge hot" id="navJobs"></span></button>
+      <button data-view="now">Now playing <span class="dot" id="navNow"></span></button>
+      <button data-view="settings">Settings</button>
+    </nav>
+    <button id="launchGame" class="launch">Launch Clone Hero</button>
+    <div id="sideStatus" class="side-status"></div>
+  </aside>
+
+  <main id="main">
+    <!-- ============ LIBRARY ============ -->
+    <section class="view on" id="view-library">
+      <header class="bar">
+        <input id="libSearch" type="search" placeholder="Search title, artist, album, charter…" autocomplete="off">
+        <div class="chips" id="libFilters">
+          <button data-f="all" class="on">All</button>
+          <button data-f="novideo">No video</button>
+          <button data-f="lowres">Video below 640p</button>
+          <button data-f="nolyrics">No lyrics</button>
+          <button data-f="fav">Favourites</button>
+          <button data-f="recent">Recently added</button>
+          <button data-f="disabled">Disabled</button>
+        </div>
+        <select id="libGroup" title="Folder"><option value="">All folders</option></select>
+      </header>
+      <div class="selbar" id="selbar">
+        <span id="selCount"></span>
+        <button class="primary" id="runBtn">Run</button>
+        <div class="runopts" id="runOpts">
+          <label><input type="checkbox" id="optVideo" checked> Music video (HD, 640p or better)</label>
+          <label><input type="checkbox" id="optLyrics" checked> Lyrics in game</label>
+          <label><input type="checkbox" id="optMeta" checked> Metadata and album art</label>
+          <label><input type="checkbox" id="optForce"> Replace videos the songs already have</label>
+        </div>
+        <span class="sep"></span>
+        <button data-act="favorite">Favourite</button>
+        <button data-act="setlist">Add to setlist…</button>
+        <button data-act="pack">Export pack</button>
+        <button data-act="rename">Rename folders</button>
+        <button data-act="restore" title="Remove added videos/lyrics and restore original files">Undo changes</button>
+        <button data-act="disable" id="disableBtn">Disable</button>
+        <button data-act="delete" class="danger">Move to Trash</button>
+        <button data-act="clear" class="ghost">Clear selection</button>
+      </div>
+      <div class="table" id="libTable">
+        <div class="thead" id="libHead">
+          <div class="c-chk"><input type="checkbox" id="selAll" title="Select all shown"></div>
+          <div class="c-art"></div>
+          <div class="c-name sortable" data-k="name">Song</div>
+          <div class="c-album sortable" data-k="album">Album</div>
+          <div class="c-year sortable" data-k="year">Year</div>
+          <div class="c-len sortable" data-k="length">Length</div>
+          <div class="c-charter sortable" data-k="charter">Charter</div>
+          <div class="c-inst">Parts</div>
+          <div class="c-video sortable" data-k="video">Video</div>
+          <div class="c-lyr sortable" data-k="lyrics">Lyrics</div>
+          <div class="c-fav sortable" data-k="fav">★</div>
+        </div>
+        <div class="tbody" id="libBody"><div class="spacer" id="libSpacer"></div></div>
+        <div class="empty" id="libEmpty" hidden></div>
+      </div>
+    </section>
+
+    <!-- ============ CHARTS ============ -->
+    <section class="view" id="view-charts">
+      <header class="bar">
+        <div class="seg" id="chartDb"><button data-db="encore" class="on">Chorus Encore</button><button data-db="rhythmverse">RhythmVerse</button></div>
+        <input id="chartSearch" type="search" placeholder="Search charts by song, artist, album or charter" autocomplete="off">
+        <select id="chartInst"><option value="">Any instrument</option><option value="guitar">Guitar</option><option value="bass">Bass</option><option value="drums">Drums</option><option value="keys">Keys</option><option value="vocals">Vocals</option></select>
+        <select id="chartDiff"><option value="">Any difficulty</option><option value="expert">Expert</option><option value="hard">Hard</option><option value="medium">Medium</option><option value="easy">Easy</option></select>
+        <select id="chartSort"><option value="">Relevance</option><option value="newest">Newest</option><option value="name">Title</option><option value="artist">Artist</option><option value="length">Length</option></select>
+      </header>
+      <div class="selbar" id="chartSel">
+        <span id="chartSelCount"></span>
+        <button class="primary" id="chartDl">Download</button>
+        <label class="inline"><input type="checkbox" id="chartProcess" checked> then add video, lyrics and metadata</label>
+        <button class="ghost" id="chartClear">Clear selection</button>
+      </div>
+      <div class="results" id="chartResults"></div>
+      <footer class="pager" id="chartPager"></footer>
+    </section>
+
+    <!-- ============ SPOTIFY ============ -->
+    <section class="view" id="view-spotify">
+      <header class="bar">
+        <input id="spUrl" type="url" placeholder="Paste a public Spotify playlist link: open.spotify.com/playlist/…">
+        <button class="primary" id="spGo">Find charts</button>
+      </header>
+      <div class="selbar" id="spSel">
+        <span id="spSelCount"></span>
+        <button class="primary" id="spDl">Download</button>
+        <label class="inline"><input type="checkbox" id="spProcess" checked> then add video, lyrics and metadata</label>
+      </div>
+      <div class="results list" id="spResults"><p class="hint">Charts are matched on Chorus Encore. Songs you already have are marked.</p></div>
+    </section>
+
+    <!-- ============ SETLISTS ============ -->
+    <section class="view" id="view-setlists">
+      <div class="split">
+        <div class="pane-list">
+          <div class="pane-head"><h2>Setlists</h2><button id="slNew">New setlist</button></div>
+          <ul id="slList"></ul>
+          <p class="hint">Clone Hero reads setlists when it starts. Add songs from the Library with “Add to setlist…”.</p>
+        </div>
+        <div class="pane-body" id="slBody"><p class="hint">Pick a setlist.</p></div>
+      </div>
+    </section>
+
+    <!-- ============ DUPES ============ -->
+    <section class="view" id="view-dupes">
+      <header class="bar"><h2>Duplicate charts</h2><button id="dupRefresh">Refresh</button></header>
+      <div class="results list" id="dupList"></div>
+    </section>
+
+    <!-- ============ JOBS ============ -->
+    <section class="view" id="view-jobs">
+      <header class="bar">
+        <h2>Jobs</h2>
+        <span id="jobCounts" class="counts"></span>
+        <label class="inline">Workers <input type="range" id="jobWorkers" min="1" max="8" step="1"> <b id="jobWorkersVal"></b></label>
+        <button id="jobRetry">Retry failed</button>
+        <button id="jobClear">Clear finished</button>
+        <button id="jobCancel" class="danger">Cancel all</button>
+      </header>
+      <div class="ytwarn" id="ytWarn" hidden></div>
+      <div class="results list" id="jobList"></div>
+    </section>
+
+    <!-- ============ NOW ============ -->
+    <section class="view" id="view-now">
+      <iframe id="nowFrame" title="Now playing" src="about:blank"></iframe>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section class="view" id="view-settings">
+      <div class="settings" id="settingsForm"></div>
+    </section>
+  </main>
+
+  <aside id="detail" hidden>
+    <button class="close" id="detailClose" title="Close">×</button>
+    <div id="detailBody"></div>
+  </aside>
+</div>
+
+<footer id="dock">
+  <div id="dockJobs"></div>
+  <div id="player" hidden>
+    <button id="plToggle">Pause</button>
+    <span id="plTitle"></span>
+    <audio id="plAudio" preload="none"></audio>
+  </div>
+</footer>
+<div id="toast" role="status"></div>
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<script src="/static/app.js"></script>
+</body>
+</html>
