@@ -44,12 +44,19 @@ Or click *Prepare library* on the companion page, or start the app with `--prepa
 
 To undo everything: `CloneHeroCompanion restore` (or `restore <filter>` for some songs). This removes the videos it added and puts back the original charts and `.sng` files.
 
+### Troubleshooting
+
+- **No video in game:** check *Settings → Custom Content → Song Videos* is on. If a song was prepared while Clone Hero was already showing it, open another song and come back, or run *Scan Songs* in the game settings.
+- **Video or lyrics a bit early or late:** open the companion page while the song plays, nudge with ↑/↓ (video) or ←/→ (lyrics), then press **I**. The song is rewritten with your offsets as soon as it's not playing.
+- **Wrong video:** press **N** on the companion page for the next search result, or **U** to paste a YouTube link, then **I**.
+- `CloneHeroCompanion doctor` shows what the app found (data folder, songs, ffmpeg, game settings).
+
 ### What gets changed in a song
 
 | | Song folder | `.sng` package |
 | --- | --- | --- |
-| Video | `video.mp4` added (`video.webm` on Linux) | video added inside the package |
-| Video alignment | `video_start_time` in `song.ini` | `video_start_time` in the package metadata |
+| Video | `video.mp4` added (`video.webm` on Linux); still-image uploads are skipped | video added inside the package |
+| Video alignment | `video_start_time` in `song.ini` (a video that must start *after* the song gets black frames added instead) | `video_start_time` in the package metadata |
 | Lyrics (only charts without lyrics) | vocals track added to `notes.mid` / lyrics events to `notes.chart` | same, inside the package |
 | Backup | `notes.mid.chc-backup`, `song.ini.chc-backup` | `<name>.sng.chc-backup` |
 
