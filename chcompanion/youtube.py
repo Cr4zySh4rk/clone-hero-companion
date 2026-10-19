@@ -19,7 +19,9 @@ BAD_WORDS = ["lyric", "lyrics", "cover", "reaction", "karaoke", "tutorial", "les
              "8d", "sped up", "nightcore", "clone hero", "rock band", "guitar hero", "fortnite",
              "letra", "traducida", "sub espanol", "legendado", "1 hour", "10 hours", "extended",
              "playthrough", "isolated", "backing track", "piano", "fan made", "fanmade", "amv",
-             "teaser", "trailer", "behind the scenes", "making of", "interview", "full album"]
+             "teaser", "trailer", "behind the scenes", "making of", "interview", "full album",
+             "expert", "hard", "medium", "easy", "fc", "full combo", "gameplay", "playthrough", "yarg",
+             "rocksmith", "pivot", "sickfigures", "chart", "custom song", "100", "fret", "rb3", "gh3"]
 
 
 def _ydl_opts(**extra) -> dict:
