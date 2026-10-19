@@ -1,5 +1,9 @@
 name: Build executables
 
+# Every push builds and smoke-tests the app on all three platforms.
+# Pushing a tag like v1.2.3 also publishes the executables as a GitHub Release
+# (uploaded straight to the release, so no Actions artifact storage is used).
+
 on:
   push:
     branches: [main]
@@ -14,15 +18,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
 
-  build:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Clone Hero Companion $GITHUB_REF_NAME" --generate-notes \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+
+  build:
+    needs: [test, release]
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,15 +49,15 @@ jobs:
           - os: windows-latest
             asset: CloneHeroCompanion-windows-x64.exe
           - os: macos-14
-            asset: CloneHeroCompanion-macos-arm64
+            asset: CloneHeroCompanion-macos-arm64.zip
           - os: macos-15-intel
-            asset: CloneHeroCompanion-macos-x64
+            asset: CloneHeroCompanion-macos-x64.zip
           - os: ubuntu-22.04
-            asset: CloneHeroCompanion-linux-x64
+            asset: CloneHeroCompanion-linux-x64.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -53,7 +72,6 @@ jobs:
             --collect-data yt_dlp_ejs \
             --hidden-import yt_dlp \
             run.py
-          ls -la dist
       - name: Smoke test
         shell: bash
         run: |
@@ -69,30 +87,14 @@ jobs:
           case "$RUNNER_OS" in
             Windows) cp dist/CloneHeroCompanion.exe "out/${{ matrix.asset }}" ;;
             macOS)   chmod +x dist/CloneHeroCompanion
-                     ditto -c -k --keepParent dist/CloneHeroCompanion "out/${{ matrix.asset }}.zip" ;;
+                     ditto -c -k --keepParent dist/CloneHeroCompanion "out/${{ matrix.asset }}" ;;
             Linux)   chmod +x dist/CloneHeroCompanion
-                     tar -C dist -czf "out/${{ matrix.asset }}.tar.gz" CloneHeroCompanion ;;
+                     tar -C dist -czf "out/${{ matrix.asset }}" CloneHeroCompanion ;;
           esac
           ls -la out
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset }}
-          path: out/*
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: assets
-          merge-multiple: true
-      - name: Publish release
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          ls -la assets
-          gh release create "${GITHUB_REF_NAME}" assets/* --repo "${GITHUB_REPOSITORY}" \
-            --title "Clone Hero Companion ${GITHUB_REF_NAME}" --generate-notes || \
-          gh release upload "${GITHUB_REF_NAME}" assets/* --repo "${GITHUB_REPOSITORY}" --clobber
+        run: gh release upload "$GITHUB_REF_NAME" "out/${{ matrix.asset }}" --repo "$GITHUB_REPOSITORY" --clobber
