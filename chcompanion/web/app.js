@@ -179,6 +179,16 @@ function pills(s) {
     : s.lyrics === "none" ? `<span class="pill">—</span>` : `<span class="pill">…</span>`;
   return [vid, ly];
 }
+function levelsHtml(lv) {
+  // which difficulty levels a downloadable chart has: for the chosen instrument, else any instrument
+  if (!lv || !Object.keys(lv).length) return "";
+  const inst = $("#chartInst").value;
+  const have = new Set(inst ? (lv[inst] || []) : Object.values(lv).flat());
+  const want = $("#chartDiff").value;
+  const L = [["easy", "E"], ["medium", "M"], ["hard", "H"], ["expert", "X"]];
+  return `<div class="lv" title="Difficulty levels${inst ? " for " + inst : ""}: ${L.filter(([k]) => have.has(k)).map(([k]) => k).join(", ") || "none"}">`
+    + L.map(([k, l]) => `<i class="${have.has(k) ? "on" : ""}${k === want ? " want" : ""}">${l}</i>`).join("") + "</div>";
+}
 function instHtml(d) {
   const map = [["guitar", "G"], ["bass", "B"], ["rhythm", "R"], ["drums", "D"], ["keys", "K"], ["vocals", "V"]];
   return `<div class="inst">${map.filter(([k]) => k in d).map(([k, l]) => `<i class="${l}" title="${k} ${d[k]}">${l}</i>`).join("")}</div>`;
@@ -547,7 +557,7 @@ function renderCharts() {
       <div class="art"${c.artUrl ? ` style="background-image:url('${esc(c.artUrl)}')"` : ""}></div>
       ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="Listen before downloading">▶ Preview</button>' : ""}
       <div class="body"><b>${esc(c.name)}</b><span>${esc(c.artist)}</span><span>${esc(c.charter)}${c.length ? " · " + fmtLen(c.length) : ""}</span>
-      <div class="tags">${instHtml(c.difficulties || {})}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div></div></div>`).join("")
+      <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div></div></div>`).join("")
     || '<p class="hint">No charts found.</p>';
   const pages = Math.max(1, Math.ceil(charts.total / 48));
   $("#chartPager").innerHTML = `<button ${charts.page <= 1 ? "disabled" : ""} id="pgPrev">Previous</button> Page ${charts.page} of ${pages} · ${charts.total} charts <button ${charts.page >= pages ? "disabled" : ""} id="pgNext">Next</button>`;

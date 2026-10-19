@@ -227,3 +227,8 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 .setup-actions { display: flex; gap: 14px; align-items: center; }
 .favbtn.fav-on { color: var(--spot); border-color: var(--spot); }
 #fdaCard [hidden] { display: none !important; }
+/* difficulty levels on chart cards (E M H X) */
+.lv { display: flex; gap: 2px; margin-left: 4px; }
+.lv i { font-style: normal; font-size: 10px; font-weight: 700; width: 15px; height: 16px; border-radius: 3px; display: grid; place-items: center; color: rgba(246,241,231,.22); border: 1px solid rgba(246,241,231,.08); }
+.lv i.on { color: var(--ink, #f6f1e7); background: rgba(255,255,255,.1); border-color: transparent; }
+.lv i.on.want { background: var(--spot); color: var(--spot-ink); }

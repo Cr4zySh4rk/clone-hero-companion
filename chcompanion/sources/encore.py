@@ -51,6 +51,33 @@ def _diffs(c: dict) -> dict:
     return out
 
 
+LEVELS = ("easy", "medium", "hard", "expert")
+
+
+def _levels(c: dict) -> dict:
+    """Which difficulty levels each instrument actually has: {"guitar": ["easy", ..., "expert"]}."""
+    out: dict = {}
+    for n in (c.get("notesData") or {}).get("noteCounts") or []:
+        inst, lvl = n.get("instrument"), n.get("difficulty")
+        if inst and lvl in LEVELS and (n.get("count") or 0) > 0:
+            out.setdefault(inst, set()).add(lvl)
+    return {k: [l for l in LEVELS if l in v] for k, v in out.items()}
+
+
+def _matches(s: dict, instrument: str | None, difficulty: str | None) -> bool:
+    """Check a result against the filters using its real chart contents."""
+    lv = s.get("levels") or {}
+    if not lv:                       # no per-level data: trust the server's filtering
+        return not instrument or instrument in s["difficulties"] or not s["difficulties"]
+    if instrument and difficulty:
+        return difficulty in lv.get(instrument, [])
+    if instrument:
+        return instrument in lv
+    if difficulty:
+        return any(difficulty in v for v in lv.values())
+    return True
+
+
 def normalize(c: dict) -> dict:
     md5 = c.get("md5")
     art = c.get("albumArtMd5")
@@ -58,7 +85,7 @@ def normalize(c: dict) -> dict:
         "source": "encore", "id": f"encore:{c.get('chartId') or md5}", "md5": md5,
         "name": c.get("name") or "", "artist": c.get("artist") or "", "album": c.get("album") or "",
         "genre": c.get("genre") or "", "year": str(c.get("year") or ""), "charter": c.get("charter") or "",
-        "length": (c.get("song_length") or 0) / 1000 or None, "difficulties": _diffs(c),
+        "length": (c.get("song_length") or 0) / 1000 or None, "difficulties": _diffs(c), "levels": _levels(c),
         "hasVideo": bool(c.get("hasVideoBackground")), "hasVocals": bool((c.get("notesData") or {}).get("hasVocals")),
         "pack": c.get("packName"), "modified": c.get("modifiedTime"),
         "previewStart": (c.get("preview_start_time") or 0) / 1000 if (c.get("preview_start_time") or 0) > 0 else None,
@@ -72,11 +99,11 @@ def normalize(c: dict) -> dict:
 def search(text: str, page: int = 1, per_page: int = 50, instrument: str | None = None,
            difficulty: str | None = None, sort: str | None = None, direction: str = "asc") -> dict:
     body: dict = {"search": text or "", "page": max(1, page), "per_page": max(1, min(per_page, 250))}
-    if not (text or "").strip():
-        if instrument:
-            body["instrument"] = instrument
-        if difficulty:
-            body["difficulty"] = difficulty
+    # Encore applies these together with the search text too
+    if instrument:
+        body["instrument"] = instrument
+    if difficulty in LEVELS:
+        body["difficulty"] = difficulty
     if sort in SORTS:
         body["sort"] = {"type": SORTS[sort], "direction": direction}
     data = _post(body)
@@ -86,7 +113,7 @@ def search(text: str, page: int = 1, per_page: int = 50, instrument: str | None 
         if s["id"] in seen:
             continue
         seen.add(s["id"])
-        if instrument and text and instrument not in s["difficulties"]:
+        if not _matches(s, instrument, difficulty):
             continue
         songs.append(s)
     return {"songs": songs, "total": data.get("found", len(songs)), "page": page}
