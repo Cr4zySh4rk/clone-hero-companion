@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 import threading
@@ -214,7 +215,15 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             return _json(h, {"error": str(e)}, 400) or True
         owned = {norm_key(f"{clean_title(s.artist)} {clean_title(s.name)}"): song_id(s) for s in c.library.songs}
 
+        def base_title(title: str) -> str:
+            t = re.sub(r"\s*[-–]\s*(?:\d{4}\s+)?(?:remaster(?:ed)?|live|mono|stereo|single|radio edit|edit|"
+                       r"version|mix|acoustic|demo|bonus)\b.*$", "", title, flags=re.I)
+            t = re.sub(r"\s*[\(\[][^)\]]*(?:remaster|version|edit|mono|stereo|feat\.?|with )[^)\]]*[\)\]]", "", t,
+                       flags=re.I)
+            return t.strip() or title
+
         def match(t):
+            t = {**t, "title": base_title(t["title"])}
             key = norm_key(f"{t['artist']} {t['title']}")
             if key in owned:
                 return {**t, "owned": True, "songId": owned[key], "match": None}

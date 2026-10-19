@@ -143,7 +143,7 @@ def pad_video_start(src: Path, seconds: float) -> Path:
     webm = src.suffix.lower() == ".webm"
     dst = src.with_name("padded" + (".webm" if webm else ".mp4"))
     codec = (["-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime", "-cpu-used", "8"]
-             if webm else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+             if webm else ["-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p",
                            "-movflags", "+faststart"])
     r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
                         "-vf", f"tpad=start_duration={seconds:.3f}:color=black", *codec, str(dst)],
