@@ -304,7 +304,8 @@ async function setFav(ids, value) {
   lib.songs.forEach((x) => { if (keys.has(x.key)) x.fav = value; });
   updateFavCount(); renderTable(true); updateSelbar();
   if (detail && ids.includes(detail.id)) { detail.fav = value; paintDetailFav(); }
-  toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " songs to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " songs from"} favourites`);
+  if (!value && ids.length > 1) toast(`Removed ${ids.length} songs from favourites. Press F again to undo.`, 6000);
+  else toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " songs to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " songs from"} favourites`);
 }
 function paintDetailFav() {
   const b = $("#dFav"); if (!b || !detail) return;

@@ -404,7 +404,10 @@ class Companion:
                 if not r.get("video") and not r.get("lyrics") == "added":
                     parts.append("already set up")
         finally:
-            self.libmgr.refresh_song(song)
+            try:
+                self.libmgr.refresh_song(song)
+            except Exception as e:      # bookkeeping only; the song itself is done
+                log.warning("Could not refresh %s in the library view: %s", song.display, e)
         return "; ".join(parts) or "done"
 
     def _run_download(self, job: Job, progress) -> str:

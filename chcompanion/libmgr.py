@@ -65,6 +65,8 @@ class LibraryManager:
         self.enrich_progress = (0, 0)
         self.version = 0
         self._save_timer = None
+        self._save_lock = threading.Lock()
+        self._fav_lock = threading.Lock()
 
     # ------------------------------------------------------------ index
     def rescan(self):
@@ -212,11 +214,21 @@ class LibraryManager:
         self.save_cache()
 
     def save_cache(self):
+        """Write the library cache. Many workers finish at once, so writes are serialised,
+        and a failed write is only logged: it's a cache, never a reason to fail a job."""
         with self.lock:
             data = json.dumps(self.cache)
-        tmp = self.cache_path.with_suffix(".tmp")
-        tmp.write_text(data, "utf-8")
-        tmp.replace(self.cache_path)
+        with self._save_lock:
+            tmp = self.cache_path.with_name(f"{self.cache_path.name}.{os.getpid()}.tmp")
+            try:
+                tmp.write_text(data, "utf-8")
+                os.replace(tmp, self.cache_path)
+            except OSError as e:
+                log.warning("Could not save the library cache: %s", e)
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------ actions
     FAV_SETLIST = "Favourites"
@@ -241,6 +253,10 @@ class LibraryManager:
 
     def sync_fav_setlist(self) -> int:
         """Keep a 'Favourites' setlist in Clone Hero matching the favourites here (newest last)."""
+        with self._fav_lock:
+            return self._sync_fav_setlist()
+
+    def _sync_fav_setlist(self) -> int:
         try:
             with self.lock:
                 self._hash_index()
