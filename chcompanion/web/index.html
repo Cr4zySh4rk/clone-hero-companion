@@ -14,7 +14,7 @@
   --ink: #f6f1e7;          /* unsung lyric / text */
   --ink-dim: rgba(246, 241, 231, .58);
   --spot: #ffb52e;         /* stage-light amber: sung lyric */
-  --spot-glow: rgba(255, 181, 46, .55);
+  --spot-glow: rgba(255, 181, 46, .4);
   --green: #3cc85a; --red: #e8413a; --yellow: #f2d23a; --blue: #3a8ee8; --orange: #f08a2a;
   --lyric: clamp(2.2rem, 5.6vw, 5.4rem);
   --lyric-next: clamp(1.4rem, 3.2vw, 3rem);
@@ -69,10 +69,10 @@ body.no-video #video, body.no-video #yt { opacity: 0 !important; }
 #nxt { font-size: var(--lyric-next); color: var(--ink-dim); font-weight: 700; margin-top: .35em; min-height: 1.1em; }
 #cur .s { color: var(--ink); background-image: linear-gradient(90deg, var(--spot) 0 calc(var(--p, 0) * 100%), var(--ink) calc(var(--p, 0) * 100%) 100%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-#cur .s.done { filter: drop-shadow(0 0 14px var(--spot-glow)); }
+#cur .s.done { filter: drop-shadow(0 0 5px var(--spot-glow)); }
 #cur.enter { animation: rise .35s ease-out; }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-#wait { font-family: var(--display); font-size: var(--lyric-next); color: var(--ink-dim); height: 1.1em; display: flex; justify-content: center; gap: .4em; }
+#wait { visibility: hidden; font-family: var(--display); font-size: var(--lyric-next); color: var(--ink-dim); height: 1.1em; display: flex; justify-content: center; gap: .4em; }
 #wait i { width: .32em; height: .32em; border-radius: 50%; background: currentColor; align-self: center; opacity: .25; transition: opacity .3s, background .3s; }
 #wait i.lit { opacity: 1; background: var(--spot); }
 #source { position: fixed; left: clamp(16px, 3vw, 44px); bottom: 18px; font-size: .8rem; color: var(--ink-dim); }
@@ -104,7 +104,7 @@ body.no-video #video, body.no-video #yt { opacity: 0 !important; }
 #idle kbd { font-family: var(--ui); border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 1px 6px; font-size: .9em; }
 
 /* ---------- controls ---------- */
-#controls { position: fixed; right: clamp(16px, 3vw, 44px); bottom: 22px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+#controls { position: fixed; right: clamp(16px, 3vw, 44px); top: calc(clamp(16px, 3vw, 40px) + 34px); display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
   max-width: min(760px, calc(100vw - 32px)); transition: opacity .3s; }
 body.idle-ui #controls { opacity: 0; pointer-events: none; }
 #controls .grp { display: flex; align-items: center; gap: 2px; background: rgba(20,12,40,.78); backdrop-filter: blur(8px);
