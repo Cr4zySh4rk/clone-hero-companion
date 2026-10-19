@@ -285,13 +285,14 @@ class Companion:
                 "setup_done": False, "fav_setlist": True}
 
     def repair_videos(self) -> int:
-        """Rewrite videos we downloaded as DASH fragments (v2.0.0) into standard MP4s."""
+        """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
         from .ingame import repair_fragmented_videos
         with self.jobs.lock:
             active = {j.song_id for j in self.jobs.jobs.values() if j.status in ("queued", "running", "waiting")}
         playing = song_id(self.song) if self.song and self.clock.status in ("playing", "paused") else None
-        todo = [s for s in self.library.songs
-                if self.store.song(s.key).get("game_video") and song_id(s) not in active and song_id(s) != playing]
+        # every song: the fix is a lossless container rewrite, and older versions didn't
+        # record which videos they wrote
+        todo = [s for s in self.library.songs if song_id(s) not in active and song_id(s) != playing]
         n = repair_fragmented_videos(todo)
         if n:
             log.info("Fixed %d videos so they play on macOS", n)
