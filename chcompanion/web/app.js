@@ -690,6 +690,13 @@ async function loadSettings() {
     try { await api("/api/settings", { settings: { [k]: v } }); toast("Saved"); } catch (e) { toast(e.message); }
   }));
   $("#setChange").onclick = () => show("setup");
+  api("/api/macperm").then((m) => {
+    if (!m.applicable) return;
+    const row = document.createElement("div"); row.className = "row2";
+    row.innerHTML = `<span>Full Disk Access</span><span>${m.fda ? "✓ On" : `Off: macOS asks folder by folder. <button id="setFda">Grant Full Disk Access…</button>`}</span>`;
+    $("#setChange").closest(".row2").before(row);
+    const btn = $("#setFda"); if (btn) btn.onclick = () => show("setup");
+  }).catch(() => {});
   $("#setOpen").onclick = () => api("/api/open", {});
   $("#setRescan").onclick = async () => { await api("/api/library/rescan", {}); toast("Rescanning…"); };
 }
@@ -731,7 +738,26 @@ async function addSongDir(p) {
 function foundChips(sel, list, target) {
   $(sel).innerHTML = list.length > 0 ? `<span class="hint">Found:</span>` + list.map((p) => `<button data-use="${esc(p)}" data-target="${target}">${esc(p)}</button>`).join("") : `<span class="hint">Nothing found automatically. Use Browse.</span>`;
 }
+async function loadFda() {
+  let m; try { m = await api("/api/macperm"); } catch (e) { return; }
+  $("#fdaCard").hidden = !m.applicable;
+  if (!m.applicable) return;
+  $("#fdaStatus").textContent = m.fda ? "✓ Full Disk Access is on" : "Not granted yet: macOS will ask about protected folders one by one.";
+  $("#fdaStatus").className = "status " + (m.fda ? "ok" : "");
+  $("#fdaOpen").hidden = !!m.fda;
+  if (m.fda) { $("#fdaSteps").hidden = true; $("#fdaRestart").hidden = true; }
+}
+$("#fdaOpen").onclick = async () => {
+  await api("/api/macperm/open", {});
+  $("#fdaSteps").hidden = false; $("#fdaRestart").hidden = false;
+  toast("System Settings opened at Full Disk Access", 4000);
+};
+$("#fdaRestart").onclick = async () => {
+  const r = await api("/api/restart", {});
+  toast(r.ok ? "Restarting…" : "Quit and open the app again to finish", 5000);
+};
 async function loadSetup() {
+  loadFda();
   const d = await api("/api/setup");
   setup.detected = d.detected;
   const h = PLAT_HINT[d.detected.platform] || PLAT_HINT.linux;

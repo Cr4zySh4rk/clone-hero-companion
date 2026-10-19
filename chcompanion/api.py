@@ -328,6 +328,18 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         roots = P.song_dirs(data, only=songs or None)
         c.reconfigure(data, roots)
         return _json(h, {"ok": True, "dataDir": str(data), "songDirs": [str(r) for r in roots]}) or True
+    if path == "/api/macperm" and method == "GET":
+        from . import macperm
+        return _json(h, {"applicable": macperm.applicable(),
+                         "fda": macperm.has_full_disk_access(fresh=True),
+                         "bundle": str(macperm.app_bundle() or "")}) or True
+    if path == "/api/macperm/open" and method == "POST":
+        from . import macperm
+        return _json(h, {"ok": macperm.open_settings()}) or True
+    if path == "/api/restart" and method == "POST":
+        from . import macperm
+        ok = macperm.relaunch(c.quit_requested)
+        return _json(h, {"ok": ok}) or True
     if path == "/api/browse" and method == "POST":
         from .gui import pick_path
         res = pick_path(body.get("kind", "folder"), body.get("start") or "")

@@ -168,6 +168,16 @@
       <div class="settings setup" id="setupForm">
         <h2>Where is Clone Hero?</h2>
         <p class="hint">The app needs three locations. Anything found automatically is filled in; check it, or use Browse to pick a different place. This works wherever Clone Hero and your songs are kept, on any drive.</p>
+        <section id="fdaCard" hidden>
+          <h3>Full Disk Access (recommended on macOS)</h3>
+          <p class="hint">Without it, macOS asks separately for every protected folder (Documents, Desktop, Downloads, external drives). With Full Disk Access the app can find and manage songs wherever they are, without prompts. Only you can switch it on: the button opens the right page in System Settings.</p>
+          <div class="status" id="fdaStatus"></div>
+          <div class="d-row" id="fdaBtns"><button class="primary" id="fdaOpen">Grant Full Disk Access…</button><button id="fdaRestart" hidden>Restart the app</button></div>
+          <ol class="hint" id="fdaSteps" hidden>
+            <li>In System Settings, find <b>Clone Hero Companion</b> in the list and switch it on. If it isn't listed, click <b>+</b> and choose it from Applications (a Finder window with the app is open too; you can drag it in).</li>
+            <li>macOS then offers <b>Quit &amp; Reopen</b>; choose it, or click <b>Restart the app</b> here.</li>
+          </ol>
+        </section>
         <section>
           <h3>1 · The game</h3>
           <p class="hint" id="suGameHint"></p>

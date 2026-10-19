@@ -131,6 +131,9 @@ def _protected_roots() -> list[Path]:
     was found elsewhere (a folder picked with Browse is always allowed)."""
     if sys.platform != "darwin":
         return []
+    from .macperm import protected_ok
+    if protected_ok():          # Full Disk Access is on: nothing will prompt
+        return []
     home = Path.home()
     return [home / "Desktop", home / "Documents", home / "Downloads", home / "Library" / "Mobile Documents"]
 
