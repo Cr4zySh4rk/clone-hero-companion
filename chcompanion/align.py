@@ -78,7 +78,7 @@ def _xcorr(a, b, max_lag_s: float, min_lag_s: float):
     while n < len(a) + len(b):
         n *= 2
     corr = np.fft.irfft(np.conj(np.fft.rfft(a, n)) * np.fft.rfft(b, n), n)
-    lo, hi = int(min_lag_s * SR / HOP), int(max_lag_s * SR / HOP)
+    lo, hi = int(round(min_lag_s * SR / HOP)), int(round(max_lag_s * SR / HOP))
     ks = np.arange(lo, hi + 1)
     vals = corr[ks % n]
     i = int(np.argmax(vals))
@@ -108,3 +108,55 @@ def find_offset(song_audio: list[Path], video_audio: Path, max_lag: float = 90.0
         return results[0][0] if results[0][1] > results[1][1] else results[1][0], 0.0
     off = sum(r[0] for r in results) / len(results)
     return float(off), float(min(r[1] for r in results))
+
+
+def vocal_activity(paths: list[Path], seconds: float = 600.0):
+    """Per-hop (10 ms) 0/1 curve of when the vocal stem is audible."""
+    import numpy as np
+    x = decode(paths, seconds=seconds)
+    n = len(x) // HOP
+    if n < 100:
+        return np.zeros(1)
+    rms = np.sqrt((x[: n * HOP].reshape(n, HOP) ** 2).mean(axis=1))
+    # smooth over ~100 ms and threshold relative to the loud parts
+    k = np.ones(10) / 10
+    rms = np.convolve(rms, k, mode="same")
+    thr = max(np.percentile(rms, 95) * 0.12, 1e-4)
+    return (rms > thr).astype(np.float32)
+
+
+def lyric_activity(lines: list[dict], n: int):
+    import numpy as np
+    a = np.zeros(n, dtype=np.float32)
+    for line in lines:
+        for s in line["syls"]:
+            i, j = int(s["t"] * SR / HOP), int(max(s["e"], s["t"] + 0.15) * SR / HOP)
+            if i < n:
+                a[i:min(j, n)] = 1.0
+    return a
+
+
+def lyrics_offset(vocal_paths: list[Path], lines: list[dict], max_lag: float = 20.0) -> tuple[float, float]:
+    """Seconds to add to the lyric timestamps so they line up with the vocal stem,
+    and a confidence (0 when the two halves of the song disagree)."""
+    import numpy as np
+    voc = vocal_activity(vocal_paths)
+    if not voc.any() or len(lines) < 4:
+        return 0.0, 0.0
+    v = voc - voc.mean()
+    results = []
+    half = len(lines) // 2
+    for part in (lines[:half], lines[half:]):
+        la = lyric_activity(part, len(voc))
+        if not la.any():
+            continue
+        la -= la.mean()
+        # la[t] (lyric time) matches v[t + k]  =>  shift lyrics by +k
+        k, z = _xcorr(la, v, max_lag_s=max_lag, min_lag_s=-max_lag)
+        results.append((k * HOP / SR, z))
+    if len(results) < 2:
+        return 0.0, 0.0
+    if abs(results[0][0] - results[1][0]) > 0.35:
+        log.debug("lyric alignment halves disagree: %s", results)
+        return 0.0, 0.0
+    return (results[0][0] + results[1][0]) / 2, min(r[1] for r in results)

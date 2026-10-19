@@ -74,7 +74,11 @@ def midi_with_lyrics(original: bytes, lines: list[dict], delay_s: float, offset_
     header, chunks = split_chunks(original)
     names = [chunk_track_name(c).strip().upper() for c in chunks]
     if "PART VOCALS" in names:
-        raise InGameError("chart already has a vocals track")
+        i = names.index("PART VOCALS")
+        existing = parse_midi(header + chunks[i], keep_tracks={"PART VOCALS"}).tracks[0]
+        if any(not t.strip().startswith("[") for _tick, _ty, t in existing.texts):
+            raise InGameError("chart already has lyrics")
+        del chunks[i]  # a vocals track without any lyrics: replace it
     marker = MARKER.encode()
     events = [(0, -1, b"\xff\x01" + encode_varlen(len(marker)) + marker)]
     events += _word_events(lines, lambda t: tm.ticks(t - delay_s), offset_s)
@@ -208,6 +212,41 @@ def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path) -> tuple[float,
     return align.find_offset(paths, audio)
 
 
+LYRICS_MIN_Z = 5.0
+
+
+def auto_lyrics_offset(song: Song, lines: list[dict]) -> float | None:
+    """Line LRCLIB lyrics up with the chart's vocal stem, if it has one."""
+    from . import align
+    stems = [n for n in song.list_files()
+             if n.lower().rsplit(".", 1)[0] in ("vocals", "vocals_1", "vocals_2")
+             and "." + n.lower().rsplit(".", 1)[-1] in align.AUDIO_EXT]
+    if not stems:
+        return None
+    tmp = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
+    try:
+        paths = []
+        for n in stems:
+            if song.is_sng:
+                p = tmp / n
+                p.write_bytes(song.read_file(n) or b"")
+                paths.append(p)
+            else:
+                paths.append(song.path / n)
+        off, z = align.lyrics_offset(paths, lines)
+        # chart audio may be delayed relative to the chart; lyrics are in audio time already
+        if z >= LYRICS_MIN_Z:
+            log.info("Lyrics for %s lined up with the vocals: %+0.2fs (confidence %.0f)", song.display, off, z)
+            return off
+        log.info("Lyrics for %s: no reliable match with the vocal track (confidence %.1f)", song.display, z)
+        return None
+    except Exception as e:
+        log.warning("Could not line up lyrics for %s: %s", song.display, e)
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _codec(p: Path) -> str:
     ff = _ffmpeg()
     if not ff:
@@ -251,6 +290,11 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             lines = lyr.fetch_lrclib(song.artist, song.name, song.length_s)
             if not lines:
                 result["lyrics"] = "none found"
+            elif "lyrics_offset" not in per or per.get("lyrics_offset_auto"):
+                shift = auto_lyrics_offset(song, lines)
+                if shift is not None:
+                    store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
+                    per = store.song(song.key)
         want_video = video and (force_video or not has_video(song))
         vpath = None
         if want_video:
