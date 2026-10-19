@@ -107,6 +107,16 @@ class ClockTests(unittest.TestCase):
         self.feed("[Log] Seeking to song time:82.3", 130.0)    # menu preview => quit
         self.assertEqual(st.status, "idle")
 
+    def test_early_pause_resume_via_countdown(self):
+        self.feed("[Log] Loading Song: A - B", 0)
+        self.feed("[Log] OnCountdownStart", 0.5)
+        self.feed("[Log] Seeking to song time:0.699", 2.5)   # paused within 1.5 s
+        self.assertEqual(self.w.state.status, "paused")
+        self.feed("[Log] OnCountdownEnd", 20)                # no rewind seek is logged
+        self.assertEqual(self.w.state.status, "playing")
+        self.feed("[Log] Seeking to song time:46.68", 55)    # next pause re-syncs
+        self.assertAlmostEqual(self.w.state.now(), 46.68)
+
     def test_restart_and_finish(self):
         self.feed("[Log] Loading Song: A - B", 0)
         self.feed("[Log] Seeking to song time:132.268", 135)

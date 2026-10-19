@@ -15,7 +15,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, youtube
+from . import __version__, net, youtube
 from .installer import InstallError, install_video
 from .library import Library, Song
 from .logwatch import ClockState, LogWatcher
@@ -328,7 +328,7 @@ class Handler(BaseHTTPRequestHandler):
                 headers["Range"] = self.headers["Range"]
             req = urllib.request.Request(r["url"], headers=headers)
             try:
-                up = urllib.request.urlopen(req, timeout=20)
+                up = net.urlopen(req, timeout=20)
             except urllib.error.HTTPError as e:
                 if e.code in (403, 410) and attempt == 0:
                     c.yt._cache.pop(vid, None)
@@ -372,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/state":
                 return self._json(c.snapshot())
             if p == "/api/debug":
-                return self._json({"events": c.watcher.debug_events, "log": c.watcher.current_file,
+                return self._json({"events": c.watcher.debug_events, "raw": c.watcher.raw_lines[-120:], "log": c.watcher.current_file,
                                    "startLead": c.store.get("start_lead"),
                                    "leadSamples": c.store.get("lead_samples"),
                                    "songs": len(c.library.songs)})

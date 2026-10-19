@@ -10,6 +10,7 @@ import urllib.request
 
 from . import __version__
 from .midi import TempoMap, parse_midi
+from .net import urlopen
 
 log = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ def parse_lrc(lrc: str) -> list[dict]:
 def _http_json(url: str, timeout: float = 8.0):
     req = urllib.request.Request(url, headers={
         "User-Agent": f"CloneHeroCompanion/{__version__} (https://github.com/Cr4zySh4rk/clone-hero-companion)"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 

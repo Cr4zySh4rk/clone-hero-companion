@@ -87,7 +87,7 @@ jobs:
           case "$RUNNER_OS" in
             Windows) cp dist/CloneHeroCompanion.exe "out/${{ matrix.asset }}" ;;
             macOS)   chmod +x dist/CloneHeroCompanion
-                     ditto -c -k --keepParent dist/CloneHeroCompanion "out/${{ matrix.asset }}" ;;
+                     (cd dist && zip -q -X "../out/${{ matrix.asset }}" CloneHeroCompanion) ;;
             Linux)   chmod +x dist/CloneHeroCompanion
                      tar -C dist -czf "out/${{ matrix.asset }}" CloneHeroCompanion ;;
           esac

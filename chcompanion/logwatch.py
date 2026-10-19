@@ -69,6 +69,7 @@ class LogWatcher(threading.Thread):
         self._stop = threading.Event()
         self.current_file: str | None = None
         self.debug_events: list[str] = []
+        self.raw_lines: list[str] = []
 
     # ------------------------------------------------------------ helpers
     def _latest_log(self) -> str | None:
@@ -155,10 +156,13 @@ class LogWatcher(threading.Thread):
             if "Cancelling session" in line and s.status in ("playing", "paused"):
                 self._idle("cancel")
                 return
-            if "OnCountdownEnd" in line and s.status == "paused":
-                # countdown after a resume without an observed rewind seek
+            if "OnCountdownEnd" in line and s.status == "paused" and (s.pause_x or 0) < RESUME_REWIND + 0.1:
+                # Pausing in the first ~1.5 s: the game resumes without logging a rewind
+                # seek. OnCountdownEnd (the pre-note count-in finishing) at least tells us
+                # it is playing again; the next pause re-syncs the exact time.
                 s.status, s.rate = "playing", s.speed
                 s.anchor_wall = now
+                s.pause_x = None
                 self._emit("resume-countdown")
 
     def _pause(self, x: float, now: float):
@@ -226,6 +230,10 @@ class LogWatcher(threading.Thread):
                 while "\n" in buf:
                     line, buf = buf.split("\n", 1)
                     if line.startswith("["):
-                        self.handle_line(line.rstrip("\r"))
+                        line = line.rstrip("\r")
+                        if "event batch" not in line and "i18n" not in line:
+                            self.raw_lines.append(f"{time.time():.3f} {line[:200]}")
+                            del self.raw_lines[:-300]
+                        self.handle_line(line)
             else:
                 time.sleep(self.poll)
