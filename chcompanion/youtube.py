@@ -113,6 +113,27 @@ class YouTube:
         out.sort(key=lambda c: -c["score"])
         return out
 
+    def find_album_audio(self, artist: str, track: str, duration: float) -> dict | None:
+        """A YouTube upload of the album recording (duration within 2 s), e.g. a Topic track."""
+        from yt_dlp import YoutubeDL
+        q = f"{clean_title(artist)} - {clean_title(track)} audio"
+        with YoutubeDL(_ydl_opts(extract_flat="in_playlist")) as ydl:
+            info = ydl.extract_info(f"ytsearch10:{q}", download=False)
+        best, best_key = None, None
+        name = norm_key(track)
+        for e in (info or {}).get("entries") or []:
+            d = e.get("duration") if e else None
+            if not d or abs(d - duration) > 2.0:
+                continue
+            title = norm_key(e.get("title") or "")
+            chan = norm_key(e.get("channel") or e.get("uploader") or "")
+            if name and name.split()[0] not in title:
+                continue
+            key = (chan.endswith(" topic"), "audio" in title.split(), -abs(d - duration))
+            if best_key is None or key > best_key:
+                best, best_key = e, key
+        return best
+
     def best(self, song: Song) -> dict | None:
         """Best candidate, or None if nothing looks like this song's video."""
         c = self.search(song)

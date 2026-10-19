@@ -215,30 +215,50 @@ def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path) -> tuple[float,
 LYRICS_MIN_Z = 5.0
 
 
-def auto_lyrics_offset(song: Song, lines: list[dict]) -> float | None:
-    """Line LRCLIB lyrics up with the chart's vocal stem, if it has one."""
+def _audio_paths(song: Song, names: list[str], tmp: Path) -> list[Path]:
+    paths = []
+    for n in names:
+        if song.is_sng:
+            p = tmp / ("stem_" + n)
+            p.write_bytes(song.read_file(n) or b"")
+            paths.append(p)
+        else:
+            paths.append(song.path / n)
+    return paths
+
+
+def auto_lyrics_offset(song: Song, entry: dict, yt: YouTube) -> float | None:
+    """LRCLIB timestamps follow the album recording. Find that recording on YouTube
+    (same duration), cross-correlate it with the chart audio and return the shift to
+    apply to the lyrics. Falls back to matching the chart's vocal stem."""
     from . import align
-    stems = [n for n in song.list_files()
-             if n.lower().rsplit(".", 1)[0] in ("vocals", "vocals_1", "vocals_2")
-             and "." + n.lower().rsplit(".", 1)[-1] in align.AUDIO_EXT]
-    if not stems:
-        return None
     tmp = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
     try:
-        paths = []
-        for n in stems:
-            if song.is_sng:
-                p = tmp / n
-                p.write_bytes(song.read_file(n) or b"")
-                paths.append(p)
-            else:
-                paths.append(song.path / n)
-        off, z = align.lyrics_offset(paths, lines)
-        # chart audio may be delayed relative to the chart; lyrics are in audio time already
-        if z >= LYRICS_MIN_Z:
-            log.info("Lyrics for %s lined up with the vocals: %+0.2fs (confidence %.0f)", song.display, off, z)
-            return off
-        log.info("Lyrics for %s: no reliable match with the vocal track (confidence %.1f)", song.display, z)
+        chart = _audio_paths(song, align.chart_audio_files(song.list_files()), tmp)
+        if not chart:
+            return None
+        if entry.get("duration"):
+            try:
+                cand = yt.find_album_audio(entry.get("artist") or song.artist,
+                                           entry.get("track") or song.name, float(entry["duration"]))
+                if cand:
+                    audio = Path(yt.download_audio(cand["id"], str(tmp / "album")))
+                    off, z = align.find_offset(chart, audio, max_lag=60.0)
+                    if z >= ALIGN_MIN_Z:
+                        log.info("Lyrics for %s lined up via the album audio: %+0.2fs (confidence %.0f)",
+                                 song.display, -off, z)
+                        return -off
+                    log.info("Lyrics for %s: album audio didn't match the chart audio (confidence %.1f)",
+                             song.display, z)
+            except Exception as e:
+                log.debug("album-audio alignment failed: %s", e)
+        vocals = [p for p in chart if p.name.lower().replace("stem_", "").startswith("vocals")]
+        if vocals:
+            off, z = align.lyrics_offset(vocals, entry["lines"])
+            if z >= LYRICS_MIN_Z:
+                log.info("Lyrics for %s lined up with the vocal track: %+0.2fs (confidence %.0f)",
+                         song.display, off, z)
+                return off
         return None
     except Exception as e:
         log.warning("Could not line up lyrics for %s: %s", song.display, e)
@@ -287,11 +307,14 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         if want_lyrics:
             if progress:
                 progress("finding lyrics")
-            lines = lyr.fetch_lrclib(song.artist, song.name, song.length_s)
+            entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
+            lines = entry["lines"] if entry else []
             if not lines:
                 result["lyrics"] = "none found"
             elif "lyrics_offset" not in per or per.get("lyrics_offset_auto"):
-                shift = auto_lyrics_offset(song, lines)
+                if progress:
+                    progress("lining the lyrics up with the song")
+                shift = auto_lyrics_offset(song, entry, yt)
                 if shift is not None:
                     store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
                     per = store.song(song.key)
@@ -316,6 +339,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
         if result["lyrics"] == "added":
             changes["game_lyrics"] = True
+            changes["lyrics_offset_written"] = off_l
         if changes:
             store.update_song(song.key, **changes)
         return result

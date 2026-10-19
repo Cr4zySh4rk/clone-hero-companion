@@ -248,6 +248,17 @@ def clean_title(s: str) -> str:
 
 
 def fetch_lrclib(artist: str, title: str, duration_s: float | None) -> list[dict]:
+    e = fetch_lrclib_entry(artist, title, duration_s)
+    return e["lines"] if e else []
+
+
+def _entry(data: dict) -> dict:
+    return {"lines": parse_lrc(data["syncedLyrics"]), "duration": data.get("duration"),
+            "artist": data.get("artistName"), "track": data.get("trackName"), "album": data.get("albumName")}
+
+
+def fetch_lrclib_entry(artist: str, title: str, duration_s: float | None) -> dict | None:
+    """Best LRCLIB match with synced lyrics: {lines, duration, artist, track, album}."""
     artist, title = clean_title(artist), clean_title(title)
     base = "https://lrclib.net/api"
     attempts = []
@@ -260,7 +271,7 @@ def fetch_lrclib(artist: str, title: str, duration_s: float | None) -> list[dict
         try:
             data = _http_json(url)
             if data and data.get("syncedLyrics"):
-                return parse_lrc(data["syncedLyrics"])
+                return _entry(data)
         except Exception as e:  # 404 etc.
             log.debug("lrclib %s: %s", url, e)
     try:
@@ -274,7 +285,7 @@ def fetch_lrclib(artist: str, title: str, duration_s: float | None) -> list[dict
             if score < best_score:
                 best, best_score = r, score
         if best and (not duration_s or best_score < 20):
-            return parse_lrc(best["syncedLyrics"])
+            return _entry(best)
     except Exception as e:
         log.debug("lrclib search: %s", e)
-    return []
+    return None

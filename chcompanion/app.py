@@ -98,7 +98,8 @@ class Companion:
             "clock": self.clock.public(),
             "song": self.song_info,
             "video": self.video,
-            "offsets": {"lyrics": float(per.get("lyrics_offset", 0.0)),
+            "offsets": {"lyrics": float(per.get("lyrics_offset", 0.0))
+                        - (float(per.get("lyrics_offset_written", 0.0) or 0.0) if per.get("game_lyrics") else 0.0),
                         "video": float(per.get("video_offset", 0.0)),
                         "globalLyrics": float(self.store.get("lyrics_offset", 0.0))},
             "notice": self.notice,
