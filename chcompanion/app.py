@@ -588,6 +588,11 @@ class Preparer(threading.Thread):
                     else "already set up"
                 log.info("In-game: %s: %s", song.display, msg)
                 prog(msg)
+            except PermissionError as e:
+                # Windows: the game has the file open (e.g. playing its preview). Try later.
+                log.info("%s is in use by the game; will retry: %s", song.display, e)
+                prog("waiting for the game to release the song files")
+                threading.Timer(30.0, lambda s=song: self.add(s, priority=4)).start()
             except Exception as e:
                 log.warning("In-game setup failed for %s: %s", song.display, e)
                 self.failed.add(key)
