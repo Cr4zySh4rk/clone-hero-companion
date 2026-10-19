@@ -142,14 +142,12 @@ def pad_video_start(src: Path, seconds: float) -> Path:
         raise InGameError("ffmpeg not available")
     webm = src.suffix.lower() == ".webm"
     dst = src.with_name("padded" + (".webm" if webm else ".mp4"))
-    codec = (["-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime", "-cpu-used", "8"]
-             if webm else ["-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p",
-                           "-movflags", "+faststart"])
-    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
-                        "-vf", f"tpad=start_duration={seconds:.3f}:color=black", *codec, str(dst)],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+    vf = ["-vf", f"tpad=start_duration={seconds:.3f}:color=black"]
+    if webm:
+        _encode(ff, src, dst, vf + ["-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime",
+                                    "-cpu-used", "8"])
+    else:
+        _encode_h264(ff, src, dst, vf)
     src.unlink(missing_ok=True)
     return dst.rename(src.with_name("video" + dst.suffix))
 
@@ -191,11 +189,40 @@ def _to_h264(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
         raise InGameError("ffmpeg not available to convert the video")
-    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-                        "-movflags", "+faststart", str(dst)], capture_output=True, text=True)
+    _encode_h264(ff, src, dst, [])
+
+
+# Re-encodes are CPU heavy: run only a few at once so downloads and lookups keep moving.
+_ENCODES = threading.Semaphore(max(2, (os.cpu_count() or 4) // 4))
+_HW = {"ok": None}     # does this ffmpeg have a working hardware H.264 encoder?
+
+
+def _encode(ff: str, src: Path, dst: Path, args: list[str]) -> None:
+    with _ENCODES:
+        r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", *args, str(dst)],
+                           capture_output=True, text=True)
     if r.returncode != 0:
+        dst.unlink(missing_ok=True)
         raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+
+
+def _encode_h264(ff: str, src: Path, dst: Path, pre: list[str]) -> None:
+    """H.264 for Clone Hero: Apple's hardware encoder on macOS (fast, light on the CPU),
+    otherwise x264."""
+    tail = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    if sys.platform == "darwin" and _HW["ok"] is not False:
+        try:
+            _wh, kbps = _probe(src)
+            rate = max(3500, min(9000, int(kbps * 1.4) if kbps else 5000))
+            _encode(ff, src, dst, pre + ["-c:v", "h264_videotoolbox", "-b:v", f"{rate}k", "-profile:v", "high",
+                                         "-allow_sw", "1", *tail])
+            _HW["ok"] = True
+            return
+        except InGameError as e:
+            if _HW["ok"] is None:
+                log.info("Hardware video encoder not available (%s); using x264", str(e)[:120])
+            _HW["ok"] = False
+    _encode(ff, src, dst, pre + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", *tail])
 
 
 STD_MP4_BRANDS = {b"isom", b"mp42", b"mp41", b"avc1", b"M4V ", b"qt  ", b"iso2"}
