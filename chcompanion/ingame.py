@@ -134,6 +134,26 @@ def _ffmpeg() -> str | None:
     return ffmpeg_path()
 
 
+def pad_video_start(src: Path, seconds: float) -> Path:
+    """Prepend `seconds` of black so the video can start together with the song
+    (instead of relying on a negative video_start_time)."""
+    ff = _ffmpeg()
+    if not ff:
+        raise InGameError("ffmpeg not available")
+    webm = src.suffix.lower() == ".webm"
+    dst = src.with_name("padded" + (".webm" if webm else ".mp4"))
+    codec = (["-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime", "-cpu-used", "8"]
+             if webm else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+                           "-movflags", "+faststart"])
+    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
+                        "-vf", f"tpad=start_duration={seconds:.3f}:color=black", *codec, str(dst)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+    src.unlink(missing_ok=True)
+    return dst.rename(src.with_name("video" + dst.suffix))
+
+
 def _to_vp8(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
@@ -360,12 +380,21 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             vpath = download_video(song, yt, store, progress)
             per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
+        write_v = off_v  # value for video_start_time
+        if vpath and off_v <= -0.05:
+            try:
+                if progress:
+                    progress("adjusting the video start")
+                vpath = pad_video_start(vpath, -off_v)
+                write_v = 0.0
+            except Exception as e:
+                log.warning("Could not pad the video (%s); using a negative video_start_time", e)
         off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
         try:
             if song.is_sng:
-                _apply_sng(song, vpath, lines, off_l, off_v, result)
+                _apply_sng(song, vpath, lines, off_l, write_v, result)
             else:
-                _apply_folder(song, vpath, lines, off_l, off_v, result)
+                _apply_folder(song, vpath, lines, off_l, write_v, result)
         finally:
             if vpath:
                 shutil.rmtree(vpath.parent, ignore_errors=True)
@@ -373,6 +402,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         if result["video"]:
             changes["game_video"] = result["video"]
             changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
+            changes["video_padded"] = round(off_v - write_v, 3) or None
         if result["lyrics"] == "added":
             changes["game_lyrics"] = True
             changes["lyrics_offset_written"] = off_l
@@ -392,7 +422,7 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
         shutil.copyfile(vpath, tmp)
         os.replace(tmp, dst)
         result["video"] = dst.name
-        if abs(off_v) >= 0.05:
+        if abs(off_v) >= 0.05 or "video_start_time" in song.meta:
             _set_ini(song, "video_start_time", int(round(off_v * 1000)))
     if lines:
         mid = song.path / "notes.mid"
@@ -427,7 +457,7 @@ def _apply_sng(song: Song, vpath: Path | None, lines, off_l, off_v, result):
                 del files[n]
         files["video" + vpath.suffix.lower()] = vpath.read_bytes()
         result["video"] = "video" + vpath.suffix.lower() + " (inside .sng)"
-        if abs(off_v) >= 0.05:
+        if abs(off_v) >= 0.05 or "video_start_time" in meta:
             meta["video_start_time"] = str(int(round(off_v * 1000)))
         changed = True
     if lines:
