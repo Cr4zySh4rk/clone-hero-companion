@@ -279,6 +279,13 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
         return _json(h, {"settings": c.update_settings(s)}) or True
+    if path == "/api/window" and method == "POST":
+        from .gui import open_extra_window
+        port = h.server.server_address[1]
+        page = body.get("page", "now")
+        url = f"http://127.0.0.1:{port}/{'now' if page == 'now' else ''}"
+        kind = open_extra_window(url, "Clone Hero Companion — Now Playing", bool(body.get("fullscreen")))
+        return _json(h, {"ok": True, "kind": kind}) or True
     if path == "/api/game/launch" and method == "POST":
         game = find_game(c.data_dir, c.settings().get("game_path"))
         if not game:

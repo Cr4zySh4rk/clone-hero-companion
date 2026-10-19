@@ -46,7 +46,37 @@ def _browser_app(url: str, profile: Path) -> subprocess.Popen | None:
     return None
 
 
+_extra = {"webview": None, "profile": None, "procs": []}
+
+
+def open_extra_window(url: str, title: str = "Now Playing", fullscreen: bool = False) -> str:
+    """Open another app window (e.g. the Now Playing screen for a second monitor)."""
+    wv = _extra["webview"]
+    if wv is not None:
+        kw = {}
+        try:
+            screens = list(wv.screens)
+            if len(screens) > 1:          # put it on the second display
+                kw["screen"] = screens[1]
+        except Exception:
+            pass
+        try:
+            w = wv.create_window(title, url, width=1280, height=720, background_color="#160d2b",
+                                 fullscreen=fullscreen, **kw)
+        except TypeError:
+            w = wv.create_window(title, url, width=1280, height=720, background_color="#160d2b",
+                                 fullscreen=fullscreen)
+        return "window" if w else "failed"
+    proc = _browser_app(url, Path(_extra["profile"] or Path.home()))
+    if proc:
+        _extra["procs"].append(proc)
+        return "app-window"
+    webbrowser.open(url)
+    return "browser"
+
+
 def run_window(url: str, quit_event: threading.Event, profile: Path) -> None:
+    _extra["profile"] = str(profile)
     """Blocks until the window is closed or quit_event is set."""
     if os.environ.get("CHC_NO_WEBVIEW") != "1":
         try:
@@ -62,6 +92,17 @@ def run_window(url: str, quit_event: threading.Event, profile: Path) -> None:
                 except Exception:
                     pass
             threading.Thread(target=watch, daemon=True).start()
+            _extra["webview"] = webview
+
+            def on_closed():
+                # closing the main window quits the app (and any extra windows)
+                quit_event.set()
+                for w in list(webview.windows):
+                    try:
+                        w.destroy()
+                    except Exception:
+                        pass
+            window.events.closed += on_closed
             webview.start(private_mode=False, storage_path=str(profile))
             return
         except Exception as e:

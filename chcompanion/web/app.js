@@ -419,6 +419,18 @@ function playSong(id) {
 }
 $("#plToggle").onclick = () => { const a = $("#plAudio"); if (a.paused) { a.play(); $("#plToggle").textContent = "Pause"; } else { a.pause(); $("#plToggle").textContent = "Play"; } };
 
+/* ================================================================ now playing window */
+async function openNowWindow(fullscreen) {
+  try {
+    const r = await api("/api/window", { page: "now", fullscreen });
+    toast(r.kind === "window" ? "Opened. Drag it to your second screen (fullscreen: ⌃⌘F on Mac, F11 on Windows)."
+      : "Opened in a separate window", 5000);
+    $("#nowFrame").src = "about:blank";   // don't run two copies of the video
+  } catch (e) { toast(e.message, 4000); }
+}
+$("#nowWin").onclick = () => openNowWindow(false);
+$("#nowFull").onclick = () => openNowWindow(true);
+
 /* ================================================================ setlists */
 let setlists = [], slActive = null;
 async function loadSetlists() {
