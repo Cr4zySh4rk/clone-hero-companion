@@ -1,0 +1,98 @@
+name: Build executables
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: CloneHeroCompanion-windows-x64.exe
+          - os: macos-14
+            asset: CloneHeroCompanion-macos-arm64
+          - os: macos-15-intel
+            asset: CloneHeroCompanion-macos-x64
+          - os: ubuntu-22.04
+            asset: CloneHeroCompanion-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onefile --console --name CloneHeroCompanion \
+            --add-data "chcompanion/web:chcompanion/web" \
+            --collect-data yt_dlp_ejs \
+            --hidden-import yt_dlp \
+            run.py
+          ls -la dist
+      - name: Smoke test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN=dist/CloneHeroCompanion.exe; else BIN=dist/CloneHeroCompanion; fi
+          "$BIN" --version
+          mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
+          printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
+          "$BIN" doctor --data-dir "$RUNNER_TEMP/ch"
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          case "$RUNNER_OS" in
+            Windows) cp dist/CloneHeroCompanion.exe "out/${{ matrix.asset }}" ;;
+            macOS)   chmod +x dist/CloneHeroCompanion
+                     ditto -c -k --keepParent dist/CloneHeroCompanion "out/${{ matrix.asset }}.zip" ;;
+            Linux)   chmod +x dist/CloneHeroCompanion
+                     tar -C dist -czf "out/${{ matrix.asset }}.tar.gz" CloneHeroCompanion ;;
+          esac
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la assets
+          gh release create "${GITHUB_REF_NAME}" assets/* --repo "${GITHUB_REPOSITORY}" \
+            --title "Clone Hero Companion ${GITHUB_REF_NAME}" --generate-notes || \
+          gh release upload "${GITHUB_REF_NAME}" assets/* --repo "${GITHUB_REPOSITORY}" --clobber

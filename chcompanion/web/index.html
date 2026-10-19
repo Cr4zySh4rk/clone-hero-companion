@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clone Hero Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --stage: #1a1033;        /* deep plum stage */
+  --stage-2: #2a1650;
+  --ink: #f6f1e7;          /* unsung lyric / text */
+  --ink-dim: rgba(246, 241, 231, .58);
+  --spot: #ffb52e;         /* stage-light amber: sung lyric */
+  --spot-glow: rgba(255, 181, 46, .55);
+  --green: #3cc85a; --red: #e8413a; --yellow: #f2d23a; --blue: #3a8ee8; --orange: #f08a2a;
+  --lyric: clamp(2.2rem, 5.6vw, 5.4rem);
+  --lyric-next: clamp(1.4rem, 3.2vw, 3rem);
+  --ui: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--stage); color: var(--ink); font-family: var(--ui); overflow: hidden; }
+body.obs { background: transparent; }
+body.hide-cursor { cursor: none; }
+
+/* ---------- background layers ---------- */
+#stage { position: fixed; inset: 0; overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 110%, var(--stage-2), var(--stage) 60%); }
+body.obs #stage { background: transparent; }
+#art { position: absolute; inset: -40px; background-size: cover; background-position: center;
+  filter: blur(38px) saturate(1.3) brightness(.55); transform: scale(1.1); opacity: 0; transition: opacity 1.2s; }
+#art.on { opacity: 1; }
+#video, #yt { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .8s; border: 0; }
+#video.on, #yt.on { opacity: 1; }
+#yt { pointer-events: none; }
+#yt iframe { width: 100%; height: 100%; border: 0; transform: scale(1.02); }
+#shade { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(10,6,22,.55) 0%, rgba(10,6,22,0) 22%, rgba(10,6,22,0) 48%, rgba(10,6,22,.82) 100%); }
+body.no-video #video, body.no-video #yt { opacity: 0 !important; }
+
+/* ---------- song card ---------- */
+#card { position: fixed; top: clamp(16px, 3vw, 40px); left: clamp(16px, 3vw, 44px); display: flex; gap: 18px; align-items: center;
+  max-width: min(640px, calc(100vw - 32px)); transition: opacity .9s, transform .9s; }
+#card.away { opacity: 0; transform: translateY(-12px); }
+#cardArt { width: clamp(56px, 7vw, 92px); aspect-ratio: 1; border-radius: 6px; background: #000 center/cover; flex: none;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45); display: none; }
+#cardArt.on { display: block; }
+#songName { font-family: var(--display); font-weight: 900; font-size: clamp(1.6rem, 3vw, 2.6rem); line-height: 1; letter-spacing: .01em; }
+#songArtist { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 600; margin-top: 6px; }
+#songMeta { font-size: .95rem; color: var(--ink-dim); margin-top: 4px; }
+
+/* ---------- status ---------- */
+#status { position: fixed; top: clamp(16px, 3vw, 40px); right: clamp(16px, 3vw, 44px); font-size: .9rem; font-weight: 500;
+  display: flex; gap: 10px; align-items: center; color: var(--ink-dim); text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+#status .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-dim); }
+#status.playing .dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
+#status.paused .dot { background: var(--yellow); }
+#status.offline .dot { background: var(--red); }
+
+/* ---------- lyrics ---------- */
+#lyrics { position: fixed; left: 0; right: 0; bottom: clamp(48px, 9vh, 120px); padding: 0 clamp(16px, 5vw, 80px);
+  text-align: center; pointer-events: none; }
+.line { font-family: var(--display); font-weight: 900; line-height: 1.05; letter-spacing: .005em; text-wrap: balance;
+  text-shadow: 0 4px 24px rgba(0,0,0,.55); }
+#cur { font-size: var(--lyric); min-height: 1.1em; }
+#nxt { font-size: var(--lyric-next); color: var(--ink-dim); font-weight: 700; margin-top: .35em; min-height: 1.1em; }
+#cur .s { color: var(--ink); background-image: linear-gradient(90deg, var(--spot) 0 calc(var(--p, 0) * 100%), var(--ink) calc(var(--p, 0) * 100%) 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+#cur .s.done { filter: drop-shadow(0 0 14px var(--spot-glow)); }
+#cur.enter { animation: rise .35s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+#wait { font-family: var(--display); font-size: var(--lyric-next); color: var(--ink-dim); height: 1.1em; display: flex; justify-content: center; gap: .4em; }
+#wait i { width: .32em; height: .32em; border-radius: 50%; background: currentColor; align-self: center; opacity: .25; transition: opacity .3s, background .3s; }
+#wait i.lit { opacity: 1; background: var(--spot); }
+#source { position: fixed; left: clamp(16px, 3vw, 44px); bottom: 18px; font-size: .8rem; color: var(--ink-dim); }
+
+/* ---------- song progress: the five frets ---------- */
+#progress { position: fixed; left: 0; right: 0; bottom: 0; height: 5px; display: grid; grid-template-columns: repeat(5, 1fr); opacity: .9; }
+#progress span { background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
+#progress span::after { content: ""; position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--f, 0)); }
+#progress span:nth-child(1)::after { background: var(--green); }
+#progress span:nth-child(2)::after { background: var(--red); }
+#progress span:nth-child(3)::after { background: var(--yellow); }
+#progress span:nth-child(4)::after { background: var(--blue); }
+#progress span:nth-child(5)::after { background: var(--orange); }
+
+/* ---------- idle ---------- */
+#idle { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; transition: opacity .6s; padding: 24px; }
+#idle.away { opacity: 0; pointer-events: none; }
+#frets { display: flex; gap: clamp(10px, 2vw, 22px); justify-content: center; margin-bottom: 34px; }
+#frets b { width: clamp(28px, 4.4vw, 54px); aspect-ratio: 1; border-radius: 50%; border: 4px solid; opacity: .9;
+  animation: strum 2.6s ease-in-out infinite; }
+#frets b:nth-child(1) { border-color: var(--green); animation-delay: 0s; }
+#frets b:nth-child(2) { border-color: var(--red); animation-delay: .15s; }
+#frets b:nth-child(3) { border-color: var(--yellow); animation-delay: .3s; }
+#frets b:nth-child(4) { border-color: var(--blue); animation-delay: .45s; }
+#frets b:nth-child(5) { border-color: var(--orange); animation-delay: .6s; }
+@keyframes strum { 0%, 70%, 100% { transform: none; background: transparent; } 80% { transform: translateY(-8px); background: currentColor; } }
+#idle h1 { font-family: var(--display); font-weight: 900; font-size: clamp(2.6rem, 7vw, 6rem); margin: 0; line-height: .95; }
+#idle p { color: var(--ink-dim); font-size: clamp(1rem, 1.6vw, 1.25rem); max-width: 34em; margin: 18px auto 0; line-height: 1.5; }
+#idle kbd { font-family: var(--ui); border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 1px 6px; font-size: .9em; }
+
+/* ---------- controls ---------- */
+#controls { position: fixed; right: clamp(16px, 3vw, 44px); bottom: 22px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+  max-width: min(760px, calc(100vw - 32px)); transition: opacity .3s; }
+body.idle-ui #controls { opacity: 0; pointer-events: none; }
+#controls .grp { display: flex; align-items: center; gap: 2px; background: rgba(20,12,40,.78); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.12); border-radius: 8px; padding: 3px; }
+#controls .lbl { font-size: .8rem; color: var(--ink-dim); padding: 0 8px; white-space: nowrap; }
+#controls .val { font-variant-numeric: tabular-nums; font-size: .85rem; min-width: 4.2em; text-align: center; }
+#controls button { font: 500 .88rem var(--ui); color: var(--ink); background: transparent; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+#controls button:hover { background: rgba(255,255,255,.1); }
+#controls button:focus-visible { outline: 2px solid var(--spot); outline-offset: 1px; }
+#toast { position: fixed; left: 50%; top: 22px; transform: translateX(-50%); background: rgba(20,12,40,.9); border: 1px solid rgba(255,255,255,.15);
+  padding: 9px 16px; border-radius: 8px; font-size: .92rem; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90vw; }
+#toast.on { opacity: 1; }
+#help { position: fixed; inset: 0; background: rgba(10,6,22,.86); display: none; place-items: center; z-index: 5; }
+#help.on { display: grid; }
+#help .box { max-width: 560px; padding: 28px; line-height: 1.7; }
+#help h2 { font-family: var(--display); font-size: 2.4rem; margin: 0 0 10px; }
+#help td { padding: 2px 14px 2px 0; vertical-align: top; }
+#help td:first-child { white-space: nowrap; color: var(--spot); }
+@media (prefers-reduced-motion: reduce) { #frets b, #cur.enter { animation: none; } }
+@media (max-width: 640px) { #controls .lbl { display: none; } #status span.txt { display: none; } }
+</style>
+</head>
+<body class="idle-ui">
+<div id="stage">
+  <div id="art"></div>
+  <video id="video" muted playsinline preload="auto"></video>
+  <div id="yt"></div>
+  <div id="shade"></div>
+</div>
+
+<section id="idle">
+  <div>
+    <div id="frets" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></div>
+    <h1>Waiting for Clone Hero</h1>
+    <p>Start a song in the game and this screen follows along with its music video and lyrics.
+       Put it on a second screen, or add it to OBS as a browser source. Press <kbd>?</kbd> for shortcuts.</p>
+  </div>
+</section>
+
+<header id="card" class="away">
+  <div id="cardArt"></div>
+  <div>
+    <div id="songName"></div>
+    <div id="songArtist"></div>
+    <div id="songMeta"></div>
+  </div>
+</header>
+
+<div id="status"><span class="dot"></span><span class="txt">Connecting</span></div>
+
+<section id="lyrics" aria-live="polite">
+  <div id="cur" class="line"></div>
+  <div id="wait"><i></i><i></i><i></i><i></i></div>
+  <div id="nxt" class="line"></div>
+</section>
+<div id="source"></div>
+<div id="progress"><span></span><span></span><span></span><span></span><span></span></div>
+
+<nav id="controls" aria-label="Sync controls">
+  <div class="grp"><span class="lbl">Lyrics</span>
+    <button data-act="lyr-" title="Lyrics earlier (←)">−</button><span class="val" id="lyrVal">0.0 s</span><button data-act="lyr+" title="Lyrics later (→)">+</button></div>
+  <div class="grp"><span class="lbl">Video</span>
+    <button data-act="vid-" title="Video earlier (↓)">−</button><span class="val" id="vidVal">0.0 s</span><button data-act="vid+" title="Video later (↑)">+</button></div>
+  <div class="grp">
+    <button data-act="next" title="Try the next search result (N)">Different video</button>
+    <button data-act="paste" title="Use a YouTube link you choose (U)">Use link…</button>
+    <button data-act="install" title="Save this video into the song folder for in-game playback (I)">Show in game</button>
+    <button data-act="toggle" title="Hide or show the video (V)">Video on/off</button>
+    <button data-act="full" title="Fullscreen (F)">Fullscreen</button>
+    <button data-act="help" title="Shortcuts (?)">?</button>
+  </div>
+</nav>
+<div id="toast" role="status"></div>
+<div id="help"><div class="box">
+  <h2>Shortcuts</h2>
+  <table>
+    <tr><td>← / →</td><td>Lyrics earlier / later by 0.1 s (hold Shift for 0.5 s)</td></tr>
+    <tr><td>↓ / ↑</td><td>Video earlier / later by 0.1 s (hold Shift for 1 s)</td></tr>
+    <tr><td>N / P</td><td>Next / previous YouTube result for this song</td></tr>
+    <tr><td>U</td><td>Use a YouTube link you paste</td></tr>
+    <tr><td>I</td><td>Save the video into the song folder so Clone Hero shows it in-game</td></tr>
+    <tr><td>V</td><td>Video on / off</td></tr>
+    <tr><td>F</td><td>Fullscreen</td></tr>
+    <tr><td>H</td><td>Hide the song card and controls</td></tr>
+  </table>
+  <p>Offsets are remembered per song. Add <code>?obs</code> to the address for a transparent background in OBS.</p>
+</div></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  if (params.has("obs")) document.body.classList.add("obs");
+
+  let S = null;            // latest state from the server
+  let skew = 0;            // server clock - local clock (seconds)
+  let lines = [];
+  let lastIdx = -2, lastNext = -2;
+  let videoKind = null, videoSrc = null, ytPlayer = null, ytReady = false, ytId = null;
+  let videoEnabled = true, songShownAt = 0, hideUI = false;
+  try { videoEnabled = localStorage.getItem("chc.video") !== "0"; } catch (e) {}
+  if (!videoEnabled) document.body.classList.add("no-video");
+
+  const now = () => Date.now() / 1000 + skew;
+  function songTime() {
+    if (!S || !S.clock) return 0;
+    const c = S.clock;
+    return c.anchorTime + c.rate * (now() - c.anchorWall);
+  }
+  const lyrOffset = () => S ? (S.offsets.lyrics + S.offsets.globalLyrics) : 0;
+  const vidOffset = () => S ? S.offsets.video : 0;
+
+  function toast(msg, ms = 2200) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("on");
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("on"), ms);
+  }
+
+  // ---------------------------------------------------------------- server events
+  let es;
+  function connect() {
+    es = new EventSource("/events");
+    es.onmessage = (ev) => apply(JSON.parse(ev.data));
+    es.addEventListener("ping", (ev) => { skew = parseFloat(ev.data) - Date.now() / 1000; });
+    es.onerror = () => { setStatus("offline", "Companion app not running"); };
+  }
+
+  function apply(st) {
+    skew = st.serverNow - Date.now() / 1000;
+    const prevSongKey = S && S.song ? (S.song.key || S.song.name) : null;
+    const prevSeq = S ? S.clock.seq : -1;
+    if (!st.lyrics && S) st.lyrics = S.lyrics;   // light updates omit lyrics
+    S = st;
+    const key = st.song ? (st.song.key || st.song.name) : null;
+    if (key !== prevSongKey) onNewSong();
+    if (st.lyrics) {
+      const L = st.lyrics.lines || [];
+      const sig = `${key}|${st.lyrics.source}|${L.length}|${L.length ? L[0].start : ""}`;
+      if (sig !== apply._sig) { apply._sig = sig; lines = L; lastIdx = lastNext = -2; }
+    }
+    renderSource();
+    renderOffsets();
+    applyVideo();
+    renderStatus();
+    if (st.install) toast("In-game video: " + st.install, 4000);
+    if (st.clock.seq !== prevSeq && st.clock.status === "paused") showCard();
+  }
+
+  function onNewSong() {
+    const s = S.song;
+    lastIdx = lastNext = -2;
+    $("cur").textContent = ""; $("nxt").textContent = "";
+    if (!s) return;
+    $("songName").textContent = s.name || "";
+    $("songArtist").textContent = s.artist || "";
+    $("songMeta").textContent = [s.album, s.year].filter(Boolean).join(", ") + (s.charter ? `  ·  charted by ${s.charter}` : "");
+    const art = s.hasArt ? `url(/media/art?k=${encodeURIComponent(s.key)})` : "";
+    $("art").style.backgroundImage = art; $("art").classList.toggle("on", !!art);
+    $("cardArt").style.backgroundImage = art; $("cardArt").classList.toggle("on", !!art);
+    showCard();
+    if (S.notice) toast(S.notice, 5000);
+  }
+  function showCard() { songShownAt = performance.now(); $("card").classList.remove("away"); }
+
+  function renderSource() {
+    const src = S.lyricsSource;
+    const lyricsLoading = S.lyrics && S.lyrics.loading;
+    let txt = "";
+    if (S.song) {
+      txt = lyricsLoading ? "Finding lyrics…" : src === "chart" ? "Lyrics from the chart" :
+            src === "lrclib" ? "Lyrics from LRCLIB (line timing)" : "No lyrics found for this song";
+      const v = S.video || {};
+      if (v.loading) txt += "  ·  finding video…";
+      else if (v.kind === "local") txt += "  ·  video from song folder";
+      else if (v.kind === "youtube") txt += `  ·  ${v.title || "YouTube video"}`;
+      else txt += "  ·  no video";
+    }
+    $("source").textContent = txt;
+  }
+  function fmt(v) { return (v > 0 ? "+" : "") + v.toFixed(1) + " s"; }
+  function renderOffsets() { $("lyrVal").textContent = fmt(lyrOffset()); $("vidVal").textContent = fmt(vidOffset()); }
+
+  function setStatus(cls, txt) { const el = $("status"); el.className = cls; el.querySelector(".txt").textContent = txt; }
+  function renderStatus() {
+    const c = S.clock;
+    const playing = c.status === "playing" || c.status === "paused";
+    $("idle").classList.toggle("away", !!S.song && c.status !== "idle");
+    if (c.status === "idle") setStatus("", "Waiting for Clone Hero");
+    else if (c.status === "playing") setStatus("playing", c.speed !== 1 ? `Playing at ${Math.round(c.speed * 100)}%` : "Playing");
+    else if (c.status === "paused") setStatus("paused", "Paused");
+    else if (c.status === "ended") setStatus("", "Song finished");
+    if (!playing && c.status !== "ended") { $("cur").textContent = ""; $("nxt").textContent = ""; }
+  }
+
+  // ---------------------------------------------------------------- lyrics
+  function findLine(t) {
+    // last line whose start <= t + lookahead
+    let lo = 0, hi = lines.length - 1, ans = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (lines[m].start <= t + 0.25) { ans = m; lo = m + 1; } else hi = m - 1; }
+    return ans;
+  }
+  function renderLine(el, line, asSyllables) {
+    el.innerHTML = "";
+    if (!line) return;
+    if (!asSyllables) { el.textContent = line.text; return; }
+    for (const s of line.syls) {
+      const sp = document.createElement("span"); sp.className = "s";
+      sp.textContent = s.x + (s.j ? "" : " ");
+      sp._t = s.t; sp._e = s.e; el.appendChild(sp);
+    }
+  }
+  function tickLyrics(t) {
+    const waitEl = $("wait");
+    if (!lines.length || !S.song || S.clock.status === "idle") { waitEl.style.visibility = "hidden"; return; }
+    let idx = findLine(t);
+    let cur = idx >= 0 ? lines[idx] : null;
+    const next = lines[idx + 1] || null;
+    // instrumental gap: hide a finished line once the next one is far away
+    if (cur && t > cur.end + 1.5 && next && next.start - t > 2.5) cur = null;
+    const curKey = cur ? idx : -1;
+    if (curKey !== lastIdx) {
+      renderLine($("cur"), cur, true); lastIdx = curKey;
+      if (cur) { $("cur").classList.remove("enter"); void $("cur").offsetWidth; $("cur").classList.add("enter"); }
+    }
+    const nextLine = cur ? next : (idx >= 0 ? next : lines[0]);
+    const nextKey = nextLine ? lines.indexOf(nextLine) : -1;
+    if (nextKey !== lastNext) { renderLine($("nxt"), nextLine, false); lastNext = nextKey; }
+    // wipe
+    if (cur) for (const sp of $("cur").children) {
+      const p = Math.max(0, Math.min(1, (t - sp._t) / Math.max(0.05, sp._e - sp._t)));
+      sp.style.setProperty("--p", p.toFixed(3));
+      sp.classList.toggle("done", p >= 1);
+    }
+    // countdown dots before the next line during gaps
+    const gap = !cur && nextLine ? nextLine.start - t : -1;
+    waitEl.style.visibility = gap > 0 && gap < 8 ? "visible" : "hidden";
+    if (gap > 0) [...waitEl.children].forEach((d, i) => d.classList.toggle("lit", gap <= 4 - i));
+  }
+
+  // ---------------------------------------------------------------- video
+  function applyVideo() {
+    const v = S.video || {};
+    const vid = $("video");
+    let kind = null, src = null;
+    if (v.kind === "local") { kind = "file"; src = v.src; }
+    else if (v.kind === "youtube" && v.stream !== false) { kind = "file"; src = v.src; }
+    else if (v.kind === "youtube") { kind = "yt"; src = v.id; }
+    if (kind === videoKind && src === videoSrc) return;
+    videoKind = kind; videoSrc = src;
+    vid.classList.remove("on"); $("yt").classList.remove("on");
+    if (kind === "file") {
+      vid.src = src; vid.load();
+      if (ytPlayer) try { ytPlayer.stopVideo(); } catch (e) {}
+    } else {
+      vid.removeAttribute("src"); vid.load();
+    }
+    if (kind === "yt") loadYT(src);
+  }
+  $("video").addEventListener("error", () => {
+    if (videoKind === "file" && S && S.video && S.video.kind === "youtube") {
+      console.warn("stream failed, falling back to the embedded player");
+      videoKind = "yt"; videoSrc = S.video.id; $("video").classList.remove("on"); loadYT(S.video.id);
+    }
+  });
+  $("video").addEventListener("playing", () => $("video").classList.add("on"));
+
+  function loadYT(id) {
+    ytId = id;
+    if (!window.YT || !YT.Player) {
+      if (!document.getElementById("ytapi")) {
+        const s = document.createElement("script"); s.id = "ytapi"; s.src = "https://www.youtube.com/iframe_api"; document.head.appendChild(s);
+      }
+      window.onYouTubeIframeAPIReady = () => loadYT(ytId);
+      return;
+    }
+    if (ytPlayer) { ytPlayer.loadVideoById(id); ytPlayer.mute(); return; }
+    const holder = document.createElement("div"); $("yt").innerHTML = ""; $("yt").appendChild(holder);
+    ytPlayer = new YT.Player(holder, {
+      videoId: id, playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, iv_load_policy: 3, origin: location.origin },
+      events: {
+        onReady: () => { ytReady = true; ytPlayer.mute(); },
+        onStateChange: (e) => { if (e.data === 1) $("yt").classList.add("on"); },
+        onError: () => { toast("This video can't be embedded. Press N for another one."); },
+      },
+    });
+  }
+
+  function syncVideo(t) {
+    const playing = S && S.clock.status === "playing";
+    const rate = S ? (S.clock.speed || 1) : 1;
+    const startOff = (S && S.video && S.video.startOffset) || 0;
+    const target = t + vidOffset() + startOff;
+    if (videoKind === "file") {
+      const v = $("video");
+      if (!v.src || v.readyState < 1) return;
+      const dur = v.duration || 1e9;
+      if (!playing || target < 0 || target > dur) {
+        if (!v.paused) v.pause();
+        const want = Math.max(0, Math.min(target, dur - 0.05));
+        if (Math.abs(v.currentTime - want) > 0.3) v.currentTime = want;
+        if (target < 0 && v.readyState >= 2) v.classList.add("on");
+        return;
+      }
+      const drift = v.currentTime - target;
+      if (Math.abs(drift) > 0.6) { v.currentTime = target; v.playbackRate = rate; }
+      else v.playbackRate = Math.max(0.5, Math.min(4, rate * (1 - drift * 0.6)));
+      if (v.paused) v.play().catch(() => {});
+    } else if (videoKind === "yt" && ytPlayer && ytReady && ytPlayer.getPlayerState) {
+      const st = ytPlayer.getPlayerState();
+      if (!playing || target < 0) { if (st === 1) ytPlayer.pauseVideo(); return; }
+      const cur = ytPlayer.getCurrentTime();
+      if (Math.abs(cur - target) > 1.0) ytPlayer.seekTo(target, true);
+      if (st !== 1 && st !== 3) ytPlayer.playVideo();
+      try { ytPlayer.setPlaybackRate(rate); } catch (e) {}
+    }
+  }
+
+  // ---------------------------------------------------------------- loop
+  let lastVideoSync = 0;
+  function frame(ts) {
+    if (S && S.song) {
+      const t = songTime();
+      tickLyrics(t - lyrOffset());
+      if (ts - lastVideoSync > 200) { lastVideoSync = ts; syncVideo(t); }
+      const len = S.song.length || (lines.length ? lines[lines.length - 1].end + 10 : 0);
+      const frac = len ? Math.max(0, Math.min(1, t / len)) : 0;
+      [...$("progress").children].forEach((el, i) => el.style.setProperty("--f", Math.max(0, Math.min(1, frac * 5 - i)).toFixed(4)));
+      if (S.clock.status === "playing" && performance.now() - songShownAt > 9000) $("card").classList.add("away");
+      if (hideUI) $("card").classList.add("away");
+    } else {
+      $("card").classList.add("away");
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------------------------------------------------------------- controls
+  async function post(path, body) {
+    try { const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); return await r.json(); }
+    catch (e) { toast("The companion app isn't responding"); return null; }
+  }
+  const actions = {
+    "lyr-": (big) => post("/api/offset", { kind: "lyrics", delta: big ? -0.5 : -0.1 }),
+    "lyr+": (big) => post("/api/offset", { kind: "lyrics", delta: big ? 0.5 : 0.1 }),
+    "vid-": (big) => post("/api/offset", { kind: "video", delta: big ? -1 : -0.1 }),
+    "vid+": (big) => post("/api/offset", { kind: "video", delta: big ? 1 : 0.1 }),
+    next: () => { toast("Trying the next video…"); post("/api/video/next", { step: 1 }); },
+    prev: () => { toast("Trying the previous video…"); post("/api/video/next", { step: -1 }); },
+    paste: async () => {
+      const url = prompt("Paste a YouTube link for this song:");
+      if (url) { const r = await post("/api/video/set", { url }); toast(r && r.ok ? "Using that video" : "That doesn't look like a YouTube link"); }
+    },
+    install: () => {
+      if (!S || !S.song) return toast("Start a song first");
+      if (S.song.sng) return toast(".sng songs can't hold a video file; it stays on this screen");
+      toast("Saving the video into the song folder…"); post("/api/install");
+    },
+    toggle: () => {
+      videoEnabled = !videoEnabled; document.body.classList.toggle("no-video", !videoEnabled);
+      try { localStorage.setItem("chc.video", videoEnabled ? "1" : "0"); } catch (e) {}
+      toast(videoEnabled ? "Video on" : "Video off");
+    },
+    full: () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); },
+    help: () => $("help").classList.toggle("on"),
+    hide: () => { hideUI = !hideUI; document.body.classList.toggle("idle-ui", hideUI); },
+  };
+  $("controls").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) actions[b.dataset.act](e.shiftKey); });
+  $("help").addEventListener("click", () => $("help").classList.remove("on"));
+  const keys = { ArrowLeft: "lyr-", ArrowRight: "lyr+", ArrowDown: "vid-", ArrowUp: "vid+", n: "next", p: "prev", u: "paste",
+                 i: "install", v: "toggle", f: "full", "?": "help", h: "hide", Escape: "help" };
+  document.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    let k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k === "/" && e.shiftKey) k = "?";
+    if (k === "Escape" && !$("help").classList.contains("on")) return;
+    const a = keys[k]; if (!a) return;
+    e.preventDefault(); actions[a](e.shiftKey);
+  });
+  // controls appear while the mouse moves
+  let idleTimer;
+  document.addEventListener("mousemove", () => {
+    if (hideUI) return;
+    document.body.classList.remove("idle-ui", "hide-cursor");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add("idle-ui", "hide-cursor"), 2500);
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>
