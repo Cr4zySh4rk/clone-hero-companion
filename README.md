@@ -1,16 +1,17 @@
 # Clone Hero Companion
 
-A small background app for [Clone Hero](https://clonehero.net) that works out which song you're playing and shows a sing-along screen for it:
+A small background app for [Clone Hero](https://clonehero.net) that adds **music videos** and **sing-along lyrics** to your songs, inside the game.
 
-- **The song's music video**, found on YouTube automatically and kept in sync with the game (muted, so the game audio stays in charge).
-- **Karaoke-style lyrics** that fill in syllable by syllable. They come from the chart's own vocal track when it has one (Rock Band / Guitar Hero rips and most customs), otherwise from [LRCLIB](https://lrclib.net) line-synced lyrics.
-- **Optional in-game videos**: one click (or `install-videos`) saves the video into the song folder, so Clone Hero plays it natively behind the highway.
+- **Music video behind the highway.** The official video is found on YouTube and saved into the song (Clone Hero's own *Song Videos* feature plays it). It is **lined up with the song automatically**: the video's soundtrack is cross-correlated with the chart audio, so intros and extra scenes don't throw it off.
+- **Lyrics in the game.** Charts with a vocals track already show lyrics in Clone Hero. For charts without one, synced lyrics from [LRCLIB](https://lrclib.net) are written into the chart, also auto-aligned to the chart's audio (rips often have a few seconds of extra lead-in compared to the album).
+- **Ready before you press play.** While you browse the song list, the companion notices which song is highlighted (from the preview the game plays) and prepares it in the background. Every song you play is prepared for next time, and you can prepare the whole library in one go.
+- **Optional companion screen.** A karaoke-style page (`http://127.0.0.1:47823`) shows the same video and lyrics with a syllable-by-syllable wipe, for a second monitor, a TV for the family, or an OBS browser source.
 
-It runs on **Windows, macOS and Linux**. It only reads the game's log file and your song folders. It never touches the game itself.
+Runs on **Windows, macOS and Linux**. It follows the game through its log file and never touches the game itself. Everything it changes in your songs is backed up and can be undone with `restore`.
 
 ## Download
 
-Grab the file for your system from the [latest release](../../releases/latest):
+Get the file for your system from the [latest release](../../releases/latest):
 
 | System | File |
 | --- | --- |
@@ -27,17 +28,36 @@ Grab the file for your system from the [latest release](../../releases/latest):
 
 ## Using it
 
-1. Start the companion. It finds your Clone Hero data folder by itself and opens the companion page in your browser (`http://127.0.0.1:47823`).
-2. Start Clone Hero and play a song. The page switches to that song's video and lyrics.
-3. Drag the browser window to a second monitor or TV and press **F** for fullscreen. You can also add the page to OBS as a *Browser Source*; add `?obs` to the address for a transparent background.
+1. In Clone Hero, turn on *Settings → Custom Content → Song Videos* (and keep *Lyrics* on).
+2. Start the companion and leave it running while you play. It finds your Clone Hero data folder by itself.
+3. Play as usual. Songs you highlight or play get their video and lyrics. When a song is still being prepared as you start it, it'll have them from the next play.
 
-Leave the companion running in the background for as long as you play. Close its window or press Ctrl+C to quit.
+To prepare your whole library at once (about 20 MB of disk per song at 720p):
 
-### Getting the sync right
+```
+CloneHeroCompanion prepare                 # every song
+CloneHeroCompanion prepare metallica       # only songs matching "metallica"
+CloneHeroCompanion prepare --dry-run       # just show which video each song would get
+```
 
-The app keeps a song clock from the game's log. Every pause in Clone Hero tells the app the exact song position, so it re-syncs on each pause and resume. It also learns how long your machine takes to load a song, so sync improves after the first pause.
+Or click *Prepare library* on the companion page, or start the app with `--prepare-library`.
 
-If something is still off for a particular song, move the mouse over the page to show the controls, or use the keyboard:
+To undo everything: `CloneHeroCompanion restore` (or `restore <filter>` for some songs). This removes the videos it added and puts back the original charts and `.sng` files.
+
+### What gets changed in a song
+
+| | Song folder | `.sng` package |
+| --- | --- | --- |
+| Video | `video.mp4` added (`video.webm` on Linux) | video added inside the package |
+| Video alignment | `video_start_time` in `song.ini` | `video_start_time` in the package metadata |
+| Lyrics (only charts without lyrics) | vocals track added to `notes.mid` / lyrics events to `notes.chart` | same, inside the package |
+| Backup | `notes.mid.chc-backup`, `song.ini.chc-backup` | `<name>.sng.chc-backup` |
+
+Adding lyrics changes the chart file, so Clone Hero treats it as a new chart for **local high scores**. Your previous scores come back if you `restore`. Use `--no-game-lyrics` if you'd rather keep the charts untouched; videos don't affect scores.
+
+### The companion screen
+
+Open `http://127.0.0.1:47823` (it opens by itself on first launch). Move the mouse to show the controls, or use the keyboard:
 
 | Key | Action |
 | --- | --- |
@@ -45,44 +65,29 @@ If something is still off for a particular song, move the mouse over the page to
 | ↓ / ↑ | Video earlier / later by 0.1 s (Shift: 1 s) |
 | N / P | Next / previous YouTube result for this song |
 | U | Use a YouTube link you paste |
-| I | Save the video into the song folder for in-game playback |
+| I | Update this song in the game with your changes (video choice, offsets) |
 | V | Video on / off |
 | F | Fullscreen |
 | H | Hide the song card and controls |
 
-Offsets and video choices are remembered per song.
+Offsets and video choices are remembered per song, and *Update in game* (I) writes them into the song. Clicking the page takes focus away from the game, and with *Pause on focus lost* on, Clone Hero pauses. The page doesn't need clicks while you play. For OBS, add `?obs` to the address for a transparent background.
 
-### Videos inside Clone Hero
-
-Clone Hero plays a `video.mp4` / `video.webm` placed in a song's folder behind the highway when *Settings → Custom Content → Song Videos* is on. The companion can put the right video there for you:
-
-- Press **I** (or *Show in game*) on the companion page while a song is loaded. The video appears in-game the next time you play it.
-- Or start the companion with `--auto-install` to do this for every song you play.
-- Or fill your whole library in one go:
-
-  ```
-  CloneHeroCompanion install-videos                 # every song without a video
-  CloneHeroCompanion install-videos metallica       # only songs matching "metallica"
-  CloneHeroCompanion install-videos --dry-run       # show which video each song would get
-  ```
-
-If you shifted a video with ↓ / ↑, that offset is saved into the song's `song.ini` as `video_start_time` so the game uses it too.
-
-Notes: `.sng` packages can't hold an extra file, so those songs keep their video on the companion screen only. On Linux, Clone Hero only plays VP8 WebM, so `ffmpeg` must be installed for in-game videos there.
-
-## Command line options
+## Command line
 
 ```
 CloneHeroCompanion [run] [--data-dir PATH] [--songs-dir PATH] [--port 47823] [--host 127.0.0.1]
-                         [--no-browser] [--no-youtube] [--no-lrclib] [--auto-install] [--max-height 1080]
-CloneHeroCompanion install-videos [FILTER...] [--force] [--limit N] [--dry-run]
-CloneHeroCompanion doctor        # check that everything is found
-CloneHeroCompanion lyrics "Artist - Song"   # print the synced lyrics it found
+                         [--no-in-game] [--no-prefetch] [--no-game-lyrics] [--prepare-library]
+                         [--open-browser | --no-browser] [--no-youtube] [--no-lrclib]
+                         [--game-max-height 720] [--max-height 1080]
+CloneHeroCompanion prepare [FILTER...] [--no-video] [--no-lyrics] [--force] [--limit N] [--dry-run]
+CloneHeroCompanion restore [FILTER...]
+CloneHeroCompanion doctor
+CloneHeroCompanion lyrics "Artist - Song"
 ```
 
 - `--host 0.0.0.0` lets a phone, tablet or smart TV on your network open the page at `http://<your-computer-ip>:47823`.
-- The data folder defaults to `Documents\Clone Hero` (Windows), `~/Clone Hero` (macOS) or `~/.clonehero` (Linux). Use `--data-dir` if yours is somewhere else.
-- Extra song folders listed in Clone Hero's settings are picked up automatically.
+- The data folder defaults to `Documents\Clone Hero` (Windows), `~/Clone Hero` (macOS) or `~/.clonehero` (Linux). Use `--data-dir` if yours is elsewhere. Extra song folders from Clone Hero's settings are picked up automatically.
+- Starting the app again while it is running just opens the page.
 
 ## How it works
 
@@ -90,13 +95,17 @@ Clone Hero writes a session log to `<data folder>/Logs/Session-*.log`. The compa
 
 | Log line | Meaning |
 | --- | --- |
-| `Loading Song: Artist - Name` | a song was started (matched against `song.ini` / `.sng` metadata) |
-| `Seeking to song time:X` while playing | paused at X seconds |
+| `Seeking to song time:X` in the menus | a song preview started; matched against `preview_start_time` to find the highlighted song |
+| `Loading Song: Artist - Name` | a song was started |
+| `Seeking to song time:X` while playing | paused at X seconds (exact clock re-sync) |
 | `Seeking to song time:X−1.5` while paused | resumed (the game rewinds 1.5 s) |
-| any other seek while paused | back in the menus |
 | `Replay input count` / `Completing session` | song finished |
 
-Lyrics are read from `PART VOCALS` in `notes.mid` (lyric events, phrase markers 105/106 and note lengths), or the `[Events]` lyrics in `notes.chart`. `.sng` packages are read directly. Videos are found with [yt-dlp](https://github.com/yt-dlp/yt-dlp), and the video-only stream is passed through the local server so the page can seek it precisely. If streaming fails, the page falls back to YouTube's embedded player.
+The time between *Loading Song* and the song's first beat is learned from your pauses, so the companion screen gets more precise as you play.
+
+**Video alignment:** the video's audio and the chart's audio stems are decoded to 8 kHz with ffmpeg, turned into onset curves and cross-correlated in three separate windows. An offset is only used when at least two windows agree and the match is strong; otherwise the video starts at 0. **Lyric alignment** works the same way against an upload of the album recording that LRCLIB's timestamps refer to. On test songs, the median lyric error went from 2.8–5.5 s to 0.2–0.5 s.
+
+Lyrics are read from `PART VOCALS` in `notes.mid` (lyric events, phrase markers 105/106 and note lengths) or the `[Events]` lyrics in `notes.chart`. `.sng` packages are read and rewritten directly. Videos come from [yt-dlp](https://github.com/yt-dlp/yt-dlp). Auto-generated "Topic" uploads (a still image) and gameplay recordings are skipped.
 
 Settings and learned values live in `%APPDATA%\CloneHeroCompanion` (Windows), `~/Library/Application Support/CloneHeroCompanion` (macOS) or `~/.config/CloneHeroCompanion` (Linux).
 
@@ -104,10 +113,8 @@ Settings and learned values live in `%APPDATA%\CloneHeroCompanion` (Windows), `~
 
 ```
 python -m pip install -r requirements.txt
-python -m chcompanion            # same as the executable
+python -m chcompanion
 python -m unittest discover -s tests
 ```
 
-Installing [Deno](https://deno.com) makes yt-dlp's YouTube support more robust (it uses it to solve YouTube's JavaScript challenges). It works without it today, but YouTube changes often.
-
-Executables are built by GitHub Actions with PyInstaller. Push a tag like `v1.2.3` to publish a release.
+Installing [Deno](https://deno.com) makes yt-dlp's YouTube support more robust. It works without it today, but YouTube changes often. Executables are built by GitHub Actions with PyInstaller; push a tag like `v1.2.3` to publish a release.

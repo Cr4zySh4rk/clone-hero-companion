@@ -140,7 +140,8 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     <div id="frets" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></div>
     <h1>Waiting for Clone Hero</h1>
     <p>Start a song in the game and this screen follows along with its music video and lyrics.
-       Put it on a second screen, or add it to OBS as a browser source. Press <kbd>?</kbd> for shortcuts.</p>
+       Videos and lyrics are also added to your songs so Clone Hero shows them in-game.
+       This page is optional: use it on a second screen, in OBS, or to fine-tune a song. Press <kbd>?</kbd> for shortcuts.</p>
   </div>
 </section>
 
@@ -171,7 +172,8 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
   <div class="grp">
     <button data-act="next" title="Try the next search result (N)">Different video</button>
     <button data-act="paste" title="Use a YouTube link you choose (U)">Use link…</button>
-    <button data-act="install" title="Save this video into the song folder for in-game playback (I)">Show in game</button>
+    <button data-act="install" title="Redo this song's in-game video and lyrics with the current choices (I)">Update in game</button>
+    <button data-act="library" title="Add videos and lyrics to every song in your library, in the background">Prepare library</button>
     <button data-act="toggle" title="Hide or show the video (V)">Video on/off</button>
     <button data-act="full" title="Fullscreen (F)">Fullscreen</button>
     <button data-act="help" title="Shortcuts (?)">?</button>
@@ -186,7 +188,7 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     <tr><td>↓ / ↑</td><td>Video earlier / later by 0.1 s (hold Shift for 1 s)</td></tr>
     <tr><td>N / P</td><td>Next / previous YouTube result for this song</td></tr>
     <tr><td>U</td><td>Use a YouTube link you paste</td></tr>
-    <tr><td>I</td><td>Save the video into the song folder so Clone Hero shows it in-game</td></tr>
+    <tr><td>I</td><td>Redo this song's in-game video and lyrics (after changing the video or offsets)</td></tr>
     <tr><td>V</td><td>Video on / off</td></tr>
     <tr><td>F</td><td>Fullscreen</td></tr>
     <tr><td>H</td><td>Hide the song card and controls</td></tr>
@@ -249,7 +251,7 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     renderOffsets();
     applyVideo();
     renderStatus();
-    if (st.install) toast("In-game video: " + st.install, 4000);
+    if (st.install && st.install !== apply._lastInstall) { apply._lastInstall = st.install; toast("In game: " + st.install, 4000); }
     if (st.clock.seq !== prevSeq && st.clock.status === "paused") showCard();
   }
 
@@ -459,8 +461,11 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     },
     install: () => {
       if (!S || !S.song) return toast("Start a song first");
-      if (S.song.sng) return toast(".sng songs can't hold a video file; it stays on this screen");
-      toast("Saving the video into the song folder…"); post("/api/install");
+      toast("Updating this song for Clone Hero. It's applied once the song isn't playing.", 4000); post("/api/install");
+    },
+    library: async () => {
+      if (!confirm("Add music videos and lyrics to every song in your library? This runs in the background and needs roughly 20 MB of disk per song.")) return;
+      const r = await post("/api/prepare-library"); if (r) toast(`Preparing ${r.queued} songs in the background`, 4000);
     },
     toggle: () => {
       videoEnabled = !videoEnabled; document.body.classList.toggle("no-video", !videoEnabled);

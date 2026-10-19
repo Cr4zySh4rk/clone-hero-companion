@@ -110,8 +110,8 @@ def cmd_doctor(args) -> int:
     sv = cp.get("custom", "song_videos", fallback="?")
     print(f"In-game song videos setting: {'on' if sv == '1' else 'OFF (Settings > Custom Content > Song Videos)' if sv == '0' else 'unknown'}")
     print(f"yt-dlp      : {'available' if youtube.available() else 'missing'}")
-    import shutil
-    print(f"ffmpeg      : {shutil.which('ffmpeg') or 'not found (only needed for in-game videos on Linux)'}")
+    from .align import ffmpeg_path
+    print(f"ffmpeg      : {ffmpeg_path() or 'not found (needed for video/lyrics alignment)'}")
     store = Store(config_dir() / "config.json")
     print(f"Config      : {config_dir()}  (song start delay {store.get('start_lead')}s, "
           f"{store.get('lead_samples')} calibration samples)")
