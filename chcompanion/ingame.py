@@ -53,8 +53,8 @@ def _word_events(lines: list[dict], to_tick, offset_s: float):
         syls = line["syls"]
         if not syls:
             continue
-        p_on = to_tick(syls[0]["t"] + offset_s)
-        p_off = max(p_on + 1, to_tick(syls[-1]["e"] + offset_s))
+        p_on = max(0, to_tick(syls[0]["t"] + offset_s) - 2)   # phrase must start before its first word
+        p_off = max(p_on + 1, to_tick(syls[-1]["e"] + offset_s) + 1)
         ev.append((p_on, 0, bytes([0x90, 105, 100])))
         ev.append((p_off, 9, bytes([0x80, 105, 0])))
         for i, s in enumerate(syls):

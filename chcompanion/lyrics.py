@@ -71,9 +71,9 @@ def _build_lines(events: list[tuple[float, float | None, str]],
         cur_idx = -1
         for s in syls:
             # find phrase containing s
-            while pi < len(phrases) and phrases[pi][1] <= s["t"] - 1e-6:
+            while pi < len(phrases) and phrases[pi][1] <= s["t"] - 0.01:
                 pi += 1
-            idx = pi if pi < len(phrases) and phrases[pi][0] <= s["t"] + 1e-6 else -1
+            idx = pi if pi < len(phrases) and phrases[pi][0] <= s["t"] + 0.03 else -1
             if idx != cur_idx or idx == -1 and cur and s["t"] - cur[-1]["e"] > 1.2:
                 if cur:
                     groups.append(cur)
