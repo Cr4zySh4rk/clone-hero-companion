@@ -340,7 +340,10 @@ class Companion:
         if per.get("game_skip"):
             return False
         if not ingame.has_video(song) and not per.get("video_failed"):
-            return True
+            base = self.store.song(ingame.base_key(song))
+            recent_fail = base.get("failed") and time.time() - float(base.get("failed_at") or 0) < ingame.FAIL_MEMORY_S
+            if not recent_fail or base.get("video_id"):
+                return True
         if (self.game_lyrics and not per.get("game_lyrics") and not per.get("lyrics_none")
                 and not song.chart_lyrics()):
             return True
@@ -389,7 +392,9 @@ class Companion:
                 return ", ".join(bits) or "nothing to update"
             if job.kind in ("media", "full"):
                 if o.get("force"):
-                    self.store.update_song(song.key, video_failed=None, lyrics_none=None)
+                    self.store.update_song(song.key, video_failed=None, lyrics_none=None,
+                                           video_failed_at=None, video_failed_reason=None)
+                    self.store.update_song(ingame.base_key(song), failed=None, failed_at=None)
                 r = ingame.prepare(song, self.game_yt, self.store,
                                    video=o.get("video", True), lyrics=o.get("lyrics", self.game_lyrics),
                                    force_video=bool(o.get("force")),

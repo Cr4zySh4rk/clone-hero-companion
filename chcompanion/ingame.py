@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import lyrics as lyr
@@ -295,12 +296,36 @@ def video_res(p: Path) -> int:
     return res_class(w, h)
 
 
-def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path:
+def base_key(song: Song) -> str:
+    """Same recording, any chart: artist and title without "(WaveGroup)", "(Co-op)" and the like."""
+    from .library import norm_key
+    return "~base " + norm_key(f"{lyr.clean_title(song.artist)} - {lyr.clean_title(song.name)}")
+
+
+FAIL_MEMORY_S = 14 * 86400      # how long a real "no HD video" result is trusted
+
+
+def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
+    now = time.time()
+    store.update_song(song.key, video_failed=True, video_failed_at=now, video_failed_reason=why)
+    store.update_song(bkey, failed=why, failed_at=now)
+
+
+def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and
     in a codec Clone Hero plays on this OS. Raises InGameError if there is none."""
-    from .youtube import NoHDVideo
+    from .youtube import NoHDVideo, YouTubeLimited
     info = store.song(song.key)
+    bkey = base_key(song)
+    base = store.song(bkey)
     chosen = info.get("video_id") if info.get("video_manual") else None
+    known = None if force else (info.get("video_id") or base.get("video_id"))
+    if not chosen and not known and not force:
+        failed_at = max(float(info.get("video_failed_at") or 0), float(base.get("failed_at") or 0))
+        if (info.get("video_failed") or base.get("failed")) and time.time() - failed_at < FAIL_MEMORY_S:
+            why = base.get("failed") or info.get("video_failed_reason") or "checked earlier"
+            raise InGameError(f"no HD music video found ({why}; checked earlier, use "
+                              "'Replace videos' to search again)")
     if chosen:
         order = [chosen]
     else:
@@ -309,8 +334,10 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         cands = yt.search(song)
         store.update_song(song.key, candidates=cands[:8])
         order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:4]
+        if known:                      # what this song (or another chart of it) got before
+            order = [known] + [x for x in order if x != known][:3]
         if not order:
-            store.update_song(song.key, video_failed=True)
+            _remember_failure(store, song, bkey, "no matching music video on YouTube")
             raise InGameError("no matching music video found on YouTube")
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
 
@@ -324,6 +351,10 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         except NoHDVideo:
             log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
             reasons.append("below 640p")
+            continue
+        except YouTubeLimited:
+            log.info("Skipping %s for %s for now: YouTube returned a reduced format list", cand, song.display)
+            reasons.append("YouTube limited")
             continue
         except Exception as e:
             if type(e).__name__ == "BotDetected":
@@ -342,11 +373,17 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path
         break
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        if any(r != "download failed" for r in reasons):
-            store.update_song(song.key, video_failed=True)
         why = ", ".join(sorted(set(reasons))) or "no usable video"
+        transient = {"download failed", "YouTube limited"}
+        if reasons and not (set(reasons) & transient):
+            # every candidate was really checked and rejected: remember it for all charts of the song
+            _remember_failure(store, song, bkey, why)
+        if "YouTube limited" in reasons:
+            raise InGameError(f"YouTube is limiting requests right now ({why}); try again later")
         raise InGameError(f"no HD music video found ({why})")
-    store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None)
+    store.update_song(bkey, video_id=vid, failed=None, failed_at=None)
+    store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None,
+                      video_failed_at=None, video_failed_reason=None)
     if not per_manual_offset(store, song):
         try:
             if progress:
@@ -556,7 +593,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
                                 or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD))
         vpath = None
         if want_video:
-            vpath = download_video(song, yt, store, progress)
+            vpath = download_video(song, yt, store, progress, force=force_video)
             per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
         write_v = off_v  # value for video_start_time

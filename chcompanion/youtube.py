@@ -45,6 +45,17 @@ class BotDetected(Exception):
     pass
 
 
+def degraded(formats: list) -> bool:
+    """YouTube sometimes answers (when limiting requests) with only a muxed SD stream and
+    no separate video streams. A genuinely SD video still has video-only streams."""
+    vo = [f for f in formats or [] if f.get("vcodec") not in (None, "none") and f.get("acodec") in (None, "none")]
+    return not vo
+
+
+class YouTubeLimited(Exception):
+    """A temporary answer from YouTube; try this video again later."""
+
+
 class NoHDVideo(Exception):
     pass
 
@@ -347,6 +358,10 @@ class YouTube:
         info = self.info(video_id)
         fmt = pick_format(info.get("formats") or [], self.pref_p, max_p=max(self.pref_p, 1080))
         if not fmt:
+            if degraded(info.get("formats") or []):
+                with self._lock:           # don't keep the cut-down answer cached
+                    self._infos.pop(video_id, None)
+                raise YouTubeLimited("YouTube only offered a reduced format list")
             raise NoHDVideo(f"no format at {MIN_P}p or better")
         hooks = []
         if progress:

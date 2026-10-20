@@ -241,9 +241,25 @@ def _http_json(url: str, timeout: float = 8.0):
         return json.loads(r.read().decode("utf-8"))
 
 
+# Chart variants of the same recording: "(Co-op)", "(2x Bass Pedal)", "[Expert+]", "(Rhythm)"...
+VARIANT_RE = re.compile(
+    r"\s*[\(\[](?:co-?op|2x(?:\s*(?:bass|kick))?(?:\s*pedal)?|double\s*(?:bass|kick)|expert\s*\+|x\+|"
+    r"bass|rhythm|guitar|lead|drums|pro\s*drums|keys|vocals?|harmon(?:y|ies)|no\s*solos?|"
+    r"(?:gh|rb)\s*\d?\s*(?:version|ver\.?)?|full\s*band|band|chart\s*fix|fixed|v\d+(?:\.\d+)*)[\)\]]",
+    re.I)
+
+
+def strip_variant(s: str) -> str:
+    prev = None
+    while prev != s:
+        prev, s = s, VARIANT_RE.sub("", s).strip()
+    return s
+
+
 def clean_title(s: str) -> str:
     s = TAG_RE.sub("", s)
     s = re.sub(r"\((?:WaveGroup|[^)]*(?:Rock Band|Guitar Hero|Rip|Cover|Chart)[^)]*)\)", "", s, flags=re.I)
+    s = strip_variant(s)
     return re.sub(r"\s+", " ", s).strip()
 
 
