@@ -67,7 +67,9 @@ def _levels(c: dict) -> dict:
 def _matches(s: dict, instrument: str | None, difficulty: str | None) -> bool:
     """Check a result against the filters using its real chart contents."""
     lv = s.get("levels") or {}
-    if not lv:                       # no per-level data: trust the server's filtering
+    if not lv:                       # no per-level data: can't confirm a difficulty
+        if difficulty:
+            return False
         return not instrument or instrument in s["difficulties"] or not s["difficulties"]
     if instrument and difficulty:
         return difficulty in lv.get(instrument, [])
