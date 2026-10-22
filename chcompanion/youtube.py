@@ -15,10 +15,12 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import sys
 import threading
 import time
 import urllib.parse
 from contextlib import contextmanager
+from pathlib import Path
 
 from .library import Song, norm_key
 from .lyrics import clean_title
@@ -71,7 +73,7 @@ class RateGate:
     after a bot/rate-limit response (60 s, 3 min, 7 min, ...)."""
     BACKOFF = [60, 180, 420, 900]
 
-    def __init__(self, concurrent: int = 3, spacing: float = 0.35):
+    def __init__(self, concurrent: int = 2, spacing: float = 1.0):
         self.sem = threading.BoundedSemaphore(concurrent)
         self.spacing = spacing
         self.lock = threading.Lock()
@@ -103,6 +105,26 @@ class RateGate:
                     raise BotDetected(str(e)) from e
                 raise
 
+    def acquire(self):
+        """Manual form of slot() for calls that release it part-way (lookup, then download)."""
+        while True:
+            wait = self.paused_until - time.time()
+            if wait <= 0:
+                break
+            if self.cancel.wait(min(wait, 1.0)):
+                raise RuntimeError("cancelled")
+        self.sem.acquire()
+        with self.lock:
+            gap = self.last + self.spacing - time.time()
+            if gap > 0:
+                time.sleep(gap)
+            self.last = time.time()
+
+    def release(self, ok: bool = True):
+        if ok and self.strikes:
+            self.strikes = max(0, self.strikes - 1)
+        self.sem.release()
+
     def throttled(self):
         with self.lock:
             wait = self.BACKOFF[min(self.strikes, len(self.BACKOFF) - 1)]
@@ -130,10 +152,37 @@ def download_slot():
             raise
 
 
+_TOOL_CACHE: dict = {}
+
+
+def _find_tool(name: str) -> str | None:
+    """shutil.which plus the usual install folders (a macOS app started from Finder or the
+    Dock only gets /usr/bin:/bin:/usr/sbin:/sbin as PATH)."""
+    if name in _TOOL_CACHE:
+        return _TOOL_CACHE[name]
+    import os
+    p = shutil.which(name)
+    if not p:
+        home = os.path.expanduser("~")
+        dirs = ["/opt/homebrew/bin", "/usr/local/bin", f"{home}/.deno/bin", f"{home}/.bun/bin",
+                f"{home}/.volta/bin", f"{home}/.local/bin", "/snap/bin"]
+        if sys.platform == "win32":
+            la = os.environ.get("LOCALAPPDATA", "")
+            pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+            dirs += [f"{home}\\.deno\\bin", f"{home}\\.bun\\bin", f"{pf}\\nodejs", f"{la}\\Programs\\nodejs"]
+        nvm = Path(home) / ".nvm" / "versions" / "node"
+        if nvm.is_dir():
+            dirs += [str(d / "bin") for d in sorted(nvm.iterdir(), reverse=True)]
+        exe = name + (".exe" if sys.platform == "win32" else "")
+        p = next((str(Path(d) / exe) for d in dirs if d and (Path(d) / exe).is_file()), None)
+    _TOOL_CACHE[name] = p
+    return p
+
+
 def _ydl_opts(clients=None, **extra) -> dict:
     runtimes = {}
     for rt in ("deno", "node", "bun", "qjs"):
-        p = shutil.which(rt)
+        p = _find_tool(rt)
         if p:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
@@ -309,17 +358,30 @@ class YouTube:
                 return hit[1]
         from yt_dlp import YoutubeDL
         last_err, info = None, None
+
+        def rank(i: dict) -> tuple:
+            fm = i.get("formats") or []
+            # HD available > full format list (video streams listed) > more formats
+            return (bool(pick_format(fm, self.pref_p)), not degraded(fm), len(fm))
+
         for clients in CLIENT_FALLBACKS:
             try:
                 with GATE.slot(), YoutubeDL(_ydl_opts(clients)) as ydl:
                     cur = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                info = cur
-                if pick_format(cur.get("formats") or [], self.pref_p):
-                    break
             except BotDetected:
                 raise
             except Exception as e:
                 last_err = e
+                continue
+            if info is None or rank(cur) > rank(info):
+                info = cur           # keep the most complete answer, not just the last one
+            fm = cur.get("formats") or []
+            if pick_format(fm, self.pref_p):
+                break
+            if not degraded(fm):
+                # A full list of streams without any HD one: the video really isn't HD.
+                # Other clients only give cut-down lists, so asking them again is pointless.
+                break
         if info is None:
             raise last_err or RuntimeError("extraction failed")
         with self._lock:
@@ -377,7 +439,7 @@ class YouTube:
         opts = _ydl_opts(format=selector, outtmpl=dest_noext + ".%(ext)s",
                          progress_hooks=hooks, overwrites=True, continuedl=False,
                          concurrent_fragment_downloads=4)
-        with download_slot(), YoutubeDL(opts) as ydl:
+        with GATE.slot(), download_slot(), YoutubeDL(opts) as ydl:
             done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
             path = ydl.prepare_filename(done)
         got = (done.get("requested_formats") or [done])[0]
@@ -393,6 +455,93 @@ class YouTube:
             fmt = dict(got)
             fmt["res_class"] = got_res or fmt.get("res_class")
         return path, fmt
+
+    def fetch(self, video_id: str, dest_noext: str, with_audio: bool = False, progress=None) -> tuple[str, dict, str | None]:
+        """One YouTube lookup, then the HD video stream (and the audio stream, for lining the
+        video up) downloaded in the same session: (video_path, format, audio_path).
+        Raises NoHDVideo when the video has no >= 640p stream, YouTubeLimited when YouTube
+        only answered with a cut-down format list."""
+        from yt_dlp import YoutubeDL
+        pref, maxp = self.pref_p, max(self.pref_p, 1080)
+        last_limited = None
+        for clients in CLIENT_FALLBACKS:
+            state: dict = {"gate": True}
+
+            def selector(ctx, state=state):
+                fm = ctx.get("formats") or []
+                if state["gate"]:                 # the lookup is done: let the next one start
+                    GATE.release()
+                    state["gate"] = False
+                    DOWNLOADS.acquire()
+                    state["dl"] = True
+                v = pick_format(fm, pref, max_p=maxp)
+                if not v:
+                    state["why"] = "limited" if degraded(fm) else "sd"
+                    return
+                state["fmt"] = v
+                yield next(f for f in fm if f.get("format_id") == v["format_id"])
+                if with_audio:
+                    auds = [f for f in fm if f.get("vcodec") in (None, "none")
+                            and f.get("acodec") not in (None, "none") and f.get("url")]
+                    a = max(auds, key=lambda f: (f.get("ext") == "m4a", "m3u8" not in (f.get("protocol") or ""),
+                                                 f.get("abr") or 0), default=None)
+                    if a:
+                        yield a
+
+            hooks = []
+            if progress:
+                def hook(d):
+                    if d.get("status") == "downloading" and (d.get("info_dict") or {}).get("vcodec") not in (None, "none"):
+                        tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                        progress(d.get("downloaded_bytes", 0), tot)
+                hooks.append(hook)
+            opts = _ydl_opts(clients, format=selector, outtmpl=dest_noext + ".f%(format_id)s.%(ext)s",
+                             progress_hooks=hooks, overwrites=True, continuedl=False,
+                             concurrent_fragment_downloads=4)
+            GATE.acquire()
+            ok = True
+            try:
+                with YoutubeDL(opts) as ydl:
+                    done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+            except Exception as e:
+                ok = False
+                if is_bot_error(e):
+                    GATE.throttled()
+                    raise BotDetected(str(e)) from e
+                why = state.get("why")
+                if why == "sd":
+                    raise NoHDVideo(f"no format at {MIN_P}p or better") from e
+                if why == "limited":
+                    last_limited = e
+                    continue                      # ask YouTube's other clients
+                raise
+            finally:
+                if state["gate"]:
+                    GATE.release(ok)
+                if state.get("dl"):
+                    DOWNLOADS.release()
+            vpath = apath = None
+            got = state.get("fmt") or {}
+            for d in done.get("requested_downloads") or []:
+                if d.get("vcodec") not in (None, "none"):
+                    vpath, got = d.get("filepath"), d
+                else:
+                    apath = d.get("filepath")
+            if not vpath:
+                raise RuntimeError("the video stream wasn't downloaded")
+            got_res = res_class(got.get("width"), got.get("height"))
+            if got_res and got_res < MIN_P:
+                for x in (vpath, apath):
+                    try:
+                        Path(x).unlink()
+                    except (OSError, TypeError):
+                        pass
+                raise NoHDVideo(f"only {got_res}p was delivered")
+            fmt = dict(state.get("fmt") or {})
+            fmt.update({k: got.get(k) for k in ("format_id", "vcodec", "width", "height", "ext") if got.get(k)})
+            fmt["res_class"] = got_res or fmt.get("res_class")
+            return vpath, fmt, apath
+        raise YouTubeLimited("YouTube only offered a reduced format list") from last_limited
 
     def download_audio(self, video_id: str, dest_noext: str) -> str:
         from yt_dlp import YoutubeDL

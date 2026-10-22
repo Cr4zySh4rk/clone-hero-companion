@@ -455,7 +455,10 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             progress(f"downloading video {done * 100 // total}%")
     path, vid, fmt, reasons = None, None, None, []
     from_cache = False
+    fetched_audio = None
+    need_align = not per_manual_offset(store, song)
     for cand in order:
+        fetched_audio = None            # only ever line up a video with its own audio
         hit = cached_video(cand)
         if hit:                          # fetched earlier for Now Playing: no download needed
             p = tmpdir / ("video" + hit.suffix.lower())
@@ -466,7 +469,11 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
                    "vcodec": "avc1" if codec == "h264" else codec}
             break
         try:
-            p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
+            if hasattr(yt, "fetch"):
+                # one lookup: the video stream, plus the audio stream when the video gets lined up
+                p, f, fetched_audio = yt.fetch(cand, str(tmpdir / "video"), with_audio=need_align, progress=prog)
+            else:
+                p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
         except NoHDVideo:
             log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
             reasons.append("below 640p")
@@ -508,7 +515,8 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
         try:
             if progress:
                 progress("lining the video up with the song")
-            off, conf = auto_offset(song, yt, vid, tmpdir)
+            off, conf = auto_offset(song, yt, vid, tmpdir,
+                                    audio=Path(fetched_audio) if fetched_audio and Path(fetched_audio).exists() else None)
             if conf >= ALIGN_MIN_Z:
                 store.update_song(song.key, video_offset=round(off, 3), video_offset_auto=True)
                 log.info("Video for %s lined up: start %+0.2fs into the video (confidence %.0f)",
@@ -556,7 +564,7 @@ def per_manual_offset(store: Store, song: Song) -> bool:
     return "video_offset" in per and not per.get("video_offset_auto")
 
 
-def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path) -> tuple[float, float]:
+def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path, audio: Path | None = None) -> tuple[float, float]:
     from . import align
     names = align.chart_audio_files(song.list_files())
     if not names:
@@ -569,7 +577,8 @@ def auto_offset(song: Song, yt: YouTube, vid: str, tmpdir: Path) -> tuple[float,
             paths.append(p)
         else:
             paths.append(song.path / n)
-    audio = Path(yt.download_audio(vid, str(tmpdir / "yt_audio")))
+    if audio is None:
+        audio = Path(yt.download_audio(vid, str(tmpdir / "yt_audio")))
     return align.find_offset(paths, audio)
 
 
