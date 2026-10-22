@@ -464,7 +464,13 @@ class Companion:
         s = self.settings()
         root = self.library.roots[0] if self.library.roots else self.data_dir / "Songs"
         dest = root / s["download_subdir"] if s["download_subdir"] else root
-        paths = inst.install(job.item or {}, dest, progress=progress, cancel=job.cancel)
+        item = job.item or {}
+        if item.get("ownedSameChart") and not job.options.get("force"):
+            return "already in your library (same chart), not downloaded again"
+        try:
+            paths = inst.install(item, dest, progress=progress, cancel=job.cancel)
+        except inst.AlreadyInstalled as e:
+            return f"already in your library ({e}), not downloaded again"
         self.library.scan()
         self.libmgr._reindex()
         self.build_preview_index()

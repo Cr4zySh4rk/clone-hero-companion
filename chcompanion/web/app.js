@@ -580,8 +580,12 @@ $("#chartResults").addEventListener("click", (e) => {
 });
 function updateChartSel() { $("#chartSel").classList.toggle("on", charts.sel.size > 0); $("#chartSelCount").textContent = `${charts.sel.size} selected`; }
 $("#chartDl").onclick = async () => {
-  const r = await api("/api/download", { items: [...charts.sel.values()], process: $("#chartProcess").checked });
-  toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"} — see Jobs`); charts.sel.clear(); renderCharts(); pollJobs(true);
+  const all = [...charts.sel.values()];
+  const items = all.filter((c) => !c.ownedSameChart), have = all.length - items.length;
+  if (!items.length) { toast(have === 1 ? "That chart is already in your library" : `All ${have} charts are already in your library`, 4000); return; }
+  const r = await api("/api/download", { items, process: $("#chartProcess").checked });
+  toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${have ? ` (${have} already in your library, skipped)` : ""} — see Jobs`, 4500);
+  charts.sel.clear(); renderCharts(); pollJobs(true);
 };
 $("#chartClear").onclick = () => { charts.sel.clear(); renderCharts(); };
 $("#chartDb").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; charts.db = b.dataset.db; $$("#chartDb button").forEach((x) => x.classList.toggle("on", x === b)); searchCharts(1); });

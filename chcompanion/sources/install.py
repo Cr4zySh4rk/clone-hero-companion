@@ -24,6 +24,10 @@ def safe_name(s: str) -> str:
     return s[:120] or "Unknown"
 
 
+class AlreadyInstalled(Exception):
+    """The chart is already in the Songs folder (we don't make numbered duplicates)."""
+
+
 def unique(p: Path) -> Path:
     if not p.exists():
         return p
@@ -76,6 +80,7 @@ def _song_dirs(root: Path) -> list[Path]:
 
 def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
     installed: list[Path] = []
+    skipped: list[Path] = []
     songs_dir.mkdir(parents=True, exist_ok=True)
     label = safe_name(f"{meta.get('artist', '')} - {meta.get('name', '')}"
                       + (f" ({meta['charter']})" if meta.get("charter") else ""))
@@ -85,7 +90,12 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
         for f in files:
             low = f.name.lower()
             if low.endswith(".sng"):
-                dst = unique(songs_dir / (label + ".sng"))
+                dst = songs_dir / (label + ".sng")
+                if dst.exists():
+                    # Clone Hero shows only one of a set of duplicate charts (and only knows about
+                    # a video in the copy it shows), so never add a numbered second copy
+                    skipped.append(dst)
+                    continue
                 shutil.move(str(f), dst)
                 installed.append(dst)
             elif low.endswith((".zip", ".7z", ".rar")):
@@ -93,21 +103,32 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
                 out.mkdir(parents=True)
                 _extract(f, out)
                 for sng in out.rglob("*.sng"):
-                    dst = unique(songs_dir / safe_name(sng.name))
+                    dst = songs_dir / safe_name(sng.name)
+                    if dst.exists():
+                        skipped.append(dst)
+                        continue
                     shutil.move(str(sng), dst)
                     installed.append(dst)
                 for d in _song_dirs(out):
                     name = d.name if d != out else label
-                    dst = unique(songs_dir / safe_name(name))
+                    dst = songs_dir / safe_name(name)
+                    if dst.exists():
+                        skipped.append(dst)
+                        continue
                     shutil.move(str(d), dst)
                     installed.append(dst)
             else:  # loose file (a Drive folder of song files)
                 loose.mkdir(exist_ok=True)
                 shutil.move(str(f), loose / f.name)
         if loose.exists() and any((loose / m).exists() for m in MARKERS):
-            dst = unique(songs_dir / label)
-            shutil.move(str(loose), dst)
-            installed.append(dst)
+            dst = songs_dir / label
+            if dst.exists():
+                skipped.append(dst)
+            else:
+                shutil.move(str(loose), dst)
+                installed.append(dst)
+        if not installed and skipped:
+            raise AlreadyInstalled(", ".join(p.name for p in skipped))
         if not installed:
             raise RuntimeError("No chart found in the download (needs song.ini / notes.chart / notes.mid or a .sng)")
         return installed
@@ -122,6 +143,11 @@ def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Pat
     url = item.get("downloadUrl") or item.get("url")
     if not url:
         raise hosts.ManualDownload("No direct download for this chart; open its page to download it")
+    if item.get("source") == "encore":
+        label = safe_name(f"{item.get('artist', '')} - {item.get('name', '')}"
+                          + (f" ({item['charter']})" if item.get("charter") else ""))
+        if (songs_dir / (label + ".sng")).exists():
+            raise AlreadyInstalled(label + ".sng")
     tmp = Path(tempfile.mkdtemp(prefix="chc-dl-", dir=config_dir()))
     try:
         def prog(done, total):
@@ -141,7 +167,9 @@ def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Pat
             folder.mkdir(exist_ok=True)
             for f in files:
                 shutil.move(str(f), folder / f.name)
-            dst = unique(songs_dir / safe_name(f"{item.get('artist', '')} - {item.get('name', '')}"))
+            dst = songs_dir / safe_name(f"{item.get('artist', '')} - {item.get('name', '')}")
+            if dst.exists():
+                raise AlreadyInstalled(dst.name)
             shutil.move(str(folder), dst)
             return [dst]
         return install_files(all_files, songs_dir, item)
