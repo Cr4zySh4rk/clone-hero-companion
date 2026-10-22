@@ -232,3 +232,9 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 .lv i { font-style: normal; font-size: 10px; font-weight: 700; width: 15px; height: 16px; border-radius: 3px; display: grid; place-items: center; color: rgba(246,241,231,.22); border: 1px solid rgba(246,241,231,.08); }
 .lv i.on { color: var(--ink, #f6f1e7); background: rgba(255,255,255,.1); border-color: transparent; }
 .lv i.on.want { background: var(--spot); color: var(--spot-ink); }
+/* charts you already have: highlighted card + note under the details */
+.card .chk { z-index: 2; }
+.card.owned { border-color: rgba(60,200,90,.75); box-shadow: 0 0 0 1px rgba(60,200,90,.55), 0 0 18px rgba(60,200,90,.18); background: linear-gradient(180deg, rgba(60,200,90,.10), var(--panel) 55%); }
+.card.owned.sel { border-color: var(--spot); box-shadow: 0 0 0 1px var(--spot), 0 0 18px rgba(60,200,90,.18); }
+.card .inlib { margin-top: 6px; color: #7fe39a; font-size: 12px; font-weight: 600; }
+.card .inlib em { font-style: normal; font-weight: 500; color: var(--dim); }

@@ -200,9 +200,18 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                    else rhythmverse.search(q.get("q", ""), system=q.get("system", "ch"), **args))
         except Exception as e:
             return _json(h, {"error": f"Search failed: {e}"}, 502) or True
-        owned = {norm_key(f"{clean_title(s.artist)} {clean_title(s.name)}") for s in c.library.songs}
+        from .library import strip_tags
+        owned: dict[str, set] = {}
+        for s in c.library.songs:
+            k = norm_key(f"{clean_title(s.artist)} {clean_title(s.name)}")
+            owned.setdefault(k, set()).add(strip_tags(s.meta.get("charter", "") or s.meta.get("frets", "")).strip())
         for r in res["songs"]:
-            r["owned"] = norm_key(f"{clean_title(r['artist'])} {clean_title(r['name'])}") in owned
+            mine = owned.get(norm_key(f"{clean_title(r['artist'])} {clean_title(r['name'])}"))
+            r["owned"] = mine is not None
+            if mine is not None:
+                ch = norm_key(r.get("charter") or "")
+                r["ownedSameChart"] = bool(ch) and any(norm_key(x) == ch for x in mine)
+                r["ownedCharters"] = sorted(x for x in mine if x)[:3]
         return _json(h, res) or True
     if path == "/api/download" and method == "POST":
         n = 0

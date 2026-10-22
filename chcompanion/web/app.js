@@ -551,13 +551,13 @@ async function searchCharts(page) {
   } catch (e) { $("#chartResults").innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
 }
 function renderCharts() {
-  $("#chartResults").innerHTML = charts.items.map((c, i) => `<div class="card${charts.sel.has(c.id) ? " sel" : ""}" data-i="${i}">
+  $("#chartResults").innerHTML = charts.items.map((c, i) => `<div class="card${charts.sel.has(c.id) ? " sel" : ""}${c.owned ? " owned" : ""}" data-i="${i}">
       <input type="checkbox" class="chk"${charts.sel.has(c.id) ? " checked" : ""}>
-      ${c.owned ? '<span class="pill ok owned">In library</span>' : ""}
       <div class="art"${c.artUrl ? ` style="background-image:url('${esc(c.artUrl)}')"` : ""}></div>
       ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="Listen before downloading">▶ Preview</button>' : ""}
       <div class="body"><b>${esc(c.name)}</b><span>${esc(c.artist)}</span><span>${esc(c.charter)}${c.length ? " · " + fmtLen(c.length) : ""}</span>
-      <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div></div></div>`).join("")
+      <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div>
+      ${c.owned ? `<span class="inlib">✓ Already in your library${!c.ownedSameChart && c.ownedCharters && c.ownedCharters.length ? ` <em>(yours: charted by ${esc(c.ownedCharters.join(", "))})</em>` : ""}</span>` : ""}</div></div>`).join("")
     || '<p class="hint">No charts found.</p>';
   const pages = Math.max(1, Math.ceil(charts.total / 48));
   $("#chartPager").innerHTML = `<button ${charts.page <= 1 ? "disabled" : ""} id="pgPrev">Previous</button> Page ${charts.page} of ${pages} · ${charts.total} charts <button ${charts.page >= pages ? "disabled" : ""} id="pgNext">Next</button>`;
