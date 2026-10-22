@@ -8,6 +8,7 @@ system: ch = Clone Hero (default), ps = Phase Shift, rb3 = Rock Band 3 (needs co
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -27,6 +28,11 @@ def _abs(url):
         return None
     url = str(url)
     return url if url.startswith("http") else BASE + (url if url.startswith("/") else "/" + url)
+
+
+def _clean(s: str) -> str:
+    """Drop Clone Hero rich-text tags like <color=#ff0000>...</color> from names."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", "", s or "")).strip()
 
 
 def _num(v):
@@ -85,9 +91,9 @@ def normalize(song: dict) -> dict:
         charter = a.get("name") if isinstance(a, dict) else None
     return {
         "source": "rhythmverse", "id": f"rv:{f.get('file_id') or d.get('song_id')}",
-        "name": str(d.get("title") or f.get("file_title") or ""), "artist": str(d.get("artist") or ""),
+        "name": _clean(str(d.get("title") or f.get("file_title") or "")), "artist": _clean(str(d.get("artist") or "")),
         "album": str(d.get("album") or ""), "genre": str(d.get("genre") or ""), "year": str(d.get("year") or ""),
-        "charter": charter or "", "length": _num(d.get("song_length")), "difficulties": diffs, "levels": _levels(f),
+        "charter": _clean(charter or ""), "length": _num(d.get("song_length")), "difficulties": diffs, "levels": _levels(f),
         "artUrl": _abs(d.get("album_art") or f.get("album_art")), "downloadUrl": None if official else dl,
         "pageUrl": f.get("download_page_url_full") or _abs(f.get("download_page_url")),
         "format": fmt, "needsConversion": fmt in CONVERT_FORMATS, "size": _num(f.get("size")),

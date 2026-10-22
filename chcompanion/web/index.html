@@ -111,6 +111,7 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
   border: 1px solid rgba(255,255,255,.12); border-radius: 8px; padding: 3px; }
 #controls .lbl { font-size: .8rem; color: var(--ink-dim); padding: 0 8px; white-space: nowrap; }
 #controls .val { font-variant-numeric: tabular-nums; font-size: .85rem; min-width: 4.2em; text-align: center; }
+#controls .val.wide { min-width: 7.5em; }
 #controls button { font: 500 .88rem var(--ui); color: var(--ink); background: transparent; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
 #controls button:hover { background: rgba(255,255,255,.1); }
 #controls button:focus-visible { outline: 2px solid var(--spot); outline-offset: 1px; }
@@ -169,6 +170,9 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     <button data-act="lyr-" title="Lyrics earlier (←)">−</button><span class="val" id="lyrVal">0.0 s</span><button data-act="lyr+" title="Lyrics later (→)">+</button></div>
   <div class="grp"><span class="lbl">Video</span>
     <button data-act="vid-" title="Video earlier (↓)">−</button><span class="val" id="vidVal">0.0 s</span><button data-act="vid+" title="Video later (↑)">+</button></div>
+  <div class="grp" title="Shifts lyrics and video together for every song, to match what you hear from the game"><span class="lbl">All timing</span>
+    <button data-act="sync+" title="Show lyrics and video earlier, for all songs ([)">Earlier</button><span class="val wide" id="syncVal">in sync</span><button data-act="sync-" title="Show lyrics and video later, for all songs (])">Later</button>
+    <button data-act="tap" title="Tap S as new lyric lines start to set the timing automatically">Tap to sync</button></div>
   <div class="grp">
     <button data-act="next" title="Try the next search result (N)">Different video</button>
     <button data-act="paste" title="Use a YouTube link you choose (U)">Use link…</button>
@@ -186,6 +190,8 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
   <table>
     <tr><td>← / →</td><td>Lyrics earlier / later by 0.1 s (hold Shift for 0.5 s)</td></tr>
     <tr><td>↓ / ↑</td><td>Video earlier / later by 0.1 s (hold Shift for 1 s)</td></tr>
+    <tr><td>[ / ]</td><td>Everything earlier / later for all songs, if lyrics and video trail or lead the game's sound (hold Shift for bigger steps)</td></tr>
+    <tr><td>S</td><td>Tap to sync: press S as each new lyric line starts (3 times) and the timing is set for you</td></tr>
     <tr><td>N / P</td><td>Next / previous YouTube result for this song</td></tr>
     <tr><td>U</td><td>Use a YouTube link you paste</td></tr>
     <tr><td>I</td><td>Redo this song's in-game video and lyrics (after changing the video or offsets)</td></tr>
@@ -215,7 +221,7 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
   function songTime() {
     if (!S || !S.clock) return 0;
     const c = S.clock;
-    return c.anchorTime + c.rate * (now() - c.anchorWall);
+    return c.anchorTime + c.rate * (now() - c.anchorWall) + ((S.offsets && S.offsets.sync) || 0);
   }
   const lyrOffset = () => S ? (S.offsets.lyrics + S.offsets.globalLyrics) : 0;
   const vidOffset = () => S ? S.offsets.video : 0;
@@ -281,13 +287,19 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
       const v = S.video || {};
       if (v.loading) txt += "  ·  finding video…";
       else if (v.kind === "local") txt += "  ·  video from song folder";
-      else if (v.kind === "youtube") txt += `  ·  ${v.title || "YouTube video"}`;
-      else txt += "  ·  no video";
+      else if (v.kind === "cache") txt += "  ·  HD video (added to the song after it's played)";
+      else if (v.kind === "youtube") txt += `  ·  ${v.title || "YouTube video"} (streaming while the HD video downloads)`;
+      else if (v.kind === "pending") txt += "  ·  " + (v.message || "Getting the HD video…");
+      else txt += "  ·  " + (v.message || "no video");
     }
     $("source").textContent = txt;
   }
   function fmt(v) { return (v > 0 ? "+" : "") + v.toFixed(1) + " s"; }
-  function renderOffsets() { $("lyrVal").textContent = fmt(lyrOffset()); $("vidVal").textContent = fmt(vidOffset()); }
+  function renderOffsets() {
+    $("lyrVal").textContent = fmt(lyrOffset()); $("vidVal").textContent = fmt(vidOffset());
+    const sy = (S && S.offsets && S.offsets.sync) || 0;
+    $("syncVal").textContent = Math.abs(sy) < 0.005 ? "in sync" : `${Math.abs(sy).toFixed(2)} s ${sy > 0 ? "earlier" : "later"}`;
+  }
 
   function setStatus(cls, txt) { const el = $("status"); el.className = cls; el.querySelector(".txt").textContent = txt; }
   function renderStatus() {
@@ -351,9 +363,8 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     const v = S.video || {};
     const vid = $("video");
     let kind = null, src = null;
-    if (v.kind === "local") { kind = "file"; src = v.src; }
+    if (v.kind === "local" || v.kind === "cache") { kind = "file"; src = v.src; }
     else if (v.kind === "youtube" && v.stream !== false) { kind = "file"; src = v.src; }
-    else if (v.kind === "youtube") { kind = "yt"; src = v.id; }
     if (kind === videoKind && src === videoSrc) return;
     videoKind = kind; videoSrc = src;
     vid.classList.remove("on"); $("yt").classList.remove("on");
@@ -366,9 +377,10 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     if (kind === "yt") loadYT(src);
   }
   $("video").addEventListener("error", () => {
+    // a YouTube stream that fails is only a stopgap: the downloaded HD video replaces it shortly
     if (videoKind === "file" && S && S.video && S.video.kind === "youtube") {
-      console.warn("stream failed, falling back to the embedded player");
-      videoKind = "yt"; videoSrc = S.video.id; $("video").classList.remove("on"); loadYT(S.video.id);
+      $("video").classList.remove("on");
+      $("source").textContent = $("source").textContent.replace(/ \(streaming.*\)$/, "") + " · getting the HD video…";
     }
   });
   $("video").addEventListener("playing", () => $("video").classList.add("on"));
@@ -453,6 +465,9 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     "lyr+": (big) => post("/api/offset", { kind: "lyrics", delta: big ? 0.5 : 0.1 }),
     "vid-": (big) => post("/api/offset", { kind: "video", delta: big ? -1 : -0.1 }),
     "vid+": (big) => post("/api/offset", { kind: "video", delta: big ? 1 : 0.1 }),
+    "sync+": (big) => post("/api/offset", { kind: "sync", delta: big ? 0.25 : 0.05 }),
+    "sync-": (big) => post("/api/offset", { kind: "sync", delta: big ? -0.25 : -0.05 }),
+    tap: () => tapSync(),
     next: () => { toast("Trying the next video…"); post("/api/video/next", { step: 1 }); },
     prev: () => { toast("Trying the previous video…"); post("/api/video/next", { step: -1 }); },
     paste: async () => {
@@ -482,7 +497,24 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
   };
   $("controls").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) actions[b.dataset.act](e.shiftKey); });
   $("help").addEventListener("click", () => $("help").classList.remove("on"));
+  // Tap to sync: the player presses S when they hear a lyric line start; the difference
+  // between that moment and the line's time is how far our clock is off.
+  let taps = null;
+  function tapSync() {
+    if (!S || !S.song || S.clock.status !== "playing" || !lines.length) return toast("Start a song with lyrics first, then tap S as each new line starts");
+    const t = songTime() - lyrOffset();
+    if (!taps) { taps = []; }
+    let best = null;
+    for (const l of lines) { const d = l.start - t; if (Math.abs(d) <= 3 && (!best || Math.abs(d) < Math.abs(best))) best = d; }
+    if (best === null) return toast("No lyric line near this moment; tap right as a line starts");
+    taps.push(best);
+    if (taps.length < 3) return toast(`Tap ${taps.length} of 3. Tap S again as the next line starts`);
+    const sorted = [...taps].sort((a, b) => a - b), med = sorted[1]; taps = null;
+    post("/api/offset", { kind: "sync", delta: Math.round(med * 100) / 100 });
+    toast(Math.abs(med) < 0.04 ? "Already in sync" : `Timing moved ${Math.abs(med).toFixed(2)} s ${med > 0 ? "earlier" : "later"} for all songs`, 3500);
+  }
   const keys = { ArrowLeft: "lyr-", ArrowRight: "lyr+", ArrowDown: "vid-", ArrowUp: "vid+", n: "next", p: "prev", u: "paste",
+                 "[": "sync+", "]": "sync-", s: "tap",
                  i: "install", v: "toggle", f: "full", "?": "help", h: "hide", Escape: "help" };
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;

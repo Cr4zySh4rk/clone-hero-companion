@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 
@@ -54,6 +55,11 @@ def _diffs(c: dict) -> dict:
 LEVELS = ("easy", "medium", "hard", "expert")
 
 
+def _clean(s: str) -> str:
+    """Drop Clone Hero rich-text tags like <color=#ff0000>...</color> from names."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", "", s or "")).strip()
+
+
 def _levels(c: dict) -> dict:
     """Which difficulty levels each instrument actually has: {"guitar": ["easy", ..., "expert"]}."""
     out: dict = {}
@@ -85,8 +91,8 @@ def normalize(c: dict) -> dict:
     art = c.get("albumArtMd5")
     return {
         "source": "encore", "id": f"encore:{c.get('chartId') or md5}", "md5": md5,
-        "name": c.get("name") or "", "artist": c.get("artist") or "", "album": c.get("album") or "",
-        "genre": c.get("genre") or "", "year": str(c.get("year") or ""), "charter": c.get("charter") or "",
+        "name": _clean(c.get("name") or ""), "artist": _clean(c.get("artist") or ""), "album": c.get("album") or "",
+        "genre": c.get("genre") or "", "year": str(c.get("year") or ""), "charter": _clean(c.get("charter") or ""),
         "length": (c.get("song_length") or 0) / 1000 or None, "difficulties": _diffs(c), "levels": _levels(c),
         "hasVideo": bool(c.get("hasVideoBackground")), "hasVocals": bool((c.get("notesData") or {}).get("hasVocals")),
         "pack": c.get("packName"), "modified": c.get("modifiedTime"),

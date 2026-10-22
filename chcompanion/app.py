@@ -48,6 +48,7 @@ class Companion:
         self.jobs = JobManager(self._run_job, workers=int(self.settings().get("workers") or 0) or None,
                                busy=self._job_busy, on_change=self._job_changed)
         self.game_yt.pref_p = int(self.settings().get("pref_p", 720))
+        ingame.PREFER_WEBM = self.settings().get("game_video_format") == "webm"
         self.clients: list[queue.Queue] = []
         self.clients_lock = threading.Lock()
         self.song: Song | None = None
@@ -106,7 +107,8 @@ class Companion:
             "offsets": {"lyrics": float(per.get("lyrics_offset", 0.0))
                         - (float(per.get("lyrics_offset_written", 0.0) or 0.0) if per.get("game_lyrics") else 0.0),
                         "video": float(per.get("video_offset", 0.0)),
-                        "globalLyrics": float(self.store.get("lyrics_offset", 0.0))},
+                        "globalLyrics": float(self.store.get("lyrics_offset", 0.0)),
+                        "sync": float(self.store.get("game_sync", 0.0))},
             "notice": self.notice,
             "install": self.song_job_status(self.song) if self.song else None,
             "inGame": self.in_game,
@@ -180,6 +182,8 @@ class Companion:
         self.broadcast()
 
     def _prepare_video(self, song: Song, token: int, choose_index: int | None = None):
+        """Video for the Now Playing screen: the song's own video file, else a downloaded copy
+        in the cache (fetched right away), with a direct YouTube stream only as a stopgap."""
         video: dict = {"kind": None, "loading": False}
         local = song.local_video()
         per = self.store.song(song.key)
@@ -189,29 +193,37 @@ class Companion:
                 # the stored per-song offset, so only add the part not yet written to the ini.
                 video = {"kind": "local", "src": f"/media/local?t={token}", "name": local.name,
                          "startOffset": song.video_start_s - float(per.get("video_offset_written", 0.0) or 0.0)}
+            elif choose_index is None and ingame.cached_video(per.get("video_id")):
+                hit = ingame.cached_video(per.get("video_id"))
+                video = {"kind": "cache", "src": f"/media/cache/{hit.name}", "name": hit.name,
+                         "startOffset": 0.0, "candidates": per.get("candidates") or []}
             elif self.use_youtube:
                 cands = per.get("candidates")
                 vid = per.get("video_id")
-                if not cands or choose_index is not None or not vid:
+                if choose_index is not None or not vid:
                     if not cands:
                         cands = self.yt.search(song)
                     if choose_index is not None and cands:
                         vid = cands[choose_index % len(cands)]["id"]
-                        self.store.update_song(song.key, video_manual=True)
+                        self.store.update_song(song.key, video_manual=True, video_failed=None)
                     elif not vid and cands and cands[0]["score"] >= youtube.MIN_SCORE:
                         vid = cands[0]["id"]
-                    self.store.update_song(song.key, candidates=cands[:8], video_id=vid)
-                if vid:
-                    title = next((c.get("title") for c in cands or [] if c["id"] == vid), None)
-                    video = {"kind": "youtube", "id": vid, "title": title,
-                             "src": f"/media/yt/{vid}", "candidates": cands or []}
-                    try:
+                    self.store.update_song(song.key, candidates=(cands or [])[:8], video_id=vid)
+                hit = ingame.cached_video(vid)
+                title = next((c.get("title") for c in cands or [] if c["id"] == vid), None)
+                if hit:
+                    video = {"kind": "cache", "src": f"/media/cache/{hit.name}", "name": hit.name, "title": title,
+                             "startOffset": 0.0, "candidates": cands or []}
+                elif vid:
+                    video = {"kind": "pending", "id": vid, "title": title, "candidates": cands or [],
+                             "message": "Getting the HD video…"}
+                    try:                      # quick stopgap while the download runs
                         r = self.yt.resolve(vid)
-                        video["title"] = r.get("title") or title
-                        video["stream"] = True
+                        video.update(kind="youtube", src=f"/media/yt/{vid}", stream=True,
+                                     title=r.get("title") or title)
                     except Exception as e:
-                        log.warning("Could not resolve stream for %s (%s); using embed player", vid, e)
-                        video["stream"] = False
+                        log.info("No direct stream for %s (%s); waiting for the download", vid, e)
+                    self._fetch_preview(song, token)
         except Exception as e:
             log.warning("Video lookup failed for %s: %s", song.display, e)
         if token != self.prepare_token:
@@ -219,11 +231,36 @@ class Companion:
         self.video = video
         self.broadcast()
 
+    def _fetch_preview(self, song: Song, token: int):
+        """Download the video into the cache now; the song's own files are updated after it."""
+        if getattr(self, "_preview_busy", None) == song.key:
+            return
+        self._preview_busy = song.key
+
+        def work():
+            try:
+                ingame.fetch_preview_video(song, self.game_yt, self.store)
+                if token == self.prepare_token:
+                    self._prepare_video(song, token)
+                if self.in_game and self.needs_prep(song):
+                    self.queue_song(song, "media", PRIO_PLAYED)   # uses the cached copy
+            except Exception as e:
+                log.info("Could not get the video for %s now: %s", song.display, e)
+                if token == self.prepare_token and self.video.get("kind") == "pending":
+                    self.video = {"kind": None, "loading": False, "message": f"No HD video: {e}"}
+                    self.broadcast()
+            finally:
+                self._preview_busy = None
+        threading.Thread(target=work, daemon=True, name="np-video").start()
+
     # ------------------------------------------------------------ actions
     def adjust_offset(self, kind: str, delta: float | None = None, value: float | None = None):
         if kind == "global":
             cur = float(self.store.get("lyrics_offset", 0.0))
             self.store.set("lyrics_offset", round(value if value is not None else cur + (delta or 0), 3))
+        elif kind == "sync":     # whole Now Playing clock vs the game (lyrics and video together)
+            cur = float(self.store.get("game_sync", 0.0))
+            self.store.set("game_sync", round(max(-5.0, min(5.0, value if value is not None else cur + (delta or 0))), 3))
         elif self.song:
             field = "lyrics_offset" if kind == "lyrics" else "video_offset"
             cur = float(self.store.song(self.song.key).get(field, 0.0))
@@ -282,7 +319,7 @@ class Companion:
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
-                "setup_done": False, "fav_setlist": True}
+                "setup_done": False, "fav_setlist": True, "game_video_format": "auto"}
 
     def repair_videos(self) -> int:
         """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
@@ -332,6 +369,7 @@ class Companion:
         self.prefetch = bool(s["prefetch"])
         self.game_lyrics = bool(s["game_lyrics"])
         self.game_yt.pref_p = int(s["pref_p"])
+        ingame.PREFER_WEBM = s.get("game_video_format") == "webm"
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
         return s
 
@@ -371,6 +409,10 @@ class Companion:
 
     def _job_changed(self, job: Job):
         if self.song and job.song_id == song_id(self.song):
+            if job.status == "done" and self.video.get("kind") != "local":
+                # the song now has its own video file: show that one
+                threading.Thread(target=self._prepare_video, args=(self.song, self.prepare_token),
+                                 daemon=True).start()
             self.broadcast(full=False)
 
     def _run_job(self, job: Job, progress) -> str:
@@ -404,7 +446,8 @@ class Companion:
                     self.store.update_song(song.key, lyrics_none=True)
                 res = self.store.song(song.key).get("video_res")
                 if r.get("video"):
-                    parts.append(f"video {res}p" if res else "video")
+                    where = "packed into the .sng" if song.is_sng else f"saved as {r['video']}"
+                    parts.append((f"video {res}p " if res else "video ") + where)
                 if r.get("lyrics") == "added":
                     parts.append("lyrics")
                 if not r.get("video") and not r.get("lyrics") == "added":
@@ -440,6 +483,7 @@ class Companion:
         self.watcher.start()
         self.jobs.start()
         def scan_then_repair():
+            ingame.prune_video_cache()
             self.libmgr.rescan()
             self.repair_videos()
         threading.Thread(target=scan_then_repair, daemon=True).start()
@@ -595,6 +639,12 @@ class Handler(BaseHTTPRequestHandler):
                                    "songs": len(c.library.songs)})
             if p == "/events":
                 return self._sse()
+            if p.startswith("/media/cache/"):
+                name = urllib.parse.unquote(p.rsplit("/", 1)[-1])
+                f = ingame.video_cache_dir() / name
+                if "/" in name or "\\" in name or name.startswith(".") or not f.is_file():
+                    return self._json({"error": "not found"}, 404)
+                return self._serve_file(f)
             if p == "/media/local":
                 v = c.song.local_video() if c.song else None
                 if not v:

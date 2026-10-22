@@ -641,7 +641,10 @@ function renderDock() {
      <span>${total - active}/${total} done${c.failed ? ` · ${c.failed} failed` : ""}</span>
      <span>${running.map((j) => `${esc(j.title)}: ${esc(j.step)}`).join(" · ")}</span>
      ${jobsSnap.youtube?.pausedFor ? `<span class="pill low">YouTube pause ${jobsSnap.youtube.pausedFor}s</span>` : ""}`
-    : (total ? `<span>All jobs finished${c.failed ? ` (${c.failed} failed)` : ""}</span>` : "<span>Ready</span>");
+    : (total ? `<span>All jobs finished${c.failed ? ` (${c.failed} failed)` : ""}</span>`
+        + (jobsSnap.jobs.some((j) => j.status === "done" && /^video /.test(j.result || "") || / video \d+p /.test(j.result || ""))
+          ? `<span class="hint">New videos added: in Clone Hero, run <b>Settings → Scan Songs</b> (or restart the game) so it picks them up.</span>` : "")
+      : "<span>Ready</span>");
 }
 function renderJobs() {
   if (!jobsSnap) return;
@@ -672,6 +675,10 @@ async function loadSettings() {
       <div class="row2"><span>Preferred quality</span><select data-k="pref_p"><option value="720"${s.pref_p == 720 ? " selected" : ""}>720p</option><option value="1080"${s.pref_p == 1080 ? " selected" : ""}>1080p</option></select>
         <small>Videos below ${d.minP}p are never downloaded or accepted. Widescreen videos count by their YouTube quality (1280×526 is 720p).</small></div>
       ${chk("replace_low_res", "Low-resolution videos", "Replace existing videos below 640p when a song is processed")}
+      <div class="row2"><span>Video format for Clone Hero</span><select data-k="game_video_format">
+          <option value="auto"${s.game_video_format !== "webm" ? " selected" : ""}>Automatic (MP4 on Windows and macOS, WebM on Linux)</option>
+          <option value="webm"${s.game_video_format === "webm" ? " selected" : ""}>WebM VP8, plays everywhere (slower to prepare)</option></select>
+        <small>If Clone Hero doesn't show some videos, choose WebM and run the songs again: videos added earlier are converted on the computer, nothing is downloaded again.</small></div>
     </section>
     <section><h3>In the game</h3>
       ${chk("in_game", "Add videos and lyrics", "Put videos and lyrics into your songs so Clone Hero shows them")}

@@ -269,6 +269,7 @@ def repair_fragmented_videos(songs, progress=None) -> int:
                 finally:
                     shutil.rmtree(tmpdir, ignore_errors=True)
             else:
+                done = False
                 for n in ("video.mp4", "video.m4v"):
                     p = song.path / n
                     if not p.is_file():
@@ -280,6 +281,9 @@ def repair_fragmented_videos(songs, progress=None) -> int:
                     tmp = song.path / ".chc-remux.mp4"
                     _remux_mp4(p, tmp)
                     os.replace(tmp, p)
+                    done = True
+                if not done:
+                    continue
             fixed += 1
             log.info("Rewrote the video of %s as a standard MP4 (plays on macOS now)", song.display)
             if progress:
@@ -287,6 +291,111 @@ def repair_fragmented_videos(songs, progress=None) -> int:
         except Exception as e:
             log.warning("Could not rewrite the video of %s: %s", getattr(song, "display", song), e)
     return fixed
+
+
+# Which codecs Clone Hero plays per platform (Clone Hero manual: VP8 .webm works everywhere,
+# .mp4 needs H.264 on Windows/macOS, Linux only plays VP8 .webm and .ogv).
+PLAYABLE = {
+    "linux": {"vp8", "theora"},
+    "win32": {"h264", "vp8", "theora", "mpeg1video", "mpeg2video"},
+    "darwin": {"h264", "hevc", "vp8", "theora", "mpeg1video", "mpeg2video"},
+}
+PREFER_WEBM = False      # setting "Video format for Clone Hero: WebM (most compatible)"
+
+
+def target_os() -> str:
+    t = os.environ.get("CHC_TARGET_OS", sys.platform)
+    return "linux" if t.startswith("linux") else "win32" if t.startswith("win") else "darwin"
+
+
+def probe_codec(p: Path) -> str:
+    """Video codec name as ffmpeg reports it (h264, hevc, vp8, vp9, av1...), '' if unknown."""
+    ff = _ffmpeg()
+    if not ff:
+        return ""
+    try:
+        err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+    except Exception:
+        return ""
+    m = re.search(r"Video:\s*([A-Za-z0-9_]+)", err)
+    return m.group(1).lower() if m else ""
+
+
+def playable_in_game(codec: str) -> bool:
+    if not codec:
+        return True          # unknown: don't touch it
+    ok = PLAYABLE[target_os()]
+    if PREFER_WEBM:
+        ok = {"vp8"}
+    return codec in ok
+
+
+def current_video_codec(song: Song, store: Store) -> str:
+    """Codec of the video the song already has (cached by size/mtime)."""
+    try:
+        p = song.local_video()
+        if not p:
+            return ""
+        st = (song.path if song.is_sng else p).stat()
+        sig = f"{st.st_size}:{int(st.st_mtime)}"
+        per = store.song(song.key)
+        if per.get("video_codec_probe", {}).get("sig") == sig:
+            return per["video_codec_probe"]["codec"]
+        codec = probe_codec(p)
+        store.update_song(song.key, video_codec_probe={"sig": sig, "codec": codec})
+        return codec
+    except Exception:
+        return ""
+
+
+# --------------------------------------------------------------- video cache
+# Videos fetched for the Now Playing screen while a song is being played. The song's
+# own files can't be changed while the game plays it; the job afterwards reuses these.
+def video_cache_dir() -> Path:
+    d = config_dir() / "video-cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def cached_video(video_id: str | None) -> Path | None:
+    if not video_id:
+        return None
+    for p in video_cache_dir().glob(f"{video_id}.*"):
+        if p.suffix.lower() in (".mp4", ".webm") and p.stat().st_size > 0:
+            return p
+    return None
+
+
+def prune_video_cache(max_bytes: int = 3_000_000_000, max_age_s: float = 14 * 86400) -> None:
+    try:
+        files = sorted(video_cache_dir().glob("*.*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        total, now = 0, time.time()
+        for p in files:
+            st = p.stat()
+            total += st.st_size
+            if total > max_bytes or now - st.st_mtime > max_age_s or p.suffix == ".part":
+                p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def fetch_preview_video(song: Song, yt: YouTube, store: Store, progress=None) -> Path:
+    """Download (and line up) the song's HD video into the cache for Now Playing."""
+    with _lock_for(song.key):
+        per = store.song(song.key)
+        hit = cached_video(per.get("video_id")) if per.get("video_id") else None
+        if hit:
+            return hit
+        vpath = download_video(song, yt, store, progress)
+        try:
+            vid = store.song(song.key).get("video_id")
+            dst = video_cache_dir() / f"{vid}{vpath.suffix.lower()}"
+            tmp = dst.with_suffix(".part")
+            shutil.copyfile(vpath, tmp)
+            os.replace(tmp, dst)
+            return dst
+        finally:
+            shutil.rmtree(vpath.parent, ignore_errors=True)
 
 
 def video_res(p: Path) -> int:
@@ -345,7 +454,17 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
         if progress and total:
             progress(f"downloading video {done * 100 // total}%")
     path, vid, fmt, reasons = None, None, None, []
+    from_cache = False
     for cand in order:
+        hit = cached_video(cand)
+        if hit:                          # fetched earlier for Now Playing: no download needed
+            p = tmpdir / ("video" + hit.suffix.lower())
+            shutil.copyfile(hit, p)
+            codec = probe_codec(p)
+            path, vid, from_cache = p, cand, True
+            fmt = {"res_class": video_res(p) or store.song(song.key).get("video_res"),
+                   "vcodec": "avc1" if codec == "h264" else codec}
+            break
         try:
             p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
         except NoHDVideo:
@@ -384,7 +503,8 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     store.update_song(bkey, video_id=vid, failed=None, failed_at=None)
     store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None,
                       video_failed_at=None, video_failed_reason=None)
-    if not per_manual_offset(store, song):
+    already_aligned = from_cache and info.get("video_id") == vid and "video_offset" in info
+    if not per_manual_offset(store, song) and not already_aligned:
         try:
             if progress:
                 progress("lining the video up with the song")
@@ -402,7 +522,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             log.warning("Could not line up the video for %s: %s", song.display, e)
     target = os.environ.get("CHC_TARGET_OS", sys.platform)
     codec = (fmt.get("vcodec") or "").lower()
-    if target.startswith("linux"):
+    if target.startswith("linux") or PREFER_WEBM:
         if not (path.suffix.lower() == ".webm" and codec.startswith("vp8")):
             if progress:
                 progress("converting video for Clone Hero (VP8)")
@@ -589,15 +709,28 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
                 if shift is not None:
                     store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
                     per = store.song(song.key)
-        want_video = video and (force_video or not has_video(song)
+        existing = has_video(song)
+        unplayable = existing and video and not playable_in_game(current_video_codec(song, store))
+        want_video = video and (force_video or not existing or unplayable
                                 or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD))
         vpath = None
-        if want_video:
-            vpath = download_video(song, yt, store, progress, force=force_video)
+        keep_start = False
+        if want_video and unplayable and not force_video and PREFER_WEBM and per.get("game_video"):
+            # a video we added earlier, just in a format this setup can't use: convert it
+            vpath = _convert_existing_to_webm(song, progress)
+            keep_start = vpath is not None
+        if want_video and vpath is None:
+            if unplayable:
+                log.info("%s has a video Clone Hero can't play here (%s); getting a new one",
+                         song.display, current_video_codec(song, store))
+            vpath = download_video(song, yt, store, progress, force=force_video or unplayable)
             per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
         write_v = off_v  # value for video_start_time
-        if vpath and off_v <= -0.05:
+        if keep_start:   # converted in place: padding and start time stay as they were
+            off_v = float(per.get("video_offset_written", 0.0) or 0.0)
+            write_v = song.video_start_s
+        elif vpath and off_v <= -0.05:
             try:
                 if progress:
                     progress("adjusting the video start")
@@ -615,16 +748,35 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             if vpath:
                 shutil.rmtree(vpath.parent, ignore_errors=True)
         changes = {}
-        if result["video"]:
+        if result["video"] and not keep_start:
             changes["game_video"] = result["video"]
             changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
             changes["video_padded"] = round(off_v - write_v, 3) or None
+        elif result["video"]:
+            changes["game_video"] = result["video"]
         if result["lyrics"] == "added":
             changes["game_lyrics"] = True
             changes["lyrics_offset_written"] = off_l
         if changes:
             store.update_song(song.key, **changes)
         return result
+
+
+def _convert_existing_to_webm(song: Song, progress=None) -> Path | None:
+    src = song.local_video()
+    if not src:
+        return None
+    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
+    out = tmpdir / "video.webm"
+    try:
+        if progress:
+            progress("converting the video to WebM for Clone Hero")
+        _to_vp8(src, out)
+        return out
+    except Exception as e:
+        log.warning("Could not convert the video of %s: %s", song.display, e)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return None
 
 
 def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
@@ -637,6 +789,13 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
         tmp = song.path / ".chc-video.tmp"
         shutil.copyfile(vpath, tmp)
         os.replace(tmp, dst)
+        want = vpath.stat().st_size
+        try:
+            got = dst.stat().st_size
+        except OSError:
+            got = -1
+        if got != want:
+            raise InGameError(f"the video could not be saved in {song.path} (wrote {got} of {want} bytes)")
         result["video"] = dst.name
         if abs(off_v) >= 0.05 or "video_start_time" in song.meta:
             _set_ini(song, "video_start_time", int(round(off_v * 1000)))
@@ -692,6 +851,12 @@ def _apply_sng(song: Song, vpath: Path | None, lines, off_l, off_v, result):
         _backup(song.path)
         write_sng(src_path, meta, files, src=src)
         song.meta.update({k.lower(): v for k, v in meta.items()})
+        if vpath:
+            chk = open_sng(src_path)
+            name = "video" + vpath.suffix.lower()
+            entry = next((e for n, e in chk.files.items() if n.lower() == name), None)
+            if entry is None or entry.size != vpath.stat().st_size:
+                raise InGameError(f"the video could not be packed into {song.path.name}")
 
 
 def _set_ini(song: Song, key: str, value) -> None:
