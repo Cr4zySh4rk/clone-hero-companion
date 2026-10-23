@@ -278,7 +278,7 @@ class CloudSync:
         self.cloud_only: list[dict] = []     # cloud favourites not in this library
         self.not_found: set[str] = set()     # cloud favourites Chorus Encore doesn't have
         self.syncing = False
-        self.state = {"tombstones": {}, "plays": {}, "lastSync": None, "lastError": None}
+        self.state = {"tombstones": {}, "synced": [], "plays": {}, "lastSync": None, "lastError": None}
         try:
             s = json.loads(self.state_path.read_text("utf-8"))
             if isinstance(s, dict):
@@ -301,9 +301,14 @@ class CloudSync:
                 self.lm._reindex()
             return list(self.lm.by_id.values())
 
+    def fav_key_of(self, s) -> str:
+        """Cloud song_key of one chart: its checksum when known, else artist-name|charter|relative path."""
+        return self.lm.chart_key(s)
+
     @staticmethod
-    def fav_key_of(s) -> str:
-        return song_key(s.artist, s.name, strip_tags(s.meta.get("charter", "") or s.meta.get("frets", "")))
+    def is_legacy_key(k: str) -> bool:
+        """Pre-2.1.1 cloud keys were song-level: norm_key(artist - name)|norm_key(charter)."""
+        return k.count("|") == 1
 
     def _record(self, s) -> dict:
         m = s.meta
@@ -313,9 +318,21 @@ class CloudSync:
             src["encore_md5"] = per["src_encore_md5"]
         if per.get("src_url"):
             src["url"] = per["src_url"]
-        return {"song_key": self.fav_key_of(s), "checksum": (self.lm.cache.get(str(s.path), {}).get("md5") or None),
+        return {"song_key": self.fav_key_of(s), "checksum": self.lm.chart_md5(s),
                 "artist": s.artist, "name": s.name, "charter": strip_tags(m.get("charter", "") or m.get("frets", "")),
                 "album": strip_tags(m.get("album", "")), "source": src}
+
+    def _tomb_keys(self, s) -> set[str]:
+        """Every cloud key that may name this chart (checksum, path, old song-level, install aliases)."""
+        ks = {self.lm.chart_pid(s), self.lm.legacy_key(s), self.fav_key_of(s)}
+        md5 = self.lm.chart_md5(s)
+        if md5:
+            ks.add(md5)
+        mine = {k for k in ks}
+        for rk, lk in (self.state.get("aliases") or {}).items():
+            if lk in mine:
+                ks.add(rk)
+        return ks
 
     def local_favourites(self) -> dict[str, dict]:
         try:
@@ -323,23 +340,23 @@ class CloudSync:
         except Exception as e:
             log.debug("hash index failed: %s", e)
         out = {}
+        sets = self.lm._fav_sets()
         for s in self._songs():
-            if self.store.song(s.key).get("fav"):
+            if self.lm.is_fav(s, sets):
                 out.setdefault(self.fav_key_of(s), self._record(s))
         return out
 
     # ------------------------------------------------------------ favourites: change hook
     def fav_changed(self, songs: list, value: bool):
-        """Called by the library manager after favourites are set or cleared."""
-        if not self.cloud.signed_in:
-            return
+        """Called by the library manager after charts are starred or unstarred. Removals are recorded even
+        when signed out, so they are sent (and not undone by a pull) at the next sync."""
         with self.lock:
             for s in songs:
-                k = self.fav_key_of(s)
-                if value:
-                    self.state["tombstones"].pop(k, None)
-                else:
-                    self.state["tombstones"][k] = int(time.time())
+                for k in self._tomb_keys(s):
+                    if value:
+                        self.state["tombstones"].pop(k, None)
+                    else:
+                        self.state["tombstones"][k] = int(time.time())
             self._save_state()
         self.schedule()
 
@@ -354,17 +371,91 @@ class CloudSync:
             self.timer.start()
 
     # ------------------------------------------------------------ favourites: sync
+    @staticmethod
+    def _added_ts(row: dict) -> float:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(str(row.get("added_at")).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
     def sync_favorites(self):
-        c = self.cloud
-        remote_rows = c.rest("GET", "favorites", {"select": "*", "order": "added_at.asc"}) or []
-        remote = {r["song_key"]: r for r in remote_rows}
-        # 1. deletions made here
-        for k in list(self.state["tombstones"]):
+        c, lm = self.cloud, self.lm
+        remote = {r["song_key"]: r for r in (c.rest("GET", "favorites", {"select": "*", "order": "added_at.asc"}) or [])}
+        # 1. removals made here: delete the cloud rows (unless re-added elsewhere after the removal)
+        for k, ts in list(self.state["tombstones"].items()):
+            row = remote.get(k)
+            if row and self._added_ts(row) > ts:
+                with self.lock:
+                    self.state["tombstones"].pop(k, None)
+                continue
             c.rest("DELETE", "favorites", {"song_key": f"eq.{k}"}, prefer="return=minimal")
             remote.pop(k, None)
-            self.state["tombstones"].pop(k, None)
-            self._save_state()
-        # 2. upload what's new here (or lacks a checksum in the cloud)
+            with self.lock:
+                self.state["tombstones"].pop(k, None)
+                self._save_state()
+        try:
+            lm._hash_index()
+        except Exception as e:
+            log.debug("hash index failed: %s", e)
+        songs = self._songs()
+        sets = lm._fav_sets()
+        keyed = {}
+        for s in songs:
+            keyed.setdefault(self.fav_key_of(s), s)
+        # 2. removals made on another machine: a chart that was in the cloud at the last sync and is gone now
+        synced = set(self.state.get("synced") or [])
+        gone = [s for k, s in keyed.items() if lm.is_fav(s, sets) and k in synced and k not in remote]
+        if gone:
+            lm.set_fav(gone, False, notify=False)
+            sets = lm._fav_sets()
+        # 3. pull: cloud favourites that match a chart here become favourites of that chart only
+        by_legacy: dict[str, list] = {}
+        by_sum = {}
+        for s in songs:
+            by_legacy.setdefault(lm.legacy_key(s), []).append(s)
+            h = lm.chart_md5(s)
+            if h:
+                by_sum[h] = s
+        aliases = self.state.get("aliases", {})
+        tomb = dict(self.state["tombstones"])
+        cloud_only, stale, starred = [], [], []
+        for k, r in remote.items():
+            if k in tomb:
+                continue
+            chk = (r.get("checksum") or "").upper()
+            exact = keyed.get(k)
+            targets = [exact] if exact else []
+            if not targets and aliases.get(k) in keyed:
+                targets = [keyed[aliases[k]]]
+            if not targets and chk and chk in by_sum:
+                targets = [by_sum[chk]]
+            if not targets:
+                lk = k if self.is_legacy_key(k) else song_key(r.get("artist") or "", r.get("name") or "", r.get("charter") or "")
+                cands = by_legacy.get(lk, [])
+                if self.is_legacy_key(k):
+                    targets = cands
+                elif len(cands) == 1:
+                    targets = cands
+            if not targets:
+                cloud_only.append(r)
+                continue
+            if self.is_legacy_key(k):
+                # an old song-level row: only star when no copy of the song is a favourite yet
+                if not any(lm.is_fav(s, sets) for s in targets):
+                    starred += targets
+            else:
+                starred += [s for s in targets if not lm.is_fav(s, sets)]
+            if exact is None or self.fav_key_of(targets[0]) != k:
+                stale.append(k)                 # keyed differently from the chart here: re-key below
+        if starred:
+            lm.set_fav(starred, True, notify=False)
+            sets = lm._fav_sets()
+        # 4. upload what's new here (or lacks a checksum in the cloud) and replace re-keyed rows
+        for k in stale:
+            c.rest("DELETE", "favorites", {"song_key": f"eq.{k}"}, prefer="return=minimal")
+            remote.pop(k, None)
+            self.state.get("aliases", {}).pop(k, None)
         local = self.local_favourites()
         up = [r for k, r in local.items()
               if k not in remote or (r["checksum"] and not remote[k].get("checksum"))]
@@ -373,25 +464,12 @@ class CloudSync:
                    "resolution=merge-duplicates,return=minimal")
             for r in up:
                 remote.setdefault(r["song_key"], r)
-        # 3. cloud favourites that are on this machine become local favourites; the rest are "cloud only"
-        by_key, by_sum = {}, {}
-        for s in self._songs():
-            by_key.setdefault(self.fav_key_of(s), s)
-            h = self.lm.cache.get(str(s.path), {}).get("md5")
-            if h:
-                by_sum[h.upper()] = s
-        cloud_only, changed = [], False
-        for k, r in remote.items():
-            s = by_key.get(k) or by_key.get(self.state.get("aliases", {}).get(k, "")) or (by_sum.get((r.get("checksum") or "").upper()) if r.get("checksum") else None)
-            if s is None:
-                cloud_only.append(r)
-            elif not self.store.song(s.key).get("fav"):
-                self.store.update_song(s.key, fav=True)
-                changed = True
-        if changed:
-            self.lm.version += 1
-            if self.lm.fav_setlist_enabled():
-                threading.Thread(target=self.lm.sync_fav_setlist, daemon=True).start()
+        self.state["synced"] = sorted(remote)
+        self._save_state()
+        if starred or gone:
+            lm.version += 1
+            if lm.fav_setlist_enabled():
+                threading.Thread(target=lm.sync_fav_setlist, daemon=True).start()
         self.cloud_only = cloud_only
 
     # ------------------------------------------------------------ plays
@@ -494,7 +572,7 @@ class CloudSync:
 
     def reset_account_state(self):
         """After sign-out: forget per-account progress so the next account starts clean."""
-        self.state.update(tombstones={}, plays={}, pull={}, aliases={}, lastSync=None, lastError=None)
+        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, lastSync=None, lastError=None)
         self.cloud_only = []
         self.playlog.clear_cloud()
         self._save_state()
@@ -509,12 +587,12 @@ def resolve_on_encore(row: dict, search=None) -> dict | None:
         search = encore.search
     want_a, want_n = norm_key(row.get("artist") or ""), norm_key(row.get("name") or "")
     want_c = norm_key(row.get("charter") or "")
-    md5 = ((row.get("source") or {}).get("encore_md5") or "").lower()
+    md5s = {((row.get("source") or {}).get("encore_md5") or "").lower(), (row.get("checksum") or "").lower()} - {""}
     best = None
     for r in search(f"{row.get('artist', '')} {row.get('name', '')}".strip(), per_page=50)["songs"]:
         if not r.get("downloadUrl"):
             continue
-        if md5 and (r.get("md5") or "").lower() == md5:
+        if md5s & {(r.get("md5") or "").lower(), (r.get("chartMd5") or "").lower()} - {""}:
             return r
         if norm_key(r["name"]) != want_n or norm_key(r["artist"]) != want_a:
             continue

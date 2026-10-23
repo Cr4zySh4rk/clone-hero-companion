@@ -286,3 +286,5 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 .dlb .r span:last-child { font-variant-numeric: tabular-nums; color: var(--dim); }
 .dlb a { color: var(--dim); font-size: 12px; }
 @media (max-width: 760px) { .profile { padding: 16px 14px 30px; } }
+.chart-tag { font-style: normal; color: var(--faint); }
+.chart-tag.on { color: var(--spot); font-weight: 600; }

@@ -67,6 +67,7 @@ class LibraryManager:
         self._save_timer = None
         self._save_lock = threading.Lock()
         self._fav_lock = threading.Lock()
+        self._favs_lock = threading.RLock()
         self.on_fav = None          # callback(songs, value) after favourites change (cloud sync)
 
     # ------------------------------------------------------------ index
@@ -101,7 +102,7 @@ class LibraryManager:
                 continue
         return None
 
-    def entry(self, s: Song) -> dict:
+    def entry(self, s: Song, favsets=None, copies: int = 1) -> dict:
         m = s.meta
         per = self.store.song(s.key)
         c = self.cache.get(str(s.path), {})
@@ -129,7 +130,7 @@ class LibraryManager:
             "disabled": root == self.disabled_dir, "diffs": diffs,
             "video": c.get("vres"), "hasVideo": c.get("hasVideo"),
             "lyrics": c.get("lyrics"), "art": c.get("art"),
-            "fav": bool(per.get("fav")), "rating": int(per.get("rating", 0) or 0),
+            "fav": self.is_fav(s, favsets), "copies": copies, "rating": int(per.get("rating", 0) or 0),
             "offset": per.get("video_offset"), "added": added,
             "videoFailed": bool(per.get("video_failed")),
         }
@@ -139,7 +140,12 @@ class LibraryManager:
             if not self.by_id:
                 self._reindex()
             songs = list(self.by_id.values())
-        return [self.entry(s) for s in songs]
+        self._ensure_fav_migrated()
+        sets = self._fav_sets()
+        counts: dict[str, int] = {}
+        for s in songs:
+            counts[s.key] = counts.get(s.key, 0) + 1
+        return [self.entry(s, sets, counts[s.key]) for s in songs]
 
     # ------------------------------------------------------------ enrichment
     def start_enrich(self, force: bool = False):
@@ -235,28 +241,118 @@ class LibraryManager:
     FAV_SETLIST = "Favourites"
 
     def set_flag(self, ids: list[str], **values):
-        songs = self.songs(ids)
-        for s in songs:
+        """Song-level flags (rating...). Favourites are per chart: see set_fav."""
+        for s in self.songs(ids):
             self.store.update_song(s.key, **values)
         self.version += 1
-        if "fav" in values and self.on_fav:
-            try:
-                self.on_fav(songs, bool(values["fav"]))
-            except Exception as e:
-                log.debug("cloud favourite hook failed: %s", e)
-        if "fav" in values and self.fav_setlist_enabled():
-            threading.Thread(target=self.sync_fav_setlist, daemon=True, name="fav-setlist").start()
 
-    def fav_setlist_enabled(self) -> bool:
-        s = self.store.get("settings", {}) or {}
-        return s.get("fav_setlist", True) is not False
+    # ------------------------------------------------------------ favourites (per chart)
+    # A favourite belongs to one chart, not to a song: the same song often exists as several charts.
+    # A chart is identified by its checksum (the Clone Hero md5, as used by setlists) when known, else by
+    # "artist - name | charter | path relative to its songs folder". Both are recorded so a favourite
+    # survives a move (checksum) or a missing hash (path).
+    @staticmethod
+    def charter_of(s: Song) -> str:
+        return strip_tags(s.meta.get("charter", "") or s.meta.get("frets", ""))
+
+    def legacy_key(self, s: Song) -> str:
+        """The old cloud/song-level identity: norm_key(artist - name)|norm_key(charter)."""
+        return norm_key(s.display) + "|" + norm_key(self.charter_of(s))
+
+    def chart_pid(self, s: Song) -> str:
+        root = self.root_of(s)
+        rel = s.path.relative_to(root).as_posix() if root else s.path.name
+        return self.legacy_key(s) + "|" + rel
+
+    def chart_md5(self, s: Song, compute: bool = False) -> str | None:
+        c = self.cache.get(str(s.path), {})
+        h = c.get("md5")
+        if not h and compute:
+            try:
+                h = setlists.song_hash(s)
+            except Exception:
+                h = None
+            if h:
+                c = self.cache.setdefault(str(s.path), {})
+                c["md5"], c["md5sig"] = h, _sig(s)
+        return h.upper() if h else None
+
+    def chart_key(self, s: Song, compute: bool = False) -> str:
+        return self.chart_md5(s, compute) or self.chart_pid(s)
+
+    def _fav_sets(self) -> tuple[set, set]:
+        favs = self.store.get("favs", {}) or {}
+        return ({v["md5"] for v in favs.values() if v.get("md5")}, {v["pid"] for v in favs.values() if v.get("pid")})
+
+    def is_fav(self, s: Song, sets=None) -> bool:
+        md5s, pids = sets or self._fav_sets()
+        h = self.chart_md5(s)
+        return bool((h and h in md5s) or self.chart_pid(s) in pids)
+
+    def set_fav(self, songs: list[Song], value: bool, notify: bool = True, _migrate: bool = True) -> list[Song]:
+        """Star or unstar exactly these charts (never their other copies). Returns the charts changed."""
+        if _migrate:
+            self._ensure_fav_migrated()
+        changed = []
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            for s in songs:
+                md5, pid = self.chart_md5(s, compute=value), self.chart_pid(s)
+                hit = [k for k, v in favs.items() if (md5 and v.get("md5") == md5) or v.get("pid") == pid]
+                if value and not hit:
+                    favs[md5 or pid] = {"md5": md5, "pid": pid, "t": int(time.time())}
+                    changed.append(s)
+                elif not value and hit:
+                    for k in hit:
+                        favs.pop(k, None)
+                    changed.append(s)
+            if changed:
+                self.store.set("favs", favs)
+        if changed:
+            self.save_cache()
+            self.version += 1
+            if notify and self.on_fav:
+                try:
+                    self.on_fav(changed, value)
+                except Exception as e:
+                    log.debug("cloud favourite hook failed: %s", e)
+            if self.fav_setlist_enabled():
+                threading.Thread(target=self.sync_fav_setlist, daemon=True, name="fav-setlist").start()
+        return changed
+
+    def _ensure_fav_migrated(self):
+        """One-time, idempotent: old song-level favourites (songs[key].fav) become favourites of each
+        chart that matched the song. A legacy favourite with no chart in the library yet is kept for later."""
+        legacy = [k for k, v in (self.store.get("songs", {}) or {}).items() if v.get("fav")]
+        if not legacy:
+            return
+        with self.lock:
+            if not self.by_id:
+                self._reindex()
+            songs = list(self.by_id.values())
+        by_key: dict[str, list[Song]] = {}
+        for s in songs:
+            by_key.setdefault(s.key, []).append(s)
+        done = []
+        for k in legacy:
+            if k in by_key:
+                self.set_fav(by_key[k], True, notify=False, _migrate=False)
+                done.append(k)
+        for k in done:
+            self.store.update_song(k, fav=None)
 
     def fav_ids(self) -> list[str]:
+        self._ensure_fav_migrated()
         with self.lock:
             if not self.by_id:
                 self._reindex()
             items = list(self.by_id.items())
-        return [sid for sid, s in items if self.store.song(s.key).get("fav")]
+        sets = self._fav_sets()
+        return [sid for sid, s in items if self.is_fav(s, sets)]
+
+    def fav_setlist_enabled(self) -> bool:
+        s = self.store.get("settings", {}) or {}
+        return s.get("fav_setlist", True) is not False
 
     def sync_fav_setlist(self) -> int:
         """Keep a 'Favourites' setlist in Clone Hero matching the favourites here (newest last)."""

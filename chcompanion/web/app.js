@@ -196,6 +196,12 @@ function instHtml(d) {
   const map = [["guitar", "G"], ["bass", "B"], ["rhythm", "R"], ["drums", "D"], ["keys", "K"], ["vocals", "V"]];
   return `<div class="inst">${map.filter(([k]) => k in d).map(([k, l]) => `<i class="${l}" title="${k} ${d[k]}">${l}</i>`).join("")}</div>`;
 }
+// A song with several charts shows which chart each row is; the favourite copy is marked with a star.
+function chartTag(s) {
+  if (!(s.copies > 1 || st.filter === "fav")) return "";
+  const who = s.charter || "unknown charter";
+  return ` · <em class="chart-tag${s.fav ? " on" : ""}">${s.fav ? "★ " : ""}${esc(who)}</em>`;
+}
 function rowEl(s) {
   const el = document.createElement("div");
   el.className = "row" + (s.disabled ? " disabled" : "");
@@ -203,11 +209,11 @@ function rowEl(s) {
   const [vid, ly] = pills(s);
   el.innerHTML = `<div><input type="checkbox" tabindex="-1"></div>
     <div class="art"${s.art ? ` style="background-image:url('/media/art/${s.id}?v=${lib.version}')"` : ""}></div>
-    <div class="t"><b>${esc(s.name)}</b><span>${esc(s.artist)}${s.sng ? " · .sng" : ""}</span></div>
+    <div class="t"><b>${esc(s.name)}</b><span>${esc(s.artist)}${s.sng ? " · .sng" : ""}${chartTag(s)}</span></div>
     <div class="cell h1">${esc(s.album)}</div><div class="cell h1">${esc(s.year)}</div>
     <div class="cell">${fmtLen(s.length)}</div><div class="cell h1">${esc(s.charter)}</div>
     <div>${instHtml(s.diffs)}</div><div>${vid}</div><div>${ly}</div>
-    <div class="fav${s.fav ? " on" : ""}" title="Favourite">${s.fav ? "★" : "☆"}</div>`;
+    <div class="fav${s.fav ? " on" : ""}" title="${s.fav ? "Favourite chart" : "Favourite this chart"}${s.copies > 1 && s.charter ? " (" + esc(s.charter) + ")" : ""}">${s.fav ? "★" : "☆"}</div>`;
   return el;
 }
 spacer.addEventListener("click", async (e) => {
@@ -313,12 +319,12 @@ async function setFav(ids, value) {
   ids = ids.filter((i) => lib.byId.has(i));
   if (!ids.length) return;
   await api("/api/songs/action", { ids, action: "favorite", value });
-  const keys = new Set(ids.map((i) => lib.byId.get(i).key));   // duplicate charts of a song share the star
-  lib.songs.forEach((x) => { if (keys.has(x.key)) x.fav = value; });
+  const want = new Set(ids);                                   // favourites are per chart: other copies are untouched
+  lib.songs.forEach((x) => { if (want.has(x.id)) x.fav = value; });
   updateFavCount(); renderTable(true); updateSelbar();
   if (detail && ids.includes(detail.id)) { detail.fav = value; paintDetailFav(); }
-  if (!value && ids.length > 1) toast(`Removed ${ids.length} songs from favourites. Press F again to undo.`, 6000);
-  else toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " songs to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " songs from"} favourites`);
+  if (!value && ids.length > 1) toast(`Removed ${ids.length} charts from favourites. Press F again to undo.`, 6000);
+  else toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " charts to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " charts from"} favourites`);
 }
 function paintDetailFav() {
   const b = $("#dFav"); if (!b || !detail) return;

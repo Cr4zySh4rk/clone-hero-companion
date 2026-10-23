@@ -21,7 +21,7 @@ from .cloud import Cloud, CloudSync
 from .playstats import PlayLog, PlayWatcher, candidate_files
 from .jobs import Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
 from .libmgr import LibraryManager, song_id
-from .library import Library, Song
+from .library import Library, Song, norm_key
 from .logwatch import ClockState, LogWatcher
 from .lyrics import fetch_lrclib
 from .paths import resource_path
@@ -537,18 +537,18 @@ class Companion:
         self.libmgr._reindex()
         self.build_preview_index()
         new = [x for x in self.library.songs if any(str(x.path) == str(p) for p in paths)]
+        fav_targets = list(new)
+        want_c = norm_key(job.options.get("fav_charter") or "")
+        if want_c:      # star exactly the chart that was favourited (the charter), not other charts in a pack
+            fav_targets = [x for x in new if norm_key(self.libmgr.charter_of(x)) == want_c] or fav_targets
         for x in new:
             if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
                 self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
-            if job.options.get("mark_fav"):          # installed from the cloud favourites list
-                self.store.update_song(x.key, fav=True)
+            if job.options.get("mark_fav") and x in fav_targets:      # installed from the cloud favourites list
+                self.libmgr.set_fav([x], True)
                 if job.options.get("fav_key"):
                     self.cloudsync.state.setdefault("aliases", {})[job.options["fav_key"]] = \
-                        self.cloudsync.fav_key_of(x)
-                self.libmgr.version += 1
-                if self.libmgr.fav_setlist_enabled():
-                    threading.Thread(target=self.libmgr.sync_fav_setlist, daemon=True).start()
-                self.cloudsync.schedule()
+                        self.libmgr.chart_key(x, compute=True)
             self.libmgr.refresh_song(x)
             if job.options.get("process", s["auto_process_downloads"]):
                 self.queue_song(x, "full", PRIO_BATCH)

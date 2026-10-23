@@ -57,7 +57,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         ids, act = body.get("ids") or [], body.get("action")
         n = 0
         if act == "favorite":
-            lm.set_flag(ids, fav=bool(body.get("value", True)) or None)
+            lm.set_fav(lm.songs(ids), bool(body.get("value", True)))
         elif act == "fav_sync":
             n = lm.sync_fav_setlist()
         elif act == "rate":
@@ -571,7 +571,7 @@ def _auth_callback(h, c, q: dict):
 def _cloud_fav(r: dict, c) -> dict:
     nf = c.cloudsync.not_found
     return {"key": r["song_key"], "artist": r.get("artist"), "name": r.get("name"), "charter": r.get("charter"),
-            "album": r.get("album"), "notFound": r["song_key"] in nf, "addedAt": r.get("added_at")}
+            "album": r.get("album"), "checksum": r.get("checksum"), "notFound": r["song_key"] in nf, "addedAt": r.get("added_at")}
 
 
 def _install_cloud_favs(c, body: dict) -> dict:
@@ -599,7 +599,8 @@ def _install_cloud_favs(c, body: dict) -> dict:
             else:
                 c.cloudsync.not_found.discard(r["song_key"])
                 c.jobs.submit(Job("download", f"Download: {item['artist']} - {item['name']}", item=item,
-                                  options={"process": process, "mark_fav": True, "fav_key": r["song_key"]},
+                                  options={"process": process, "mark_fav": True, "fav_key": r["song_key"],
+                                           "fav_charter": r.get("charter") or "", "fav_checksum": r.get("checksum") or ""},
                                   priority=PRIO_USER))
                 queued += 1
     return {"queued": queued, "notFound": missing, "failed": failed}
