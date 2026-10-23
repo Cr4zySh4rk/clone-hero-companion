@@ -59,6 +59,13 @@ Star songs with one click (or press **F**). The app keeps a **Favourites setlist
 - New charts can get their video, lyrics and metadata right after downloading
 - **Spotify import:** paste a public playlist link and the app finds a chart for every song and marks the ones you already have
 
+### ☁️ Profile, cloud sync and CH Leaderboards (v2.1)
+
+- **Optional account.** Sign in from the **Profile** page with Google, or with a 6-digit code sent to your email. Everything keeps working signed out and offline; cloud failures are retried quietly in the background. The session is stored only in your app config folder (`cloud_session.json`).
+- **Favourites follow you.** Favourites sync both ways (a few seconds after each change, at start-up and on sign-in). The Favourites view lists "In your cloud, not on this machine" with **Install all**, which finds each chart on Chorus Encore and downloads it (optionally adding video, lyrics and metadata).
+- **Play stats.** After every song Clone Hero writes `scorestats.json`; the app records each play on your computer (`plays.jsonl`) and, when signed in, merges plays from all your machines. Profile shows plays, hours, accuracy, full combos, streaks, a 26-week activity map, most played / best / needs practice lists, recent plays and personal bests, filterable by instrument and difficulty. Importing older history from `scoredata.bin` is not supported.
+- **CH Leaderboards (read-only).** Song panels and the Now playing screen show the global top scores, plus your rank once you link your CH Leaderboards username in Profile. The **Leaderboards** page shows site totals, top players, trending songs and the latest scores. Scores cannot be submitted from this app: the game submits replays itself in leaderboards mode.
+
 ### ⚡ Fast, parallel batch processing
 
 <img src="docs/screenshots/jobs.jpg" alt="Jobs view processing a batch of songs" width="100%">

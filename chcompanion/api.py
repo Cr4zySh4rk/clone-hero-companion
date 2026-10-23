@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -277,6 +278,65 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             return _json(h, {"error": str(e)}, 400) or True
         return _json(h, {"ok": True}) or True
 
+    # ---------------------------------------------------------------- cloud account
+    if path == "/auth/callback" and method == "GET":
+        return _auth_callback(h, c, q) or True
+    if path == "/api/cloud/status" and method == "GET":
+        return _json(h, c.cloudsync.status()) or True
+    if path == "/api/cloud/login" and method == "POST":
+        url = c.cloud.start_login(h.server.server_address[1])
+        return _json(h, {"ok": True, "url": url}) or True
+    if path in ("/api/cloud/email/send", "/api/cloud/email/verify", "/api/cloud/name") and method == "POST":
+        from .cloud import CloudError
+        try:
+            if path.endswith("/send"):
+                c.cloud.send_email_code(body.get("email", ""))
+            elif path.endswith("/verify"):
+                c.cloud.verify_email_code(body.get("email", ""), body.get("code", ""))
+                threading.Thread(target=c.after_login, daemon=True, name="cloud-sync").start()
+            else:
+                c.cloud.set_display_name(body.get("name", ""))
+        except CloudError as e:
+            code = e.status if e.status in (429, 401) else 400
+            return _json(h, {"error": str(e)}, 503 if e.offline else code) or True
+        return _json(h, c.cloudsync.status()) or True
+    if path == "/api/cloud/logout" and method == "POST":
+        c.cloud.logout()
+        c.cloudsync.reset_account_state()
+        return _json(h, c.cloudsync.status()) or True
+    if path == "/api/cloud/sync" and method == "POST":
+        if c.cloud.signed_in:
+            threading.Thread(target=c.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
+        return _json(h, c.cloudsync.status()) or True
+    if path == "/api/cloud/favorites" and method == "GET":
+        return _json(h, {"items": [_cloud_fav(r, c) for r in c.cloudsync.cloud_only]}) or True
+    if path == "/api/cloud/favorites/install" and method == "POST":
+        return _json(h, _install_cloud_favs(c, body)) or True
+
+    # ---------------------------------------------------------------- play statistics
+    if path == "/api/stats" and method == "GET":
+        from . import playstats
+        plays = c.playlog.all()
+        res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
+        idx, keyidx = lm.hash_to_id(), lm.key_to_id()
+        for lst in ("mostPlayed", "best", "needsPractice", "recent", "personalBests"):
+            for it in res[lst]:
+                sid = idx.get((it.get("checksum") or "").upper()) or keyidx.get(
+                    norm_key(f"{it.get('artist', '')} - {it.get('name', '')}"))
+                it["songId"] = sid
+        res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud())}
+        res["cloud"] = {"signedIn": c.cloud.signed_in}
+        res["ch"] = {"username": c.settings().get("ch_username") or "", "accountId": c.settings().get("ch_account_id") or 0}
+        return _json(h, res) or True
+
+    # ---------------------------------------------------------------- CH Leaderboards (read-only)
+    if path.startswith("/api/lb/"):
+        from .leaderboard import LeaderboardError
+        try:
+            return _lb(h, c, lm, path, method, q, body) or True
+        except LeaderboardError as e:
+            return _json(h, {"error": str(e)}, 502) or True
+
     # ---------------------------------------------------------------- app / settings
     if path == "/api/settings" and method == "GET":
         from .align import ffmpeg_path
@@ -474,3 +534,140 @@ def _stream_audio(h, lm, s, start: float):
         proc.kill()
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+_CB_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Clone Hero Companion</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#160d2b;color:#f6f1e7;font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{background:#1e1338;border:1px solid rgba(246,241,231,.12);border-radius:14px;padding:34px 40px;max-width:430px;text-align:center}
+.frets{display:flex;gap:6px;justify-content:center;margin-bottom:14px}.frets i{width:12px;height:12px;border-radius:50%}
+h1{font-size:22px;margin:0 0 8px}p{margin:0;color:rgba(246,241,231,.7)}
+</style></head><body><main><div class="frets"><i style="background:#3cc85a"></i><i style="background:#e8413a"></i><i style="background:#f2d23a"></i><i style="background:#3a8ee8"></i><i style="background:#f08a2a"></i></div>
+<h1>@TITLE@</h1><p>@MSG@</p></main></body></html>"""
+
+
+def _auth_callback(h, c, q: dict):
+    """Google sign-in comes back here with ?code=...; exchange it and show a small result page."""
+    import html
+    code, err = q.get("code"), q.get("error_description") or q.get("error")
+    ok, msg = False, ""
+    if err or not code:
+        msg = err or "No sign-in code was received."
+    else:
+        try:
+            c.cloud.complete_login(code)
+            ok = True
+            threading.Thread(target=c.after_login, daemon=True, name="cloud-sync").start()
+        except Exception as e:
+            msg = str(e)
+    if ok:
+        page = _CB_PAGE.replace("@TITLE@", "Signed in to Clone Hero Companion").replace("@MSG@", "You can close this tab.")
+    else:
+        page = _CB_PAGE.replace("@TITLE@", "Sign-in did not finish").replace(
+            "@MSG@", html.escape(msg) + " You can close this tab and try again.")
+    h._send(200 if ok else 400, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+
+
+def _cloud_fav(r: dict, c) -> dict:
+    nf = c.cloudsync.not_found
+    return {"key": r["song_key"], "artist": r.get("artist"), "name": r.get("name"), "charter": r.get("charter"),
+            "album": r.get("album"), "notFound": r["song_key"] in nf, "addedAt": r.get("added_at")}
+
+
+def _install_cloud_favs(c, body: dict) -> dict:
+    """Resolve cloud-only favourites on Chorus Encore and queue their downloads."""
+    from .cloud import resolve_on_encore
+    keys = set(body.get("keys") or [])
+    rows = [r for r in c.cloudsync.cloud_only if not keys or r["song_key"] in keys]
+    process = body.get("process", c.settings()["auto_process_downloads"])
+
+    def one(r):
+        try:
+            return r, resolve_on_encore(r)
+        except Exception as e:
+            log.info("Encore lookup failed for %s: %s", r.get("name"), e)
+            return r, False
+
+    queued, missing, failed = 0, [], 0
+    with ThreadPoolExecutor(4) as ex:
+        for r, item in ex.map(one, rows):
+            if item is False:
+                failed += 1
+            elif item is None:
+                missing.append(r["song_key"])
+                c.cloudsync.not_found.add(r["song_key"])
+            else:
+                c.cloudsync.not_found.discard(r["song_key"])
+                c.jobs.submit(Job("download", f"Download: {item['artist']} - {item['name']}", item=item,
+                                  options={"process": process, "mark_fav": True, "fav_key": r["song_key"]},
+                                  priority=PRIO_USER))
+                queued += 1
+    return {"queued": queued, "notFound": missing, "failed": failed}
+
+
+def _lb_default(c, lm, sid, artist, name, charter, instrument, difficulty):
+    """Instrument and difficulty to show: the chosen ones, else what was just played, else Expert guitar."""
+    if instrument and difficulty:
+        return instrument, difficulty
+    last = None
+    s = lm.get(sid) if sid else None
+    if s:
+        artist, name = s.artist, s.name
+    want = norm_key(f"{artist} - {name}")
+    for p in c.playlog.all():
+        if norm_key(f"{p.get('artist', '')} - {p.get('name', '')}") == want and (
+                last is None or (p.get("played_at") or "") > (last.get("played_at") or "")):
+            last = p
+    from .leaderboard import DIFFICULTIES, INSTRUMENTS
+    li = last.get("instrument") if last and last.get("instrument") in INSTRUMENTS else None
+    ld = last.get("difficulty") if last and last.get("difficulty") in DIFFICULTIES else None
+    return instrument or li or "guitar", difficulty or ld or "expert"
+
+
+def _lb_song(c, artist: str, name: str, charter: str):
+    """Map a local song to a leaderboards song, remembering the answer (misses for a day)."""
+    maps = c.store.get("lb_map", {}) or {}
+    k = norm_key(f"{artist} - {name}") + "|" + norm_key(charter)
+    hit = maps.get(k)
+    if hit and (hit.get("songHash") or time.time() - hit.get("at", 0) < 86400):
+        return hit if hit.get("songHash") else None
+    s = c.lb.find_song(artist, name, charter)
+    maps[k] = {"songHash": s["songHash"], "name": s["name"], "artist": s["artist"], "charter": s.get("charter"),
+               "at": time.time()} if s else {"songHash": None, "at": time.time()}
+    if len(maps) > 3000:
+        maps = dict(sorted(maps.items(), key=lambda kv: kv[1].get("at", 0))[-2000:])
+    c.store.set("lb_map", maps)
+    return maps[k] if s else None
+
+
+def _lb(h, c, lm, path: str, method: str, q: dict, body: dict):
+    lb = c.lb
+    if path == "/api/lb/song":
+        from .library import strip_tags
+        sid = q.get("id")
+        s = lm.get(sid) if sid else None
+        artist, name, charter = (s.artist, s.name, strip_tags(s.meta.get("charter", "") or s.meta.get("frets", ""))) \
+            if s else (q.get("artist", ""), q.get("name", ""), q.get("charter", ""))
+        inst, diff = _lb_default(c, lm, sid, artist, name, charter, q.get("instrument"), q.get("difficulty"))
+        song = _lb_song(c, artist, name, charter)
+        out = {"instrument": inst, "difficulty": diff, "found": bool(song), "ch": c.settings().get("ch_username") or ""}
+        if song:
+            acct = int(c.settings().get("ch_account_id") or 0) or None
+            out.update(lb.top_scores(song["songHash"], inst, diff, acct))
+            out["song"] = song
+        return _json(h, out)
+    if path == "/api/lb/overview":
+        out = {"totals": lb.site_totals(),
+               "players": lb.players(q.get("metric") or "totalScore"),
+               "songs": lb.songs_board(q.get("tab") or "trending", q.get("group") or "fiveFret"),
+               "latest": lb.latest(), "site": "https://leaderboards.clonehero.net/"}
+        return _json(h, out)
+    if path == "/api/lb/profile":
+        aid = int(c.settings().get("ch_account_id") or 0)
+        if not aid:
+            return _json(h, {"linked": False})
+        return _json(h, {"linked": True, **lb.profile(aid)})
+    if path == "/api/lb/link" and method == "POST":
+        user = c.link_ch_username(body.get("username", ""))
+        return _json(h, {"ok": True, "username": user["username"] if user else ""})
+    return _json(h, {"error": "not found"}, 404)

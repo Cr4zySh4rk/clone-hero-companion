@@ -67,6 +67,7 @@ class LibraryManager:
         self._save_timer = None
         self._save_lock = threading.Lock()
         self._fav_lock = threading.Lock()
+        self.on_fav = None          # callback(songs, value) after favourites change (cloud sync)
 
     # ------------------------------------------------------------ index
     def rescan(self):
@@ -234,9 +235,15 @@ class LibraryManager:
     FAV_SETLIST = "Favourites"
 
     def set_flag(self, ids: list[str], **values):
-        for s in self.songs(ids):
+        songs = self.songs(ids)
+        for s in songs:
             self.store.update_song(s.key, **values)
         self.version += 1
+        if "fav" in values and self.on_fav:
+            try:
+                self.on_fav(songs, bool(values["fav"]))
+            except Exception as e:
+                log.debug("cloud favourite hook failed: %s", e)
         if "fav" in values and self.fav_setlist_enabled():
             threading.Thread(target=self.sync_fav_setlist, daemon=True, name="fav-setlist").start()
 
@@ -365,6 +372,20 @@ class LibraryManager:
             out.append({"name": sl["name"], "songs": [
                 {"hash": h, "speed": sp, "id": index.get(h)} for h, sp in sl["entries"]]})
         return out
+
+    def hash_to_id(self) -> dict[str, str]:
+        """Chart MD5 (upper case, as in Clone Hero's scorestats) -> song id."""
+        with self.lock:
+            return {k.upper(): v for k, v in self._hash_index().items()}
+
+    def key_to_id(self) -> dict[str, str]:
+        with self.lock:
+            if not self.by_id:
+                self._reindex()
+            out: dict[str, str] = {}
+            for sid, s in self.by_id.items():
+                out.setdefault(s.key, sid)
+            return out
 
     def _hash_index(self) -> dict[str, str]:
         idx = {}

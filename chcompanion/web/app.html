@@ -24,6 +24,8 @@
       <button data-view="setlists">Setlists</button>
       <button data-view="dupes">Duplicates</button>
       <button data-view="jobs">Jobs <span class="badge hot" id="navJobs"></span></button>
+      <button data-view="profile">Profile</button>
+      <button data-view="leaderboards">Leaderboards</button>
       <button data-view="now">Now playing <span class="dot" id="navNow"></span></button>
       <button data-view="setup">Game &amp; folders <span class="dot warn" id="navSetup"></span></button>
       <button data-view="settings">Settings</button>
@@ -67,6 +69,7 @@
         <button data-act="delete" class="danger">Move to Trash</button>
         <button data-act="clear" class="ghost">Clear selection</button>
       </div>
+      <div class="cloudfavs" id="cloudFavs" hidden></div>
       <div class="table" id="libTable">
         <div class="thead" id="libHead">
           <div class="c-chk"><input type="checkbox" id="selAll" title="Select all shown"></div>
@@ -150,6 +153,12 @@
       <div class="ytwarn" id="ytWarn" hidden></div>
       <div class="results list" id="jobList"></div>
     </section>
+
+    <!-- ============ PROFILE ============ -->
+    <section class="view" id="view-profile"><div class="profile" id="profileBody"></div></section>
+
+    <!-- ============ LEADERBOARDS ============ -->
+    <section class="view" id="view-leaderboards"><div class="profile" id="lbBody"></div></section>
 
     <!-- ============ NOW ============ -->
     <section class="view" id="view-now">

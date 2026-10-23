@@ -126,6 +126,18 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
 #help td:first-child { white-space: nowrap; color: var(--spot); }
 @media (prefers-reduced-motion: reduce) { #frets b, #cur.enter { animation: none; } }
 @media (max-width: 640px) { #controls .lbl { display: none; } #status span.txt { display: none; } }
+
+/* ---------- global top scores (CH Leaderboards) ---------- */
+#lbPanel { position: absolute; top: 18px; right: 18px; width: min(300px, 40vw); padding: 10px 14px; border-radius: 12px;
+  background: rgba(20, 12, 40, .72); backdrop-filter: blur(8px); border: 1px solid rgba(246,241,231,.12);
+  font-size: 13px; line-height: 1.5; opacity: 0; transform: translateY(-6px); transition: opacity .5s, transform .5s; pointer-events: none; }
+#lbPanel.on { opacity: 1; transform: none; }
+body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
+#lbPanel h4 { margin: 0 0 4px; font: 800 14px var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--spot); }
+#lbPanel .r { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; }
+#lbPanel .r.me { color: var(--spot); font-weight: 700; }
+#lbPanel .r span:last-child { font-variant-numeric: tabular-nums; color: var(--ink-dim); }
+#lbPanel .none { color: var(--ink-dim); }
 </style>
 </head>
 <body class="idle-ui">
@@ -154,6 +166,8 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     <div id="songMeta"></div>
   </div>
 </header>
+
+<aside id="lbPanel" aria-label="Global top scores"></aside>
 
 <div id="status"><span class="dot"></span><span class="txt">Connecting</span></div>
 
@@ -273,7 +287,29 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
     $("art").style.backgroundImage = art; $("art").classList.toggle("on", !!art);
     $("cardArt").style.backgroundImage = art; $("cardArt").classList.toggle("on", !!art);
     showCard();
+    loadTopScores(s);
     if (S.notice) toast(S.notice, 5000);
+  }
+
+  // Global top scores from CH Leaderboards (read-only; the game submits scores itself)
+  let lbToken = 0;
+  async function loadTopScores(s) {
+    const panel = $("lbPanel"), tok = ++lbToken;
+    panel.classList.remove("on");
+    if (!s || !s.name) return;
+    try {
+      const p = new URLSearchParams({ artist: s.artist || "", name: s.name || "", charter: s.charter || "" });
+      const r = await fetch("/api/lb/song?" + p);
+      const d = await r.json();
+      if (tok !== lbToken || !r.ok || !d.found || !d.scores.length) return;
+      const nf = (n) => Number(n || 0).toLocaleString();
+      const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const lvl = d.difficulty[0].toUpperCase() + d.difficulty.slice(1);
+      panel.innerHTML = `<h4>Global top scores · ${esc(lvl)} ${esc(d.instrument)}</h4>` +
+        d.scores.slice(0, 5).map((x) => `<div class="r${d.you && x.accountId === d.you.accountId ? " me" : ""}"><span>${x.placement}</span><span>${esc(x.username)}</span><span>${nf(x.score)}</span></div>`).join("") +
+        (d.you ? `<div class="r me"><span>#${d.you.placement}</span><span>you (${esc(d.ch)})</span><span>${nf(d.you.score)}</span></div>` : "");
+      panel.classList.add("on");
+    } catch (e) { /* offline: nothing to show */ }
   }
   function showCard() { songShownAt = performance.now(); $("card").classList.remove("away"); }
 

@@ -41,6 +41,7 @@ function setFilter(f) {
   st.filter = f;
   $$("#libFilters button").forEach((b) => b.classList.toggle("on", b.dataset.f === f));
   applyFilters();
+  renderCloudFavs();
 }
 function show(view) {
   if (view === "favs") { show("library"); setFilter("fav"); $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === "favs")); return; }
@@ -56,6 +57,8 @@ function show(view) {
   if (view === "setup") loadSetup();
   if (view === "jobs") renderJobs();
   if (view === "charts" && !charts.loaded) searchCharts(1);
+  if (view === "profile") loadProfile();
+  if (view === "leaderboards") loadLeaderboards();
 }
 $("#nav").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -376,12 +379,17 @@ async function refreshDetail() {
       <div class="cands" id="dCands"></div>
     </div>
     <div class="d-sec">
+      <h4>Global top scores</h4>
+      <div id="dLb"><p class="hint">Loading…</p></div>
+    </div>
+    <div class="d-sec">
       <div class="d-row">
         <button id="dSkip">${d.skip ? "Allow auto-download" : "Never auto-download for this song"}</button>
         <button id="dUndo" class="danger">Undo changes</button>
       </div>
     </div>`;
   bindDetail(d);
+  loadDetailLb(d);
 }
 function updateDetailStatus() { const s = $("#dStatus"); if (s && detail) s.textContent = detail.status || ""; }
 function bindDetail(d) {
@@ -835,6 +843,228 @@ $("#suData").addEventListener("change", async () => {
 });
 $("#suSongAdd").addEventListener("keydown", async (e) => { if (e.key === "Enter") { await addSongDir(e.target.value); e.target.value = ""; } });
 
+/* ================================================================ cloud account, favourites in the cloud */
+const cloud = { status: null, favs: [] };
+const nf = (n) => Number(n || 0).toLocaleString();
+const pct = (a) => (a == null ? "—" : (a * 100).toFixed(1) + "%");
+const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+async function loadCloud() {
+  try { cloud.status = await api("/api/cloud/status"); } catch (e) { cloud.status = { signedIn: false }; }
+  if (cloud.status.signedIn) { try { cloud.favs = (await api("/api/cloud/favorites")).items; } catch (e) { cloud.favs = []; } } else cloud.favs = [];
+  renderCloudFavs();
+  return cloud.status;
+}
+function renderCloudFavs() {
+  const box = $("#cloudFavs"), items = cloud.favs;
+  box.hidden = !(st.filter === "fav" && items.length);
+  if (box.hidden) return;
+  const missing = items.filter((i) => i.notFound).length;
+  box.innerHTML = `<header><b>In your cloud, not on this machine (${items.length})</b>
+      <label class="inline"><input type="checkbox" id="cfProcess" checked> then add video, lyrics and metadata</label>
+      <button class="primary" id="cfAll">Install all</button></header>
+    <div class="cfgrid">${items.map((i) => `<div class="cf"><div><b>${esc(i.name)}</b><span>${esc(i.artist)}${i.charter ? " · " + esc(i.charter) : ""}</span>
+        ${i.notFound ? "<em>not found on Chorus Encore</em>" : ""}</div><button data-k="${esc(i.key)}">Install</button></div>`).join("")}</div>
+    ${missing ? `<span class="hint">${missing} could not be found on Chorus Encore.</span>` : ""}`;
+  const go = async (keys, btn) => {
+    btn.disabled = true;
+    try {
+      const r = await api("/api/cloud/favorites/install", { keys, process: $("#cfProcess").checked });
+      toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${r.notFound.length ? ` · ${r.notFound.length} not found on Chorus Encore` : ""}${r.failed ? ` · ${r.failed} could not be looked up (offline?)` : ""}`, 5000);
+      pollJobs(true); await loadCloud();
+    } catch (e) { toast(e.message, 4500); }
+    btn.disabled = false;
+  };
+  $("#cfAll").onclick = (e) => go([], e.target);
+  $$("#cloudFavs .cf button").forEach((b) => b.onclick = () => go([b.dataset.k], b));
+}
+let cloudPoll = null;
+function watchLogin() {
+  clearInterval(cloudPoll); let n = 0;
+  cloudPoll = setInterval(async () => {
+    const s = await loadCloud();
+    if (s.signedIn || ++n > 90) { clearInterval(cloudPoll); if (s.signedIn) { toast("Signed in"); if (currentView === "profile") loadProfile(); lib.version = -1; } }
+  }, 2000);
+}
+async function signIn() {
+  try { await api("/api/cloud/login", {}); toast("Finish signing in with Google in your browser…", 5000); watchLogin(); } catch (e) { toast(e.message, 4500); }
+}
+async function signOut() { await api("/api/cloud/logout", {}); await loadCloud(); toast("Signed out. Your data stays on this computer."); if (currentView === "profile") loadProfile(); }
+async function syncNow() {
+  await api("/api/cloud/sync", {}); toast("Syncing…");
+  setTimeout(async () => { await loadCloud(); if (currentView === "profile") loadProfile(); lib.version = -1; }, 3500);
+}
+
+/* ================================================================ profile */
+const prof = { inst: "", diff: "" };
+function openSong(it) {
+  if (it.songId && lib.byId.has(it.songId)) {
+    show("library"); setFilter("all"); st.q = ""; $("#libSearch").value = ""; applyFilters();
+    const i = rows.findIndex((s) => s.id === it.songId);
+    if (i >= 0) $("#libTable .tbody, #libBody").scrollTop = Math.max(0, i * ROW - 120);
+    openDetail(it.songId);
+  } else {
+    show("library"); setFilter("all"); st.q = it.name || ""; $("#libSearch").value = st.q; applyFilters();
+    toast("That song isn't in this library", 3000);
+  }
+}
+function songList(items, right, empty) {
+  if (!items.length) return `<p class="hint">${esc(empty)}</p>`;
+  return `<ul class="plist">${items.map((it, i) => `<li data-i="${i}"><div class="t">${esc(it.name)}<small>${esc(it.artist)}</small></div><div class="v">${right(it)}</div></li>`).join("")}</ul>`;
+}
+async function loadProfile() {
+  const body = $("#profileBody");
+  const [cs, d] = await Promise.all([loadCloud(), api(`/api/stats?instrument=${encodeURIComponent(prof.inst)}&difficulty=${encodeURIComponent(prof.diff)}`)]);
+  const T = d.totals, f = d.facets, H = d.heatmap;
+  const max = Math.max(1, ...H.days.map((x) => x.n));
+  const lvl = (n) => (n ? Math.min(4, 1 + Math.floor((n / max) * 3.999)) : 0);
+  const bars = (arr, labels) => { const m = Math.max(1, ...arr); return `<div class="bars">${arr.map((v, i) => `<div title="${labels[i]}: ${v}"><i style="height:${Math.round((v / m) * 52)}px"></i>${labels[i]}</div>`).join("")}</div>`; };
+  const head = cs.signedIn
+    ? `<div class="p-head"><div class="ava"${cs.avatar ? ` style="background-image:url('${esc(cs.avatar)}')"` : ""}>${cs.avatar ? "" : esc((cs.name || cs.email || "?")[0].toUpperCase())}</div>
+        <div class="who"><b>${esc(cs.name || cs.email)}</b><span>${esc(cs.email || "")} · <a href="#" id="pRename">edit name</a></span>
+        <span>Favourites and plays sync across your machines · last sync ${esc(ago(cs.lastSync))}${cs.pending ? ` · ${cs.pending} waiting to upload` : ""}${cs.error ? " · offline, will retry" : ""}</span></div>
+        <div class="actions"><button id="pSync">Sync now</button><button id="pOut">Sign out</button></div></div>`
+    : `<div class="p-head cta"><div class="ava">♪</div><div class="who"><b>Sign in</b><span>Sign in with Google to sync favourites and stats across machines. Everything keeps working without it; your plays are recorded on this computer either way.</span>
+        <div class="actions" style="margin-top:8px"><button class="primary" id="pIn">Continue with Google</button></div>
+        <span style="margin-top:8px">or sign in with email</span>
+        <div class="d-row"><input type="email" id="pEmail" placeholder="you@example.com" autocomplete="email"><button id="pSend">Send code</button></div>
+        <div class="d-row" id="pCodeRow" hidden><input type="text" id="pCode" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"><button class="primary" id="pVerify">Verify</button></div>
+        <span id="pMsg" class="hint"></span></div></div>`;
+  const sel = (id, vals, cur, any) => `<select id="${id}"><option value="">${any}</option>${vals.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(cap(v))}</option>`).join("")}</select>`;
+  body.innerHTML = `<h2>Profile</h2>${head}
+    <div class="p-filter">${sel("pInst", f.instruments, prof.inst, "All instruments")}${sel("pDiff", f.difficulties, prof.diff, "All difficulties")}
+      <span class="hint">${d.sources.local} plays recorded here${d.sources.cloud ? `, ${d.sources.cloud} from your cloud` : ""}. Clone Hero's scorestats.json is read after every song.</span></div>
+    <div class="tiles">
+      <div class="tile"><b>${nf(T.plays)}</b><span>Total plays</span></div><div class="tile"><b>${T.hours}</b><span>Hours played</span></div>
+      <div class="tile"><b>${nf(T.songs)}</b><span>Different songs</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>Average accuracy</span></div>
+      <div class="tile"><b>${nf(T.fcs)}</b><span>Full combos</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>5 stars or gold</span></div>
+      <div class="tile"><b>${T.streak}</b><span>Day streak</span></div><div class="tile"><b>${T.longestStreak}</b><span>Longest streak (days)</span></div></div>
+    <section><h3>Activity, last 26 weeks</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${x.d}: ${x.n} play${x.n === 1 ? "" : "s"}"></i>`).join("")}</div></section>
+    <div class="p-cols"><section><h3>By weekday</h3>${bars(d.weekday, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}</section>
+      <section><h3>By hour</h3>${bars(d.hour, d.hour.map((_, h) => (h % 3 === 0 ? String(h) : "")))}</section></div>
+    <div class="p-cols"><section><h3>Most played</h3><div id="lMost"></div></section><section><h3>Best songs</h3><div id="lBest"></div></section>
+      <section><h3>Needs practice</h3><div id="lNeeds"></div></section><section><h3>Personal bests</h3><div id="lPb"></div></section></div>
+    <section><h3>Recent plays</h3><div id="lRecent"></div></section>
+    <section id="chAcct"><h3>CH Leaderboards account</h3><div id="chBody"><p class="hint">Loading…</p></div></section>`;
+  const fill = (id, items, right, empty) => {
+    const el = $(id); el.innerHTML = songList(items, right, empty);
+    $$("li", el).forEach((li) => li.onclick = () => openSong(items[Number(li.dataset.i)]));
+  };
+  const when = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+  const tags = (it) => `${esc(cap(it.difficulty))} ${esc(it.instrument)}${it.fc ? " · FC" : ""}`;
+  fill("#lMost", d.mostPlayed, (it) => `${it.plays}×<small>${pct(it.avgAccuracy)}</small>`, "Play a few songs and they show up here.");
+  fill("#lBest", d.best, (it) => `${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, "Needs songs played twice, or with 200+ notes.");
+  fill("#lNeeds", d.needsPractice, (it) => `${pct(it.avgAccuracy)}<small>${it.plays}×</small>`, "Songs you've played at least twice show up here.");
+  fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, "No scores yet.");
+  fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, "Nothing played yet. Finish a song in Clone Hero and it appears here.");
+  if (cs.signedIn) {
+    $("#pOut").onclick = signOut; $("#pSync").onclick = syncNow;
+    $("#pRename").onclick = async (e) => {
+      e.preventDefault();
+      const r = await ask({ title: "Display name", input: cs.name || "", ok: "Save" }); if (!r || !r.input.trim()) return;
+      try { await api("/api/cloud/name", { name: r.input }); loadProfile(); } catch (err) { toast(err.message, 4500); }
+    };
+  } else {
+    $("#pIn").onclick = signIn;
+    const msg = (t) => { $("#pMsg").textContent = t; };
+    let lastSend = 0, tick = null;
+    const cool = () => {
+      clearInterval(tick);
+      tick = setInterval(() => {
+        const left = 60 - Math.floor((Date.now() - lastSend) / 1000), b = $("#pSend");
+        if (!b) return clearInterval(tick);
+        b.disabled = left > 0; b.textContent = left > 0 ? `Resend in ${left}s` : "Resend code";
+        if (left <= 0) clearInterval(tick);
+      }, 500);
+    };
+    $("#pSend").onclick = async () => {
+      const email = $("#pEmail").value.trim();
+      try {
+        $("#pSend").disabled = true; await api("/api/cloud/email/send", { email });
+        lastSend = Date.now(); cool(); $("#pCodeRow").hidden = false; $("#pCode").focus(); msg(`Code sent to ${email}, check spam.`);
+      } catch (err) { $("#pSend").disabled = false; msg(err.message); }
+    };
+    $("#pVerify").onclick = async () => {
+      try { await api("/api/cloud/email/verify", { email: $("#pEmail").value.trim(), code: $("#pCode").value }); toast("Signed in"); lib.version = -1; loadProfile(); }
+      catch (err) { msg(err.message); }
+    };
+    $("#pCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pVerify").click(); });
+  }
+  $("#pInst").onchange = (e) => { prof.inst = e.target.value; loadProfile(); };
+  $("#pDiff").onchange = (e) => { prof.diff = e.target.value; loadProfile(); };
+  loadChAccount();
+}
+async function loadChAccount() {
+  const box = $("#chBody"); if (!box) return;
+  const form = (v) => `<div class="d-row"><input type="text" id="chUser" placeholder="Your CH Leaderboards username" value="${esc(v || "")}"><button id="chLink" class="primary">${v ? "Change" : "Link"}</button>${v ? '<button id="chUnlink">Unlink</button>' : ""}</div>
+    <p class="lbnote">Scores can't be submitted from here: the game submits replays itself when it is in leaderboards mode. Linking only lets this app show your public rank and scores.</p>`;
+  const bind = () => {
+    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast("Linked"); loadChAccount(); } catch (e) { toast(e.message, 4500); } };
+    const u = $("#chUnlink"); if (u) u.onclick = async () => { await api("/api/lb/link", { username: "" }); loadChAccount(); };
+  };
+  try {
+    const p = await api("/api/lb/profile");
+    if (!p.linked) { box.innerHTML = form(""); return bind(); }
+    const S = p.stats || {}, R = p.ranks || {};
+    box.innerHTML = form(p.username) + `<div class="tiles">
+      <div class="tile"><b>${nf(S.totalScore)}</b><span>Total score${R.totalScore ? " · #" + nf(R.totalScore) : ""}</span></div>
+      <div class="tile"><b>${nf(p.stats.songsPlayed)}</b><span>Songs played</span></div>
+      <div class="tile"><b>${nf(S.totalFcs)}</b><span>Full combos${R.totalFcs ? " · #" + nf(R.totalFcs) : ""}</span></div>
+      <div class="tile"><b>${nf(S.notesHit)}</b><span>Notes hit</span></div></div>
+      <p><a href="${esc(p.url)}" target="_blank" rel="noopener">Open ${esc(p.username)} on CH Leaderboards</a></p>
+      ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(cap(r.difficulty))} ${esc(r.instrument)}${r.fc ? " · FC" : ""}</small></div></li>`).join("")}</ul>` : ""}`;
+    bind();
+  } catch (e) { box.innerHTML = `<p class="hint">CH Leaderboards isn't reachable right now (${esc(e.message)}).</p>` + form($("#chUser")?.value || ""); bind(); }
+}
+
+/* ================================================================ global top scores (song detail) */
+async function loadDetailLb(d, inst, diff) {
+  const box = $("#dLb"); if (!box) return;
+  box.innerHTML = '<p class="hint">Loading…</p>';
+  try {
+    const p = new URLSearchParams({ id: d.id }); if (inst) p.set("instrument", inst); if (diff) p.set("difficulty", diff);
+    const r = await api("/api/lb/song?" + p);
+    if (!$("#dLb") || activeId !== d.id) return;
+    const insts = ["guitar", "bass", "rhythm", "drums", "keys", "guitarghl", "bassghl"];
+    const sel = `<div class="d-row"><select id="dLbInst">${insts.map((i) => `<option value="${i}"${i === r.instrument ? " selected" : ""}>${i}</option>`).join("")}</select>
+      <select id="dLbDiff">${["expert", "hard", "medium", "easy"].map((i) => `<option value="${i}"${i === r.difficulty ? " selected" : ""}>${cap(i)}</option>`).join("")}</select></div>`;
+    const rows_ = r.found ? (r.scores.length ? r.scores.map((x) => `<div class="r${r.you && x.accountId === r.you.accountId ? " me" : ""}"><span>${x.placement}</span><span>${esc(x.username)}</span><span>${nf(x.score)}</span></div>`).join("")
+      : '<p class="hint">No scores for this instrument and difficulty yet. Leaderboards mostly cover guitar for now.</p>') : '<p class="hint">This song isn\'t on CH Leaderboards.</p>';
+    const you = r.ch ? (r.you ? `<div class="r me"><span>#${r.you.placement}</span><span>you (${esc(r.ch)})</span><span>${nf(r.you.score)}</span></div>` : `<p class="hint">${esc(r.ch)}: no score here yet.</p>`) : '<p class="hint">Link your CH Leaderboards username in Profile to see your rank here.</p>';
+    box.innerHTML = sel + `<div class="dlb">${rows_}${r.found ? you : ""}${r.found ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on CH Leaderboards</a>` : ""}</div>`;
+    const re = () => loadDetailLb(d, $("#dLbInst").value, $("#dLbDiff").value);
+    $("#dLbInst").onchange = re; $("#dLbDiff").onchange = re;
+  } catch (e) { if ($("#dLb")) $("#dLb").innerHTML = `<p class="hint">CH Leaderboards isn't reachable right now.</p>`; }
+}
+
+/* ================================================================ CH leaderboards view */
+const lbv = { metric: "totalScore", tab: "trending", group: "fiveFret" };
+async function loadLeaderboards() {
+  const body = $("#lbBody");
+  body.innerHTML = '<h2>Leaderboards</h2><p class="hint">Loading from CH Leaderboards…</p>';
+  let d;
+  try { d = await api(`/api/lb/overview?metric=${lbv.metric}&tab=${lbv.tab}&group=${lbv.group}`); }
+  catch (e) { body.innerHTML = `<h2>Leaderboards</h2><p class="hint">CH Leaderboards isn't reachable right now (${esc(e.message)}). Everything else keeps working.</p>`; return; }
+  const T = d.totals || {};
+  const o = (vals, cur) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
+  const metricFmt = lbv.metric === "hoursPlayed" ? (v) => nf(Math.round(v)) : nf;
+  body.innerHTML = `<h2>Leaderboards</h2>
+    <p class="lbnote">Read-only view of <a href="${esc(d.site)}" target="_blank" rel="noopener">CH Leaderboards</a>. Scores can't be submitted from this app: the game submits replays itself when it is in leaderboards mode.</p>
+    <div class="tiles"><div class="tile"><b>${nf(T.users)}</b><span>Players</span></div><div class="tile"><b>${nf(T.submissions)}</b><span>Scores submitted</span></div>
+      <div class="tile"><b>${nf(T.songs)}</b><span>Songs</span></div><div class="tile"><b>${nf(T.fcs)}</b><span>Full combos</span></div>
+      <div class="tile"><b>${nf(T.hoursPlayed)}</b><span>Hours played</span></div><div class="tile"><b>${nf(T.notesHit)}</b><span>Notes hit</span></div></div>
+    <div class="p-cols"><section><h3>Top players</h3><div class="d-row"><select id="lbMetric">${o([["totalScore", "Total score"], ["submissions", "Scores submitted"], ["totalFcs", "Full combos"], ["totalPfcs", "Perfect combos"], ["hoursPlayed", "Hours played"], ["starsEarned", "Stars earned"], ["notesHit", "Notes hit"]], lbv.metric)}</select></div>
+        <ul class="plist">${d.players.map((p, i) => `<li data-u="${esc(p.url)}"><div class="t">${i + 1}. ${esc(p.username)}</div><div class="v">${metricFmt(p.value)}</div></li>`).join("")}</ul></section>
+      <section><h3>Songs</h3><div class="d-row"><select id="lbTab">${o([["trending", "Trending"], ["topAllTime", "Top, all time"], ["topYear", "Top, year"], ["topMonth", "Top, month"], ["topWeek", "Top, week"]], lbv.tab)}</select>
+        <select id="lbGroup">${o([["fiveFret", "Five fret"], ["sixFret", "Six fret"], ["drums", "Drums"]], lbv.group)}</select></div>
+        <ul class="plist">${d.songs.map((s, i) => `<li data-u="${esc(s.url)}"><div class="t">${i + 1}. ${esc(s.name)}<small>${esc(s.artist)}</small></div><div class="v">${nf(s.plays)}<small>plays</small></div></li>`).join("")}</ul></section></div>
+    <section><h3>Latest scores</h3><ul class="plist">${d.latest.map((r) => `<li data-u="${esc(r.url || "")}"><div class="t">${esc(r.name)}<small>${esc(r.artist)} · ${esc(r.username)}</small></div><div class="v">${nf(r.score)}<small>${esc(cap(r.difficulty))} ${esc(r.instrument)}${r.fc ? " · FC" : ""}</small></div></li>`).join("")}</ul></section>`;
+  $$("#lbBody li[data-u]").forEach((li) => li.onclick = () => { if (li.dataset.u) window.open(li.dataset.u, "_blank", "noopener"); });
+  $("#lbMetric").onchange = (e) => { lbv.metric = e.target.value; loadLeaderboards(); };
+  $("#lbTab").onchange = (e) => { lbv.tab = e.target.value; loadLeaderboards(); };
+  $("#lbGroup").onchange = (e) => { lbv.group = e.target.value; loadLeaderboards(); };
+}
+
 /* ================================================================ keyboard */
 document.addEventListener("keydown", (e) => {
   if (e.target.matches("input, select, textarea")) return;
@@ -849,6 +1079,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 loadLibrary().then(() => { pollLibrary(); pollJobs(); });
+loadCloud();
 // First run (or the data folder vanished): open the setup screen.
 api("/api/setup").then((d) => {
   const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found

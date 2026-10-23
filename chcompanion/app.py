@@ -16,7 +16,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, net, youtube
-from . import ingame, metadata
+from . import ingame, metadata, leaderboard
+from .cloud import Cloud, CloudSync
+from .playstats import PlayLog, PlayWatcher, candidate_files
 from .jobs import Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
 from .libmgr import LibraryManager, song_id
 from .library import Library, Song
@@ -45,6 +47,15 @@ class Companion:
         self.yt = youtube.YouTube(max_height=max_height)
         self.game_yt = youtube.YouTube(max_height=game_max_height)
         self.libmgr = LibraryManager(data_dir, library, store)
+        # optional cloud account + play history (works signed out and offline)
+        self.playlog = PlayLog()
+        self.cloud = Cloud()
+        self.cloudsync = CloudSync(self.cloud, store, self.libmgr, self.playlog)
+        self.libmgr.on_fav = self.cloudsync.fav_changed
+        self.lb = leaderboard.Client()
+        self._score_cache: tuple[float, list[Path]] = (0.0, [])
+        self.playwatcher = PlayWatcher(self.playlog, self._score_files, self._song_length,
+                                       on_new=self.cloudsync.on_new_plays)
         self.jobs = JobManager(self._run_job, workers=int(self.settings().get("workers") or 0) or None,
                                busy=self._job_busy, on_change=self._job_changed)
         self.game_yt.pref_p = int(self.settings().get("pref_p", 720))
@@ -319,7 +330,8 @@ class Companion:
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
-                "setup_done": False, "fav_setlist": True, "game_video_format": "auto"}
+                "setup_done": False, "fav_setlist": True, "game_video_format": "auto",
+                "ch_username": "", "ch_account_id": 0}
 
     def repair_videos(self) -> int:
         """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
@@ -352,6 +364,56 @@ class Companion:
             lm.rescan()
             self.build_preview_index()
         threading.Thread(target=work, daemon=True, name="rescan").start()
+
+    def _score_files(self) -> list[Path]:
+        """Where Clone Hero writes scorestats.json (looked up at most once a minute)."""
+        t, files = self._score_cache
+        if time.time() - t > 60:
+            from .libmgr import find_game
+            from .paths import game_dir
+            try:
+                game = find_game(self.data_dir, self.settings().get("game_path"))
+            except Exception:
+                game = None
+            files = candidate_files(game_dir(game) if game else None, self.data_dir)
+            self._score_cache = (time.time(), files)
+        return files
+
+    def _song_length(self, checksum: str, artist: str, name: str) -> float | None:
+        from .library import norm_key
+        want = norm_key(f"{artist} - {name}")
+        for s in self.library.songs:
+            if s.key == want and s.length_s:
+                return s.length_s
+        return None
+
+    def link_ch_username(self, username: str) -> dict | None:
+        """Link (or with '' unlink) a CH Leaderboards account; also saved in the cloud profile."""
+        username = (username or "").strip()
+        if not username:
+            self.update_settings({"ch_username": "", "ch_account_id": 0})
+            user = None
+        else:
+            user = self.lb.find_user(username)
+            if not user:
+                raise leaderboard.LeaderboardError(f"No CH Leaderboards player named “{username}”")
+            self.update_settings({"ch_username": user["username"], "ch_account_id": int(user["accountId"])})
+        if self.cloud.signed_in:
+            try:
+                self.cloud.set_ch_username(user["username"] if user else None)
+            except Exception as e:
+                log.info("Could not save the CH username to the cloud profile: %s", e)
+        return user
+
+    def after_login(self):
+        """First sync after signing in; adopts a CH username saved from another machine."""
+        self.cloudsync.sync_all()
+        try:
+            name = (self.cloud.get_profile() or {}).get("ch_username")
+            if name and not self.settings().get("ch_username"):
+                self.link_ch_username(name)
+        except Exception as e:
+            log.info("Could not read the cloud profile: %s", e)
 
     def settings(self) -> dict:
         s = dict(self.DEFAULTS)
@@ -476,6 +538,17 @@ class Companion:
         self.build_preview_index()
         new = [x for x in self.library.songs if any(str(x.path) == str(p) for p in paths)]
         for x in new:
+            if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
+                self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
+            if job.options.get("mark_fav"):          # installed from the cloud favourites list
+                self.store.update_song(x.key, fav=True)
+                if job.options.get("fav_key"):
+                    self.cloudsync.state.setdefault("aliases", {})[job.options["fav_key"]] = \
+                        self.cloudsync.fav_key_of(x)
+                self.libmgr.version += 1
+                if self.libmgr.fav_setlist_enabled():
+                    threading.Thread(target=self.libmgr.sync_fav_setlist, daemon=True).start()
+                self.cloudsync.schedule()
             self.libmgr.refresh_song(x)
             if job.options.get("process", s["auto_process_downloads"]):
                 self.queue_song(x, "full", PRIO_BATCH)
@@ -487,6 +560,9 @@ class Companion:
 
     def start(self):
         self.watcher.start()
+        self.playwatcher.start()
+        if self.cloud.signed_in:
+            threading.Thread(target=self.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
         self.jobs.start()
         def scan_then_repair():
             ingame.prune_video_cache()
