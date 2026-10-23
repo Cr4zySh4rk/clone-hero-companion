@@ -44,14 +44,19 @@ function setFilter(f) {
   applyFilters();
   renderCloudFavs();
 }
+/* Which library filter a sidebar entry implies: "★ Favourites" -> fav, "Library" -> All, anything else keeps it. */
+function viewFilter(view, cur) { return view === "favs" ? "fav" : view === "library" ? "all" : cur; }
+function syncChips() { $$("#libFilters button").forEach((b) => b.classList.toggle("on", b.dataset.f === st.filter)); }
 function show(view) {
-  if (view === "favs") { show("library"); setFilter("fav"); $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === "favs")); return; }
+  if (view === "favs") { show("library"); setFilter(viewFilter("favs")); $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === "favs")); return; }
   currentView = view;
   $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   $$(".view").forEach((v) => v.classList.toggle("on", v.id === "view-" + view));
   $("#detail").hidden = !(view === "library" && activeId);
   $("#shell").classList.toggle("detail-open", !$("#detail").hidden);
   if (view === "now" && $("#nowFrame").src === "about:blank") $("#nowFrame").src = "/now";
+  if (view === "library") syncChips();
+  renderCloudFavs();
   if (view === "setlists") loadSetlists();
   if (view === "dupes") loadDupes();
   if (view === "settings") loadSettings();
@@ -63,7 +68,7 @@ function show(view) {
 }
 $("#nav").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.view === "library" && st.filter === "fav") setFilter("all");
+  if (b.dataset.view === "library" && st.filter !== viewFilter("library")) setFilter(viewFilter("library"));
   show(b.dataset.view);
 });
 $("#launchGame").onclick = async () => { try { await api("/api/game/launch", {}); toast("Starting Clone Hero…"); } catch (e) { toast(e.message, 4000); } };
@@ -74,8 +79,11 @@ const st = { filter: "all", q: "", group: "", sort: "artist", dir: 1, sel: new S
 let rows = [];
 let activeId = null;
 
+let libGen = 0, cloudGen = 0;      // a late response for an older request must not overwrite newer state
 async function loadLibrary() {
+  const gen = ++libGen;
   const d = await api("/api/library");
+  if (gen !== libGen) return;
   lib.songs = d.songs; lib.version = d.version;
   lib.byId = new Map(d.songs.map((s) => [s.id, s]));
   for (const id of [...st.sel]) if (!lib.byId.has(id)) st.sel.delete(id);
@@ -86,7 +94,7 @@ async function loadLibrary() {
   updateFavCount();
   $("#sideStatus").textContent = d.enriching ? `Checking songs… ${d.enrich[0]}/${d.enrich[1]}` : "";
   applyFilters();
-  if (st.filter === "fav") loadCloud();     // recovered favourites appear in "not on this machine"
+  if (st.filter === "fav" && currentView === "library") loadCloud();     // recovered favourites appear in "not on this machine"
   if (activeId && lib.byId.has(activeId) && currentView === "library") refreshDetail();
 }
 async function pollLibrary() {
@@ -248,7 +256,7 @@ $("#libHead").addEventListener("click", (e) => {
 $("#libSearch").addEventListener("input", (e) => { st.q = e.target.value; clearTimeout(applyFilters.t); applyFilters.t = setTimeout(applyFilters, 120); });
 $("#libFilters").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  st.filter = b.dataset.f; $$("#libFilters button").forEach((x) => x.classList.toggle("on", x === b)); applyFilters();
+  setFilter(b.dataset.f);
 });
 $("#libGroup").addEventListener("change", (e) => { st.group = e.target.value; applyFilters(); });
 
@@ -861,7 +869,7 @@ $("#setupForm").addEventListener("click", async (e) => {
                                           songDirs: setup.songs.filter((s) => s.ok).map((s) => s.path), createData: true });
       st2.textContent = `✓ Saved. Reading ${r.songDirs.length} song folder${r.songDirs.length === 1 ? "" : "s"}…`; st2.className = "status ok";
       $("#navSetup").classList.remove("on");
-      lib.version = -1; setTimeout(() => { loadLibrary(); show("library"); }, 1500);
+      lib.version = -1; setTimeout(() => { loadLibrary(); setFilter("all"); show("library"); }, 1500);
     } catch (err) { st2.textContent = "✗ " + err.message; st2.className = "status bad"; }
   }
 });
@@ -885,14 +893,18 @@ const pct = (a) => (a == null ? "—" : (a * 100).toFixed(1) + "%");
 const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 async function loadCloud() {
-  try { cloud.status = await api("/api/cloud/status"); } catch (e) { cloud.status = { signedIn: false }; }
-  try { cloud.favs = (await api("/api/cloud/favorites")).items; } catch (e) { cloud.favs = []; }   // signed out too: favourites whose chart was trashed or moved
+  const gen = ++cloudGen;
+  let status, favs;
+  try { status = await api("/api/cloud/status"); } catch (e) { status = { signedIn: false }; }
+  try { favs = (await api("/api/cloud/favorites")).items; } catch (e) { favs = []; }   // signed out too: favourites whose chart was trashed or moved
+  if (gen !== cloudGen) return cloud.status;
+  cloud.status = status; cloud.favs = favs;
   renderCloudFavs();
   return cloud.status;
 }
 function renderCloudFavs() {
   const box = $("#cloudFavs"), items = cloud.favs;
-  box.hidden = !(st.filter === "fav" && items.length);
+  box.hidden = !(st.filter === "fav" && currentView === "library" && items.length);
   if (box.hidden) return;
   const missing = items.filter((i) => i.notFound).length;
   box.innerHTML = `<header><b>${cloud.status.signedIn ? "In your cloud, not on this machine" : "Favourites not on this machine"} (${items.length})</b>

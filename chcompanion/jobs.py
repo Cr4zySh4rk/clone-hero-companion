@@ -36,6 +36,7 @@ class Job:
     item: dict | None = None       # download source item
     options: dict = field(default_factory=dict)
     priority: int = PRIO_BATCH
+    chart: dict | None = field(default=None, repr=False)     # which chart file this job was queued for
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     status: str = "queued"         # queued | running | waiting | done | failed | cancelled
     step: str = ""
@@ -119,6 +120,7 @@ class JobManager:
             for j in list(self.jobs.values()):
                 if j.status in ("failed", "cancelled"):
                     nj = Job(j.kind, j.title, j.song_id, j.item, dict(j.options), j.priority)
+                    nj.chart = j.chart
                     del self.jobs[j.id]
                     self.jobs[nj.id] = nj
                     heapq.heappush(self.heap, (nj.priority, next(self.order), nj.id))

@@ -451,7 +451,36 @@ class Companion:
 
     def queue_song(self, song: Song, kind: str, priority: int = PRIO_BATCH, **options) -> Job:
         title = song.display
-        return self.jobs.submit(Job(kind, title, song_id=song_id(song), options=options, priority=priority))
+        job = Job(kind, title, song_id=song_id(song), options=options, priority=priority)
+        try:
+            job.chart = {"path": str(song.path), "md5": self.libmgr.chart_md5(song, compute=True),
+                         "charter": self.libmgr.charter_of(song), "key": song.key}
+        except Exception:
+            job.chart = {"path": str(song.path), "md5": None, "charter": "", "key": song.key}
+        return self.jobs.submit(job)
+
+    def _locate_chart(self, job: Job) -> Song:
+        """The Song this job is for, with a chart file that exists. If it moved, find it again by md5, else by
+        charter; if it is gone, fail clearly (never a raw Errno)."""
+        song = self.libmgr.get(job.song_id)
+        if song is not None and song.path.exists():
+            return song
+        ch = job.chart or {}
+        if song is not None or ch:
+            try:
+                self.library.scan()
+                self.libmgr._reindex()
+            except Exception as e:
+                log.warning("rescan while looking for a moved chart failed: %s", e)
+            same = [s for s in self.library.songs if s.path.exists() and s.key == (ch.get("key") or (song and song.key))]
+            md5 = (ch.get("md5") or "").upper()
+            hit = [s for s in same if md5 and (self.libmgr.chart_md5(s, compute=True) or "") == md5]
+            if not hit and ch.get("charter"):
+                want = norm_key(ch["charter"])
+                hit = [s for s in same if norm_key(self.libmgr.charter_of(s)) == want]
+            if len(hit) == 1:
+                return hit[0]
+        raise RuntimeError(ingame.CHART_GONE[0].upper() + ingame.CHART_GONE[1:])
 
     def song_job_status(self, song: Song) -> str | None:
         sid = song_id(song)
@@ -480,9 +509,7 @@ class Companion:
     def _run_job(self, job: Job, progress) -> str:
         if job.kind == "download":
             return self._run_download(job, progress)
-        song = self.libmgr.get(job.song_id)
-        if song is None:
-            raise RuntimeError("song no longer in the library")
+        song = self._locate_chart(job)
         o = job.options
         parts = []
         try:
@@ -514,9 +541,14 @@ class Companion:
                     parts.append("lyrics")
                 if not r.get("video") and not r.get("lyrics") == "added":
                     parts.append("already set up")
+        except FileNotFoundError as e:
+            if str(song.path) in str(e.filename or "") or not song.path.exists():
+                raise RuntimeError(ingame.CHART_GONE[0].upper() + ingame.CHART_GONE[1:]) from e
+            raise
         finally:
             try:
-                self.libmgr.refresh_song(song)
+                if song.path.exists():
+                    self.libmgr.refresh_song(song)
             except Exception as e:      # bookkeeping only; the song itself is done
                 log.warning("Could not refresh %s in the library view: %s", song.display, e)
         return "; ".join(parts) or "done"
@@ -533,6 +565,9 @@ class Companion:
             paths = inst.install(item, dest, progress=progress, cancel=job.cancel)
         except inst.AlreadyInstalled as e:
             return f"already in your library ({e}), not downloaded again"
+        gone = [p for p in paths if not Path(p).exists()]
+        if gone:        # never go on to processing something that was not written
+            raise RuntimeError(f"the download finished but {gone[0].name} is not in the Songs folder")
         self.library.scan()
         self.libmgr._reindex()
         self.build_preview_index()

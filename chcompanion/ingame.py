@@ -652,6 +652,10 @@ def _codec(p: Path) -> str:
         return ""
 
 
+CHART_GONE = ("the chart file is no longer there (it may have been moved to the Trash or renamed), "
+              "nothing was changed")
+
+
 # --------------------------------------------------------------- apply to song
 def _backup(p: Path):
     b = p.with_name(p.name + BACKUP)
@@ -703,6 +707,8 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             force_video: bool = False, replace_low_res: bool = True, progress=None) -> dict:
     """Put video and lyrics into the song for Clone Hero. Returns a summary dict."""
     with _lock_for(song.key):
+        if not song.path.exists():      # waited behind another chart of the song; this one may have gone meanwhile
+            raise InGameError(CHART_GONE)
         result = {"video": None, "lyrics": None}
         per = store.song(song.key)
         lines: list[dict] = []
