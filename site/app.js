@@ -6,6 +6,9 @@ var RELEASES="https://github.com/"+REPO+"/releases";
 var LATEST=RELEASES+"/latest";
 var CACHE="chc-latest-release",TTL=10*60*1000;
 var NAMES={mac:"macOS",win:"Windows",linux:"Linux"};
+var DIRECT={mac:LATEST+"/download/CloneHeroCompanion-macOS-universal.dmg",
+  win:LATEST+"/download/CloneHeroCompanion-windows-x64.exe",
+  linux:LATEST+"/download/CloneHeroCompanion-linux-x64.tar.gz"};
 var $=function(id){return document.getElementById(id)};
 var ICON={mac:"",win:"",linux:""};
 
@@ -80,6 +83,9 @@ function mb(n){return (n/1048576).toFixed(n>=104857600?0:1)+" MB"}
 function renderDownload(rel,os,arch){
   var btn=$("dl-btn"),label=$("dl-label"),meta=$("dl-meta"),others=$("dl-others");
   var assets=rel?pickAssets(rel):{};
+  // If GitHub's API is unreachable or rate-limited, still download the latest build directly:
+  // /releases/latest/download/<name> always redirects to that file in the newest release.
+  ["mac","win","linux"].forEach(function(k){ if(!assets[k]) assets[k]={browser_download_url:DIRECT[k],size:0}; });
   var ver=rel?rel.tag_name.replace(/^v?/,"v"):"";
   var target=NAMES[os]?os:null;
   var links=[];
@@ -91,7 +97,8 @@ function renderDownload(rel,os,arch){
   if(target&&assets[target]){
     btn.href=assets[target].browser_download_url;
     label.textContent="Download for "+NAMES[target];
-    var m=ver+" · "+mb(assets[target].size);
+    var sz=assets[target].size;
+    var m=(ver||"Latest release")+(sz?" · "+mb(sz):"");
     if(target==="mac"){
       meta.textContent=m+" · universal, Apple Silicon and Intel";
       detectMacArch(function(a){ if(a) meta.textContent=m+" · universal build, runs natively on your "+a+" Mac"; });
