@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from ..paths import config_dir
+from ..paths import cache_dir, config_dir
 from . import hosts
 
 log = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
     songs_dir.mkdir(parents=True, exist_ok=True)
     label = safe_name(f"{meta.get('artist', '')} - {meta.get('name', '')}"
                       + (f" ({meta['charter']})" if meta.get("charter") else ""))
-    work = Path(tempfile.mkdtemp(prefix="chc-x-", dir=config_dir()))
+    work = Path(tempfile.mkdtemp(prefix="chc-x-", dir=cache_dir()))
     try:
         loose = work / "loose"
         for f in files:
@@ -148,7 +148,7 @@ def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Pat
                           + (f" ({item['charter']})" if item.get("charter") else ""))
         if (songs_dir / (label + ".sng")).exists():
             raise AlreadyInstalled(label + ".sng")
-    tmp = Path(tempfile.mkdtemp(prefix="chc-dl-", dir=config_dir()))
+    tmp = Path(tempfile.mkdtemp(prefix="chc-dl-", dir=cache_dir()))
     try:
         def prog(done, total):
             if progress:

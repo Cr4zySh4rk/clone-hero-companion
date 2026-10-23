@@ -562,13 +562,16 @@ class Companion:
         self.watcher.handle_line(f"[Log] Loading Song: {name}")
 
     def start(self):
+        from .paths import wipe_cache
+        wipe_cache()                 # the preview/work cache is per session; also removes the old config_dir/video-cache
         self.watcher.start()
         self.playwatcher.start()
         if self.cloud.signed_in:
             threading.Thread(target=self.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
         self.jobs.start()
         def scan_then_repair():
-            ingame.prune_video_cache()
+            from .library import sweep_temp_files
+            sweep_temp_files(self.library.roots + [self.libmgr.disabled_dir])
             self.libmgr.rescan()
             self.repair_videos()
         threading.Thread(target=scan_then_repair, daemon=True).start()

@@ -128,7 +128,7 @@ def audio_length_ms(song: Song) -> int | None:
         for n in names[:3]:
             if song.is_sng:
                 import tempfile
-                tmpdir = tmpdir or Path(tempfile.mkdtemp(prefix="chc-meta-"))
+                tmpdir = tmpdir or Path(tempfile.mkdtemp(prefix="chc-meta-", dir=__import__("chcompanion.paths", fromlist=["x"]).cache_dir()))
                 p = tmpdir / n
                 p.write_bytes(song.read_file(n) or b"")
             else:

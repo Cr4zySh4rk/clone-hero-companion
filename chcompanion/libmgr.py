@@ -12,13 +12,14 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import setlists
 from .library import Library, Song, norm_key, strip_tags
-from .paths import config_dir
+from .paths import cache_dir, config_dir
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -68,6 +69,8 @@ class LibraryManager:
         self._save_lock = threading.Lock()
         self._fav_lock = threading.Lock()
         self._favs_lock = threading.RLock()
+        self._delete_lock = threading.Lock()
+        self.ops: dict[str, dict] = {}
         self.on_fav = None          # callback(songs, value) after favourites change (cloud sync)
 
     # ------------------------------------------------------------ index
@@ -467,22 +470,106 @@ class LibraryManager:
         self.rescan()
         return n
 
-    def delete(self, ids: list[str]) -> int:
-        n = 0
-        for s in self.songs(ids):
-            try:
+    # ------------------------------------------------------------ delete
+    def _move_to_trash(self, path: Path) -> str:
+        """Send one file/folder to the OS Trash; if that fails, move it to <data_dir>/Deleted Songs/.
+        Returns "" on success or a note about the fallback; raises if both fail."""
+        if not os.path.lexists(path):
+            return ""                       # already gone (e.g. it was inside a folder trashed before)
+        try:
+            from send2trash import send2trash
+            send2trash(str(path))
+            return ""
+        except Exception as e:
+            first = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        from .sources.install import unique
+        trash = self.data_dir / "Deleted Songs"
+        try:
+            trash.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(unique(trash / path.name)))
+        except Exception as e2:
+            raise OSError(f"{first}; fallback move failed: {e2}") from e2
+        return f"moved to Deleted Songs ({first})"
+
+    def delete(self, ids: list[str], progress=None) -> dict:
+        """Trash the songs. Never raises per item: returns {"deleted": n, "failed": [{id, name, reason}]}."""
+        songs = list({str(x.path): x for x in self.songs(ids)}.values())
+        # children before parents, so a chart nested in another selected folder is not lost to a parent move
+        songs.sort(key=lambda s: len(s.path.parts), reverse=True)
+        deleted, failed, gone = 0, [], []
+        with self._delete_lock:
+            for i, s in enumerate(songs):
                 try:
-                    from send2trash import send2trash
-                    send2trash(str(s.path))
-                except ImportError:
-                    trash = self.data_dir / "Deleted Songs"
-                    trash.mkdir(exist_ok=True)
-                    shutil.move(str(s.path), trash / s.path.name)
-                n += 1
+                    self._move_to_trash(s.path)
+                    if s.is_sng:             # the .chc-backup / temp sit next to a .sng: they go with it
+                        for suf in (".chc-backup", ".chc-tmp"):
+                            side = s.path.with_name(s.path.name + suf)
+                            try:
+                                self._move_to_trash(side)
+                            except Exception as e:
+                                log.warning("delete %s: %s", side, e)
+                    deleted += 1
+                    gone.append(s.path)
+                except Exception as e:
+                    log.warning("delete %s: %s", s.path, e)
+                    failed.append({"id": song_id(s), "name": s.display, "reason": str(e) or type(e).__name__})
+                if progress:
+                    progress(i + 1, len(songs), deleted, failed)
+            try:
+                self._prune_empty_parents(gone)
             except Exception as e:
-                log.warning("delete %s: %s", s.path, e)
+                log.warning("could not tidy empty folders: %s", e)
         self.rescan()
-        return n
+        return {"deleted": deleted, "failed": failed}
+
+    def _prune_empty_parents(self, paths: list[Path]) -> None:
+        """rmdir folders that became empty because their charts were deleted (never a songs root)."""
+        roots = [Path(r) for r in self.lib.roots] + [self.disabled_dir]
+        seen: set[Path] = set()
+        for p in paths:
+            root = next((r for r in roots if r in p.parents), None)
+            if root is None:
+                continue
+            for d in p.parents:
+                if d == root or root not in d.parents:
+                    break
+                seen.add(d)
+        for d in sorted(seen, key=lambda x: len(x.parts), reverse=True):
+            try:
+                if d.is_dir() and not any(d.iterdir()):
+                    d.rmdir()
+            except OSError:
+                pass
+
+    def start_delete(self, ids: list[str], after=None) -> str:
+        """Run a (possibly big) delete in the background; poll op_status(id)."""
+        op = {"id": uuid.uuid4().hex[:10], "status": "running", "total": len(self.songs(ids)),
+              "done": 0, "deleted": 0, "failed": []}
+        with self.lock:
+            self.ops[op["id"]] = op
+            for k in list(self.ops)[:-8]:
+                if self.ops[k]["status"] != "running":
+                    del self.ops[k]
+
+        def prog(done, total, deleted, failed):
+            op.update(done=done, deleted=deleted, failed=list(failed))
+
+        def run():
+            try:
+                r = self.delete(ids, prog)
+                op.update(deleted=r["deleted"], failed=r["failed"], done=op["total"], status="done")
+                if after:
+                    after()
+            except Exception as e:
+                log.exception("delete job failed")
+                op.update(status="error", error=str(e))
+        threading.Thread(target=run, daemon=True, name="delete").start()
+        return op["id"]
+
+    def op_status(self, op_id: str) -> dict | None:
+        with self.lock:
+            op = self.ops.get(op_id)
+            return dict(op, failed=list(op["failed"])) if op else None
 
     def rename(self, ids: list[str], template: str = "{artist} - {name}") -> int:
         from .sources.install import safe_name, unique
@@ -590,7 +677,7 @@ class LibraryManager:
         tmp = None
         if s.is_sng:
             import tempfile
-            tmp = Path(tempfile.mkdtemp(prefix="chc-play-", dir=config_dir()))
+            tmp = Path(tempfile.mkdtemp(prefix="chc-play-", dir=cache_dir()))
             paths = []
             for n in names:
                 p = tmp / n

@@ -15,14 +15,15 @@ async function api(path, body, method) {
   if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
   return data;
 }
-function toast(msg, ms = 2600) {
+function toast(msg, ms = 2600, onclick = null) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("on");
+  t.onclick = onclick; t.style.cursor = onclick ? "pointer" : ""; t.style.pointerEvents = onclick ? "auto" : "";
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), ms);
 }
 function ask({ title, text = "", input = null, select = null, ok = "OK", danger = false }) {
   return new Promise((resolve) => {
     const dlg = $("#dlg"), f = $("#dlgForm");
-    f.innerHTML = `<h2>${esc(title)}</h2>${text ? `<p class="hint">${esc(text)}</p>` : ""}
+    f.innerHTML = `<h2>${esc(title)}</h2>${text ? `<p class="hint" style="white-space:pre-line;max-height:45vh;overflow:auto">${esc(text)}</p>` : ""}
       ${select ? `<select id="dlgSel">${select.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>` : ""}
       ${input !== null ? `<input type="text" id="dlgIn" value="${esc(input)}" placeholder="${esc(title)}">` : ""}
       <div class="btns"><button value="cancel" class="ghost">Cancel</button><button value="ok" class="${danger ? "danger" : "primary"}">${esc(ok)}</button></div>`;
@@ -282,6 +283,30 @@ async function startRun(ids = [...st.sel]) {
   if (r.installing) loadCloud();
   pollJobs(true);
 }
+/* Trash in the background (one Trash call per chart); poll progress, then report what could not be moved. */
+async function trashSongs(ids, keepSel) {
+  const { op } = await api("/api/songs/action", { ids, action: "delete" });
+  let s;
+  for (;;) {
+    s = await api("/api/songs/op", { id: op });
+    if (s.status !== "running") break;
+    toast(`Moving to the Trash… ${s.done}/${s.total}`, 4000);
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  if (s.status === "error") throw new Error(s.error || "Could not move the songs to the Trash");
+  await loadLibrary();
+  const bad = s.failed || [];
+  bad.forEach((f) => keepSel.add(f.id));
+  if (!bad.length) return toast(`Moved ${s.deleted} chart${s.deleted === 1 ? "" : "s"} to the Trash`);
+  toast(`Moved ${s.deleted} chart${s.deleted === 1 ? "" : "s"} to the Trash · ${bad.length} couldn't be moved (details)`, 30000, () => showTrashFailures(bad));
+  showTrashFailures(bad);
+}
+async function showTrashFailures(bad) {
+  const list = bad.slice(0, 200).map((f) => `• ${f.name}: ${f.reason}`).join("\n") + (bad.length > 200 ? `\n… and ${bad.length - 200} more` : "");
+  const r = await ask({ title: `${bad.length} chart${bad.length === 1 ? "" : "s"} couldn't be moved to the Trash`, text: list, ok: "Retry", danger: true });
+  if (!r) return;
+  const keep = new Set(); await trashSongs(bad.map((f) => f.id), keep); st.sel.clear(); keep.forEach((i) => st.sel.add(i)); renderTable(false); updateSelbar();
+}
 $("#selbar").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
   const ids = [...st.sel], act = b.dataset.act;
@@ -308,7 +333,7 @@ $("#selbar").addEventListener("click", async (e) => {
     }
     if (act === "delete") {
       if (!await ask({ title: `Move ${ids.length} song${ids.length === 1 ? "" : "s"} to the Trash?`, text: "You can restore them from the Trash.", ok: "Move to Trash", danger: true })) return;
-      const d = await api("/api/songs/action", { ids, action: "delete" }); st.sel.clear(); toast(`Moved ${d.count} to the Trash`); loadCloud();
+      const keep = new Set(); await trashSongs(ids, keep); st.sel.clear(); keep.forEach((i) => st.sel.add(i)); renderTable(false); updateSelbar(); loadCloud();
     }
   } catch (err) { toast(err.message, 4500); }
 });
@@ -548,7 +573,7 @@ async function loadDupes() {
     const group = d.groups.find((g) => g.some((s) => s.id === b.dataset.keep));
     const others = group.filter((s) => s.id !== b.dataset.keep).map((s) => s.id);
     if (!await ask({ title: `Move ${others.length} other cop${others.length === 1 ? "y" : "ies"} to the Trash?`, ok: "Move to Trash", danger: true })) return;
-    await api("/api/songs/action", { ids: others, action: "delete" }); toast("Done"); loadDupes();
+    await trashSongs(others, new Set()); loadDupes();
   });
 }
 $("#dupRefresh").onclick = loadDupes;

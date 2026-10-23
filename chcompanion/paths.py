@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import configparser
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 APP_NAME = "CloneHeroCompanion"
@@ -306,6 +308,42 @@ def config_dir() -> Path:
     d = base / APP_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+CACHE_DIR_NAME = "CloneHeroCompanion-cache"
+# Files/folders the app itself creates while working. They are never songs: the scanner skips them.
+ARTEFACT_SUFFIXES = (".part", ".chc-backup", ".chc-tmp", ".tmp", ".temp", ".ytdl", ".crdownload")
+ARTEFACT_DIR_PREFIXES = ("chc-",)       # temp work folders: chc-dl-*, chc-x-*, chc-remux-*, chc-play-*, chc-pv-*, ...
+TEMP_SWEEP_NAMES = (".chc-video.tmp",)   # leftovers inside song folders that startup deletes (plus *.chc-tmp)
+
+
+def cache_dir() -> Path:
+    """Temporary working area (OS temp dir): preview videos, downloads, alignment audio. Wiped at every start."""
+    d = Path(tempfile.gettempdir()) / CACHE_DIR_NAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def is_artefact_name(name: str) -> bool:
+    return name.lower().endswith(ARTEFACT_SUFFIXES)
+
+
+def is_artefact_dir(name: str) -> bool:
+    return name == CACHE_DIR_NAME or name.startswith(ARTEFACT_DIR_PREFIXES)
+
+
+def wipe_cache() -> None:
+    """Delete the whole temp cache, and the old config_dir/video-cache and leftover chc-* work folders."""
+    shutil.rmtree(Path(tempfile.gettempdir()) / CACHE_DIR_NAME, ignore_errors=True)
+    old = config_dir()
+    shutil.rmtree(old / "video-cache", ignore_errors=True)
+    try:
+        for p in old.iterdir():
+            if p.is_dir() and p.name.startswith(ARTEFACT_DIR_PREFIXES):
+                shutil.rmtree(p, ignore_errors=True)
+    except OSError:
+        pass
+    cache_dir()
 
 
 def resource_path(*parts: str) -> Path:

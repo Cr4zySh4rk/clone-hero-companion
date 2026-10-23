@@ -25,7 +25,7 @@ from pathlib import Path
 from . import lyrics as lyr
 from .library import Song, VIDEO_NAMES
 from .midi import TempoMap, build_track, chunk_track_name, encode_varlen, parse_midi, split_chunks, assemble
-from .paths import config_dir
+from .paths import cache_dir, config_dir
 from .sng import open_sng, write_sng
 from .store import Store
 from .youtube import MIN_P as MIN_HD, MIN_SCORE, YouTube
@@ -258,7 +258,7 @@ def repair_fragmented_videos(songs, progress=None) -> int:
                 name = next((n for n in src.files if n.lower() in ("video.mp4", "video.m4v")), None)
                 if not name or not mp4_needs_remux(src.head(name)):
                     continue
-                tmpdir = Path(tempfile.mkdtemp(prefix="chc-remux-", dir=config_dir()))
+                tmpdir = Path(tempfile.mkdtemp(prefix="chc-remux-", dir=cache_dir()))
                 try:
                     a, b = tmpdir / "in.mp4", tmpdir / "out.mp4"
                     a.write_bytes(src.read(name))
@@ -352,7 +352,7 @@ def current_video_codec(song: Song, store: Store) -> str:
 # Videos fetched for the Now Playing screen while a song is being played. The song's
 # own files can't be changed while the game plays it; the job afterwards reuses these.
 def video_cache_dir() -> Path:
-    d = config_dir() / "video-cache"
+    d = cache_dir() / "video-cache"          # OS temp dir, wiped at every start (paths.wipe_cache)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -391,8 +391,11 @@ def fetch_preview_video(song: Song, yt: YouTube, store: Store, progress=None) ->
             vid = store.song(song.key).get("video_id")
             dst = video_cache_dir() / f"{vid}{vpath.suffix.lower()}"
             tmp = dst.with_suffix(".part")
-            shutil.copyfile(vpath, tmp)
-            os.replace(tmp, dst)
+            try:
+                shutil.copyfile(vpath, tmp)
+                os.replace(tmp, dst)
+            finally:
+                tmp.unlink(missing_ok=True)
             return dst
         finally:
             shutil.rmtree(vpath.parent, ignore_errors=True)
@@ -448,7 +451,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
         if not order:
             _remember_failure(store, song, bkey, "no matching music video on YouTube")
             raise InGameError("no matching music video found on YouTube")
-    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
+    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
 
     def prog(done, total):
         if progress and total:
@@ -602,7 +605,7 @@ def auto_lyrics_offset(song: Song, entry: dict, yt: YouTube) -> float | None:
     (same duration), cross-correlate it with the chart audio and return the shift to
     apply to the lyrics. Falls back to matching the chart's vocal stem."""
     from . import align
-    tmp = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
+    tmp = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
     try:
         chart = _audio_paths(song, align.chart_audio_files(song.list_files()), tmp)
         if not chart:
@@ -775,7 +778,7 @@ def _convert_existing_to_webm(song: Song, progress=None) -> Path | None:
     src = song.local_video()
     if not src:
         return None
-    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=config_dir()))
+    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
     out = tmpdir / "video.webm"
     try:
         if progress:
@@ -796,8 +799,11 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
                 old.unlink()
         dst = song.path / ("video" + vpath.suffix.lower())
         tmp = song.path / ".chc-video.tmp"
-        shutil.copyfile(vpath, tmp)
-        os.replace(tmp, dst)
+        try:
+            shutil.copyfile(vpath, tmp)
+            os.replace(tmp, dst)
+        finally:
+            tmp.unlink(missing_ok=True)
         want = vpath.stat().st_size
         try:
             got = dst.stat().st_size
@@ -825,8 +831,11 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
 
 def _atomic_write(p: Path, data: bytes) -> None:
     tmp = p.with_name(p.name + ".chc-tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, p)
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _apply_sng(song: Song, vpath: Path | None, lines, off_l, off_v, result):

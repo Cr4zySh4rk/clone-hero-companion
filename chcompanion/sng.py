@@ -93,6 +93,15 @@ def write_sng(path: str, metadata: dict[str, str], files: dict[str, bytes | str]
         off += sz
     mask = os.urandom(16)
     tmp = path + ".chc-tmp"
+    try:
+        _write_sng_tmp(tmp, src, mask, meta_sec, names, sizes, files, index_len, index)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _write_sng_tmp(tmp, src, mask, meta_sec, names, sizes, files, index_len, index):
     with open(tmp, "wb") as out:
         out.write(b"SNGPKG" + struct.pack("<I", 1) + mask)
         out.write(meta_sec)
@@ -110,7 +119,6 @@ def write_sng(path: str, metadata: dict[str, str], files: dict[str, bytes | str]
                 # un-mask with the source key, re-mask with ours
                 plain = _xor(raw, src.xor_mask)
                 out.write(_xor(plain, mask))
-    os.replace(tmp, path)
 
 
 def _xor(data: bytes, mask: bytes) -> bytes:

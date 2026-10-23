@@ -67,7 +67,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         elif act == "enable":
             n = lm.disable(ids, enable=True)
         elif act == "delete":
-            n = lm.delete(ids)
+            # big deletes take a while (one Trash call per chart): run in the background, the UI polls
+            return _json(h, {"ok": True, "op": lm.start_delete(ids, after=c.build_preview_index)}) or True
         elif act == "rename":
             n = lm.rename(ids, body.get("template") or "{artist} - {name}")
         elif act == "restore":
@@ -88,9 +89,12 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             lm.set_flag(ids, game_skip=bool(body.get("value", True)) or None)
         else:
             return _json(h, {"error": "unknown action"}, 400) or True
-        if act in ("disable", "enable", "delete", "rename"):
+        if act in ("disable", "enable", "rename"):
             c.build_preview_index()
         return _json(h, {"ok": True, "count": n}) or True
+    if path == "/api/songs/op" and method == "POST":
+        st = lm.op_status(body.get("id") or "")
+        return _json(h, st if st else {"error": "unknown operation"}, 200 if st else 404) or True
     if path == "/api/duplicates":
         return _json(h, {"groups": lm.duplicates()}) or True
 
@@ -465,7 +469,7 @@ def _chart_preview(h, url: str, start: float):
     import urllib.request
     from .align import chart_audio_files, ffmpeg_path
     from .net import urlopen
-    from .paths import config_dir
+    from .paths import cache_dir, config_dir
     from .sng import open_sng
     if not url.startswith("https://files.enchor.us/") or not url.endswith(".sng"):
         h._send(400, b"", "text/plain")
@@ -489,7 +493,7 @@ def _chart_preview(h, url: str, start: float):
     if not names or not ff:
         h._send(404, b"", "text/plain")
         return
-    tmpd = Path(tempfile.mkdtemp(prefix="chc-pv-", dir=config_dir()))
+    tmpd = Path(tempfile.mkdtemp(prefix="chc-pv-", dir=cache_dir()))
     cmd = [ff, "-hide_banner", "-loglevel", "error"]
     for n in names:
         p = tmpd / n

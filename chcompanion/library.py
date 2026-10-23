@@ -198,6 +198,48 @@ class Song:
         return []
 
 
+def iter_chart_files(root: Path):
+    """Yield (song.ini, None) / (None, x.sng) under root. Skips the app's own cache/temp folders and
+    artefacts (*.part, *.chc-backup, *.chc-tmp, *.tmp ...), so nothing the app writes is ever indexed."""
+    import os
+    from .paths import cache_dir, config_dir, is_artefact_dir, is_artefact_name
+    skip = set()
+    for d in (cache_dir, config_dir):
+        try:
+            skip.add(os.path.normcase(os.path.realpath(d())))
+        except OSError:
+            pass
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not is_artefact_dir(d)
+                   and os.path.normcase(os.path.realpath(os.path.join(dirpath, d))) not in skip]
+        for f in files:
+            if is_artefact_name(f):
+                continue
+            if f == "song.ini":
+                yield Path(dirpath) / f, None
+            elif f.endswith(".sng"):
+                yield None, Path(dirpath) / f
+
+
+def sweep_temp_files(roots) -> int:
+    """Startup: delete the app's own leftover temp files in song folders (.chc-video.tmp, *.chc-tmp).
+    Never touches *.chc-backup (the user's chart backups)."""
+    import os
+    from .paths import TEMP_SWEEP_NAMES, is_artefact_dir
+    n = 0
+    for root in roots:
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not is_artefact_dir(d)]
+            for f in files:
+                if f in TEMP_SWEEP_NAMES or f.endswith(".chc-tmp"):
+                    try:
+                        os.unlink(os.path.join(dirpath, f))
+                        n += 1
+                    except OSError:
+                        pass
+    return n
+
+
 class Library:
     def __init__(self, roots: list[Path]):
         self.roots = roots
@@ -210,12 +252,15 @@ class Library:
         t0 = time.time()
         songs: list[Song] = []
         for root in self.roots:
-            for ini in root.rglob("song.ini"):
+            inis, sngs = [], []
+            for ini, sng in iter_chart_files(root):
+                (inis if ini else sngs).append(ini or sng)
+            for ini in inis:
                 try:
                     songs.append(Song(ini.parent, False, parse_ini(_read_text(ini))))
                 except Exception as e:
                     log.debug("bad ini %s: %s", ini, e)
-            for sng in root.rglob("*.sng"):
+            for sng in sngs:
                 try:
                     songs.append(Song(sng, True, open_sng(str(sng)).metadata))
                 except Exception as e:

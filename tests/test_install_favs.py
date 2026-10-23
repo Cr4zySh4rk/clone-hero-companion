@@ -163,7 +163,7 @@ class TrashTests(Harness):
         cs.sync_favorites()
         self.assertEqual(len(remote), 1)
         with mock.patch.dict("sys.modules", {"send2trash": None}):          # force the "Deleted Songs" fallback
-            self.assertEqual(self.lm.delete([api.song_id(h)]), 1)
+            self.assertEqual(self.lm.delete([api.song_id(h)])["deleted"], 1)
         self.assertEqual(cs.state["tombstones"], {})
         cs.sync_favorites()
         cs.sync_favorites()
