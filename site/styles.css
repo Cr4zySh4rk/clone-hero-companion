@@ -136,3 +136,12 @@ footer p{margin:0;max-width:70ch}
 
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
 @media(max-width:700px){#highway{opacity:.3}}
+.tour-link{text-align:center;margin:14px 0 0;font-size:.9rem;color:var(--mute)}
+.tour video.shot{display:block;height:auto;aspect-ratio:960/584}
+picture{display:block}
+picture>.shot{display:block;width:100%;height:auto}
+.shot{height:auto}
+.faq h2{margin-bottom:28px}
+.faq .qa{padding:22px 26px;margin:0 0 14px;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
+.faq h3{font:700 1.15rem/1.3 var(--body);text-transform:none;letter-spacing:0;margin:0 0 8px}
+.faq p{margin:0;color:var(--mute)}
