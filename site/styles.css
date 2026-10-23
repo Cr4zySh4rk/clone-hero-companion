@@ -145,3 +145,33 @@ picture>.shot{display:block;width:100%;height:auto}
 .faq .qa{padding:22px 26px;margin:0 0 14px;border-radius:14px;background:var(--panel);border:1px solid var(--line)}
 .faq h3{font:700 1.15rem/1.3 var(--body);text-transform:none;letter-spacing:0;margin:0 0 8px}
 .faq p{margin:0;color:var(--mute)}
+
+/* brand line inside the home h1 */
+.hero h1 .brandline{display:block;font-size:.3em;line-height:1;letter-spacing:.14em;color:var(--yellow);margin:0 0 .55em}
+
+/* guide page */
+.guide{padding:clamp(48px,8vw,100px) 0}
+.guide .wrap{max-width:820px}
+.guide h1{font-size:clamp(2.8rem,8vw,5rem);margin-bottom:22px;line-height:.95}
+.guide h2{font-size:clamp(2rem,5vw,2.9rem);margin:2.2em 0 .5em;scroll-margin-top:84px}
+.guide h3{font:700 1.2rem/1.3 var(--body);text-transform:none;letter-spacing:0;margin:1.6em 0 .4em}
+.guide p,.guide li{color:var(--mute)}
+.guide li{margin:.5em 0}
+.guide strong,.guide kbd{color:var(--text)}
+.guide .lede{max-width:none}
+.guide ol,.guide ul{padding-left:1.4em}
+.toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 24px;margin:28px 0 0}
+.toc b{display:block;margin-bottom:6px;color:var(--text)}
+.toc ol{margin:0}
+.guide figure{margin:1.4em 0}
+.guide figcaption{color:var(--mute);font-size:.9rem;margin-top:8px}
+.guide .note{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:10px;padding:14px 18px;margin:1.2em 0}
+.guide .note p{margin:0}
+.tblwrap{overflow-x:auto;margin:1.2em 0}
+.guide table{border-collapse:collapse;width:100%;min-width:520px;font-size:.95rem}
+.guide th,.guide td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--mute)}
+.guide th{color:var(--text)}
+.guide .cta-row{margin:2.4em 0 0}
+.guide .cta-row .btn{display:inline-flex;width:auto;font-size:1.5rem;padding:16px 26px}
+.crumbs{font-size:.9rem;color:var(--mute);margin:0 0 14px}
+.crumbs a{color:var(--mute)}

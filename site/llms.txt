@@ -1,0 +1,50 @@
+# Clone Hero Companion
+
+> Clone Hero Companion (also called CH Companion) is a free, open source desktop app for Clone Hero that adds synced HD music video backgrounds and sing-along lyrics to your songs, manages your song library, and downloads charts from Chorus Encore and RhythmVerse. It runs on macOS, Windows and Linux. It is an independent community project by Cr4zySh4rk and is not affiliated with Clone Hero or its developers.
+
+## What it does
+
+- Music videos: finds the official YouTube music video for each song, downloads it and lines it up with the chart by matching the video's soundtrack against the chart audio. Only 640p or better is accepted (720p preferred, 1080p optional).
+- Lyrics: charts with a vocals part already show lyrics; for the rest, time-synced lyrics from LRCLIB are written into the chart and aligned to the chart's audio.
+- Library manager: fast list for thousands of songs, filters (no video, low-res video, no lyrics, favourites, recently added, disabled), one-click metadata (album, year, genre, length, album art), per-song sync editor, duplicate finder, setlists, chart pack export.
+- Chart downloader: search Chorus Encore and RhythmVerse, preview audio, one-click install of .sng, .zip and .7z, Spotify playlist import.
+- Favourites and stats: favourites become a Favourites setlist inside Clone Hero; optional account syncs favourites and play stats; read-only CH Leaderboards scores.
+- Works while you play: follows Clone Hero's log file and prepares a song as soon as you highlight it; a Now Playing screen shows video and lyrics in sync.
+
+## Platforms
+
+- macOS 11 or newer (universal build, Apple Silicon and Intel)
+- Windows 10 and 11
+- Linux x64 (videos are saved as VP8 .webm, the format Clone Hero plays on Linux)
+
+## Download and source
+
+- [Download the latest release](https://github.com/Cr4zySh4rk/clone-hero-companion/releases/latest): free, no ads, everything bundled (ffmpeg and yt-dlp included)
+- [Website](https://cloneherocompanion.com/)
+- [Source code on GitHub (GPL-3.0)](https://github.com/Cr4zySh4rk/clone-hero-companion)
+- [Report a bug or request a feature](https://github.com/Cr4zySh4rk/clone-hero-companion/issues)
+
+## Guides
+
+- [Guide: music videos, lyrics, chart downloads and library tips for Clone Hero](https://cloneherocompanion.com/guide.html)
+- [How to add music videos to Clone Hero](https://cloneherocompanion.com/guide.html#add-music-videos)
+- [How to add lyrics to Clone Hero songs](https://cloneherocompanion.com/guide.html#add-lyrics)
+- [How to download Clone Hero charts from Chorus Encore and RhythmVerse](https://cloneherocompanion.com/guide.html#download-charts)
+- [Clone Hero video background formats (WebM and MP4, per operating system)](https://cloneherocompanion.com/guide.html#video-formats)
+- [Organise a big Clone Hero library: duplicates, setlists and favourites](https://cloneherocompanion.com/guide.html#organise-library)
+
+## FAQ
+
+- Is Clone Hero Companion free? Yes. It is free and open source under the GPL-3.0 licence, with no ads and no paid tier.
+- Which systems does it support? macOS 11 or newer (Apple Silicon and Intel), Windows 10 and 11, and Linux x64.
+- How do I add music videos to Clone Hero? Install the app, point it at your Clone Hero songs folder, select songs in the library and press Run. It finds a video for each song, downloads it and syncs it to the chart. Then turn on Settings, Custom Content, Song Videos in Clone Hero.
+- Where do the videos come from? YouTube. Only results of 640p or better are accepted, so low-quality uploads and album-art slideshows are skipped. You can also paste your own YouTube link for a song.
+- Does it modify my charts? Only when it has to, and never without a backup. Videos are placed next to the chart. Lyrics are written into the chart only for songs that have none, and that can be switched off. Every change is backed up first and Undo restores the originals. Adding lyrics changes the chart file, so Clone Hero starts a fresh high-score list for that chart.
+- Do I need an account? No. Everything works signed out and offline. An optional account only syncs favourites and play stats between computers.
+- Is it affiliated with Clone Hero? No. It is an independent community project.
+
+## Optional
+
+- [Privacy policy](https://cloneherocompanion.com/privacy.html)
+- [Full documentation as plain text](https://cloneherocompanion.com/llms-full.txt)
+- [README on GitHub](https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/README.md)

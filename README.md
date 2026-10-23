@@ -4,7 +4,9 @@
 
 # Clone Hero Companion
 
-**HD music videos and sing-along lyrics for every song in [Clone Hero](https://clonehero.net),<br>plus the library manager and chart downloader you always wanted, in one app.**
+**Website & downloads: [cloneherocompanion.com](https://cloneherocompanion.com)**
+
+**Clone Hero Companion adds HD music videos and sing-along lyrics to every song in [Clone Hero](https://clonehero.net),<br>plus the library manager and chart downloader you always wanted, in one app.**
 
 [![Latest release](https://img.shields.io/github/v/release/Cr4zySh4rk/clone-hero-companion?style=flat-square&color=ffb52e&label=download)](https://github.com/Cr4zySh4rk/clone-hero-companion/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Cr4zySh4rk/clone-hero-companion/total?style=flat-square&color=3cc85a)](https://github.com/Cr4zySh4rk/clone-hero-companion/releases)

@@ -1,0 +1,108 @@
+# Clone Hero Companion
+
+> Clone Hero Companion (also called CH Companion) is a free, open source desktop app for Clone Hero that adds synced HD music videos and lyrics to your songs, manages your song library and downloads charts. Website: https://cloneherocompanion.com/ . Source: https://github.com/Cr4zySh4rk/clone-hero-companion . Author: Cr4zySh4rk (https://github.com/Cr4zySh4rk). Licence: GPL-3.0. Independent community project, not affiliated with Clone Hero or its developers.
+
+## Why
+
+Clone Hero can play a background video behind the highway and show lyrics, but most charts ship with neither. Finding the right music video, getting it in decent quality, lining it up with the chart's audio and adding lyrics is a lot of manual work per song. Clone Hero Companion does it for your whole library in one go, and keeps doing it for every new song while you play.
+
+## Features
+
+### HD music videos behind the highway
+Select any number of songs and press Run. For each song the app finds the official music video on YouTube, downloads it and lines it up with the chart by matching the video's soundtrack against the chart audio. Only 640p or better is ever accepted (720p preferred, 1080p optional): no blurry 360p uploads and no static album-art videos.
+
+### Lyrics in the game
+Charts with a vocals part already show lyrics. For the rest, time-synced lyrics from LRCLIB (https://lrclib.net) are written into the chart and aligned to the chart's own audio, so Clone Hero shows them in-game.
+
+### A real library manager
+- Fast virtualized list for thousands of songs: album art, instruments, video quality, lyrics status
+- Search, filters (No video, Video below 640p, No lyrics, Favourites, Recently added, Disabled) and sorting on every column
+- Multi-select with click, Cmd/Ctrl-click, Shift-click and Cmd/Ctrl-A
+- One-click metadata: album, year, genre, length and high-resolution album art from Chorus Encore and iTunes
+- Disable songs (moved out of the game's way), Move to Trash, rename folders by template, export chart packs (.zip)
+- Per-song sync editor with live video and audio preview, plus a video picker that only offers HD candidates
+- Built-in player to listen to any chart's audio
+
+### Favourites, also in the game
+Star songs with one click (or press F). The app keeps a Favourites setlist in sync, so the same list is one click away inside Clone Hero.
+
+### Get charts
+- Search Chorus Encore and RhythmVerse with instrument, difficulty and sort filters, and preview a chart's audio before downloading
+- One-click download and install of .sng, .zip and .7z (and .rar when an unrar tool or 7-Zip is installed), including Google Drive, Mediafire and Dropbox links
+- New charts can get their video, lyrics and metadata right after downloading
+- Spotify import: paste a public playlist link and the app finds a chart for every song and marks the ones you already have
+
+### Profile, cloud sync and CH Leaderboards
+- Optional account. Sign in from the Profile page with Google, or with a 6-digit code sent to your email. Everything keeps working signed out and offline.
+- Favourites sync both ways between computers. The Favourites view lists "In your cloud, not on this machine" with Install all, which finds each chart and downloads it.
+- Play stats. After every song Clone Hero writes scorestats.json; the app records each play on your computer and, when signed in, merges plays from all your machines. Profile shows plays, hours, accuracy, full combos, streaks, a 26-week activity map, most played / best / needs practice lists and personal bests, filterable by instrument and difficulty.
+- CH Leaderboards (read-only). Song panels and the Now playing screen show the global top scores, plus your rank once you link your CH Leaderboards username. Scores cannot be submitted from this app.
+
+### Fast, parallel batch processing
+A pool of worker threads processes songs in parallel; you choose how many. YouTube requests are paced across all workers, and the app backs off and retries on its own when YouTube pushes back.
+
+### Duplicates and setlists
+Find the same song charted more than once and keep the one you want. Create and edit Clone Hero setlists straight from your library.
+
+### Works while you play
+The app follows the game through its log file. It starts preparing a song as soon as you highlight it in Clone Hero's song list, and every song you play is ready next time. For a second monitor, a TV or a stream, the karaoke-style Now Playing screen shows the video and lyrics in sync with the game, in its own window or fullscreen.
+
+## Download
+
+Latest release: https://github.com/Cr4zySh4rk/clone-hero-companion/releases/latest
+
+- macOS 11 or newer, Apple Silicon and Intel: CloneHeroCompanion-macOS-universal.dmg
+- Windows 10 / 11: CloneHeroCompanion-windows-x64.exe
+- Linux x64: CloneHeroCompanion-linux-x64.tar.gz
+
+Everything is included (ffmpeg and yt-dlp, which keeps itself up to date). Nothing else to install.
+
+macOS first launch: open the .dmg and drag Clone Hero Companion to Applications. The app is not notarized by Apple, so the first time, right-click it and choose Open, then Open again. If macOS says the app "is damaged", run once in Terminal: xattr -cr "/Applications/Clone Hero Companion.app" . Recommended: Game & folders, then Grant Full Disk Access, and switch Clone Hero Companion on.
+
+Windows: run the .exe. SmartScreen may warn because the app isn't code-signed: click More info, then Run anyway. The window uses Microsoft Edge WebView2, which comes with Windows 10/11.
+
+Linux: tar xzf CloneHeroCompanion-linux-x64.tar.gz, then ./CloneHeroCompanion . The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are saved as VP8 .webm, the format Clone Hero plays on Linux.
+
+## Quick start
+
+1. In Clone Hero, turn on Settings, Custom Content, Song Videos (and keep Lyrics on).
+2. Open Clone Hero Companion. The Game & folders screen shows what it found: the game, its data folder (the one with settings.ini and Logs) and your song folders. Confirm them, or Browse to any other location or drive.
+3. Select songs (or Cmd/Ctrl-A for everything shown), press Run, choose what to get (video, lyrics, metadata) and Start.
+4. Keep the app open while you play: new songs get prepared as you browse.
+
+After downloading new charts, run Settings, Scan Songs in Clone Hero so the game sees them. Setlist changes show after restarting the game.
+
+## FAQ
+
+Q: Will it mess up my songs or my scores?
+A: Every file the app changes is backed up first (*.chc-backup next to it), and Undo changes puts the originals back. Videos, video alignment and metadata don't affect scores. Adding lyrics changes the chart file, so Clone Hero starts a fresh high-score list for that chart (your old scores come back if you undo). To leave charts untouched, turn off Settings, In the game, Lyrics. For song folders the video is saved as video.mp4 (H.264), or video.webm (VP8) on Linux, with the alignment stored as video_start_time in song.ini. For .sng packages the video is added inside the package.
+
+Q: Why does it skip some videos?
+A: Quality is measured the way YouTube labels it, max(height, width x 9/16), so a widescreen 1280x526 video counts as 720p, while 854x480, 640x480 and smaller are rejected. Still-image uploads (album-art videos) are skipped too. When no candidate is 640p or better, the song is marked "none found" instead of getting a bad video. You can always paste a YouTube link of your own in the song panel.
+
+Q: The video or lyrics are a bit early or late.
+A: Videos are lined up by comparing the video's soundtrack with the chart's audio stems in three windows of the song, and an offset is only used when they agree. Some live or extended versions can't be matched. Select the song, press Preview, drag the Video or Lyrics slider until it lines up and press Save sync to game.
+
+Q: Where is my Clone Hero folder?
+A: The app finds it automatically in most cases. Usually it's ~/Clone Hero on macOS, Documents\Clone Hero on Windows (possibly inside OneDrive), and ~/.clonehero on Linux. Portable installs keep it next to the game. You can point the app anywhere on the Game & folders screen.
+
+Q: Does it send my data anywhere?
+A: No telemetry. The app only talks to the services it gets content from: YouTube (videos), LRCLIB (lyrics), Chorus Encore, RhythmVerse and iTunes (charts and metadata), and Spotify for playlists you paste. An account is optional; see https://cloneherocompanion.com/privacy.html .
+
+Q: Is there a command line?
+A: Yes. CloneHeroCompanion prepare [FILTER...] [--no-video] [--no-lyrics] [--force] [--dry-run]; CloneHeroCompanion restore [FILTER...]; CloneHeroCompanion doctor [--report FILE]; CloneHeroCompanion run [--no-browser] [--host 0.0.0.0] [--port 47823] (background service only). With --host 0.0.0.0 the Now Playing screen can be opened from a TV, phone or OBS at http://<your-computer>:47823/now .
+
+Q: How does it know what I'm playing?
+A: Clone Hero writes <data folder>/Logs/Session-*.log. "Loading Song: Artist - Name" marks a song start, seeks while playing are pauses, and seeks in the menus match a song's preview_start_time, which is how the app knows what's highlighted in the song list.
+
+## Credits
+
+Clone Hero Companion brings together ideas and features from three community projects: Bridge by christopherwk210 (library management and Chorus browsing), Clone Hero Chart Manager by xlzipx (Encore and RhythmVerse search and download, Spotify import, setlists, duplicates) and BackstageHero by jmb988 (background videos lined up by audio, self-updating yt-dlp, rate-limit handling). Built on yt-dlp, FFmpeg, LRCLIB, Chorus Encore, RhythmVerse and pywebview.
+
+Clone Hero Companion is a fan-made tool and isn't affiliated with Clone Hero or its developers. Videos and lyrics are downloaded for your personal use; please respect the rights of the artists.
+
+## More
+
+- Guide: https://cloneherocompanion.com/guide.html
+- Short index: https://cloneherocompanion.com/llms.txt
+- Source and issues: https://github.com/Cr4zySh4rk/clone-hero-companion
