@@ -40,6 +40,25 @@ class Present(Base):
         self.assertEqual(len(self.lm.missing_favs()), 1)
         self.assertEqual(self.favs(), [])
 
+    def test_empty_charter_unique_match_merges_ambiguous_does_not(self):
+        add_chart(self.data / "Songs", "Guns/GNR - Jungle", "Guns N' Roses", "Welcome to the Jungle", "Unknown Charter", "g")
+        self.lm.rescan()
+        key = stale_record(self.lm, artist="Guns N' Roses", name="Welcome to the Jungle", charter="")
+        self.assertEqual(self.lm.missing_favs(), [])
+        self.assertNotIn(key, self.store.get("favs"))
+        self.assertEqual(self.favs(), ["Unknown Charter"])
+        # two charters of the same song: don't guess
+        stale_record(self.lm, key="k2", charter="")
+        self.assertEqual([r["song_key"] for r in self.lm.missing_favs()], ["k2"])
+        self.assertEqual(self.favs(), [])
+
+    def test_empty_charter_matches_by_source_md5(self):
+        h = self.chart("Neversoft")
+        md5 = self.lm.chart_key(h, compute=True)
+        stale_record(self.lm, charter="", source={"encore_md5": md5.lower()})
+        self.assertEqual(self.lm.missing_favs(), [])
+        self.assertEqual(self.favs(), ["Neversoft"])
+
     def test_best_ranked_among_several(self):
         add_chart(self.data / "Songs", "Demo/Queen - Bohemian Demo", "Queen", "Bohemian (Demo)", "Harmonix", "z")
         key = stale_record(self.lm)

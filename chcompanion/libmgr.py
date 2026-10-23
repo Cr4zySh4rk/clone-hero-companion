@@ -506,31 +506,33 @@ class LibraryManager:
     # ---- a favourite whose record is stale (older copy's md5, old path) but whose chart is here
     def find_present_chart(self, row: dict) -> Song | None:
         """The library chart that is this favourite/row by md5, else by favmatch (same normalised artist,
-        title and a non-empty charter, the rules the resolver uses). Several: the best ranked."""
+        title and charter, the rules the resolver uses; with no charter recorded only a single match counts). Several: the best ranked."""
         with self.lock:
             songs = list(self.lib.songs)
         return self._match_in(row, songs)
 
     def _match_in(self, row: dict, songs: list[Song]) -> Song | None:
-        md5 = (row.get("md5") or row.get("checksum") or "").upper()
-        if md5:
+        src = row.get("source") or {}
+        md5s = {(m or "").upper() for m in (row.get("md5"), row.get("checksum"), src.get("encore_md5"))} - {""}
+        if md5s:
             for s in songs:
-                if self.chart_md5(s) == md5:
+                if self.chart_md5(s) in md5s:
                     return s
         want_a, want_n, want_c = favmatch.artist_key(row.get("artist") or ""), row.get("name") or "", row.get("charter") or ""
-        if not want_a or not want_n or not favmatch.fold(want_c):
+        if not want_a or not want_n:
             return None
-        want_bad, sets, best = favmatch.is_bad(want_n), self._fav_sets(), None
+        has_c = bool(favmatch.fold(want_c))
+        want_bad, sets, hits = favmatch.is_bad(want_n), self._fav_sets(), []
         for s in songs:
             if favmatch.artist_key(s.artist) != want_a:
                 continue
             tier = favmatch.title_tier(want_n, s.name)
-            if tier is None or not favmatch.charter_ok(want_c, self.charter_of(s)):
+            if tier is None or (has_c and not favmatch.charter_ok(want_c, self.charter_of(s))):
                 continue
-            score = (tier, 1 if favmatch.is_bad(s.name) and not want_bad else 0, 0 if self.is_fav(s, sets) else 1, str(s.path))
-            if best is None or score < best[0]:
-                best = (score, s)
-        return best[1] if best else None
+            hits.append(((tier, 1 if favmatch.is_bad(s.name) and not want_bad else 0, 0 if self.is_fav(s, sets) else 1, str(s.path)), s))
+        if not hits or (not has_c and len(hits) > 1):       # no charter to go on: only an unambiguous match
+            return None
+        return min(hits, key=lambda h: h[0])[1]
 
     def adopt_fav(self, old_key: str, s: Song) -> bool:
         """Make chart s the favourite that the missing record old_key stood for: star it (only it) and drop
