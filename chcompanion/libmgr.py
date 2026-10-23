@@ -77,6 +77,10 @@ class LibraryManager:
         if self.disabled_dir.exists():
             self.disabled.scan()
         self._reindex()
+        try:
+            self.backfill_fav_meta()
+        except Exception as e:
+            log.debug("favourite metadata backfill failed: %s", e)
         self.start_enrich()
 
     def _reindex(self):
@@ -289,6 +293,61 @@ class LibraryManager:
         h = self.chart_md5(s)
         return bool((h and h in md5s) or self.chart_pid(s) in pids)
 
+    def source_of(self, s: Song) -> dict:
+        """Where this chart was installed from (Encore md5 / RhythmVerse id, and the download or page url)."""
+        per = self.store.song(s.key)
+        src = {}
+        for out, k in (("encore_md5", "src_encore_md5"), ("url", "src_url"), ("rv_id", "src_rv_id"), ("rv_url", "src_rv_url")):
+            if per.get(k):
+                src[out] = per[k]
+        return src
+
+    def _fav_meta(self, s: Song) -> dict:
+        m = s.meta
+        return {"artist": s.artist, "name": s.name, "charter": self.charter_of(s),
+                "album": strip_tags(m.get("album", "")), "source": self.source_of(s)}
+
+    def _present(self) -> tuple[set, set]:
+        with self.lock:
+            if not self.by_id:
+                self._reindex()
+            songs = list(self.by_id.values())
+        return ({h for h in (self.chart_md5(s) for s in songs) if h}, {self.chart_pid(s) for s in songs})
+
+    def missing_favs(self) -> list[dict]:
+        """Favourites whose chart is not on this machine, as cloud-style rows (kept in the store on purpose:
+        trashing, deleting or losing a folder is not unfavouriting). Needs the metadata captured at star time."""
+        self._ensure_fav_migrated()
+        favs = self.store.get("favs", {}) or {}
+        md5s, pids = self._present()
+        out = []
+        for k, v in favs.items():
+            if (v.get("md5") and v["md5"] in md5s) or v.get("pid") in pids or not (v.get("name") and v.get("artist")):
+                continue
+            out.append({"song_key": k, "checksum": v.get("md5"), "artist": v["artist"], "name": v["name"],
+                        "charter": v.get("charter") or "", "album": v.get("album") or "",
+                        "source": v.get("source") or {}, "local": True})
+        return out
+
+    def backfill_fav_meta(self):
+        """Fill in artist/name/charter/source for favourites starred before they were recorded."""
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            todo = [(k, v) for k, v in favs.items() if not v.get("name")]
+            if not todo:
+                return
+            with self.lock:
+                songs = list(self.by_id.values())
+            changed = False
+            for s in songs:
+                md5, pid = self.chart_md5(s), self.chart_pid(s)
+                for k, v in todo:
+                    if (md5 and v.get("md5") == md5) or v.get("pid") == pid:
+                        favs[k] = {**v, **self._fav_meta(s)}
+                        changed = True
+            if changed:
+                self.store.set("favs", favs)
+
     def set_fav(self, songs: list[Song], value: bool, notify: bool = True, _migrate: bool = True) -> list[Song]:
         """Star or unstar exactly these charts (never their other copies). Returns the charts changed."""
         if _migrate:
@@ -296,17 +355,28 @@ class LibraryManager:
         changed = []
         with self._favs_lock:
             favs = dict(self.store.get("favs", {}) or {})
+            refreshed = False
             for s in songs:
                 md5, pid = self.chart_md5(s, compute=value), self.chart_pid(s)
                 hit = [k for k, v in favs.items() if (md5 and v.get("md5") == md5) or v.get("pid") == pid]
                 if value and not hit:
-                    favs[md5 or pid] = {"md5": md5, "pid": pid, "t": int(time.time())}
+                    meta = self._fav_meta(s)
+                    ident = norm_key(s.display) + "|" + norm_key(meta["charter"])
+                    present = self._present()
+                    for k in [k for k, v in favs.items() if v.get("name") and not (v.get("md5") in present[0] or v.get("pid") in present[1])
+                              and norm_key(f"{v['artist']} - {v['name']}") + "|" + norm_key(v.get("charter") or "") == ident]:
+                        favs.pop(k)         # the missing record of this very chart (reinstalled with another checksum)
+                    favs[md5 or pid] = {"md5": md5, "pid": pid, "t": int(time.time()), **meta}
                     changed.append(s)
+                elif value and hit:
+                    for k in hit:           # keep the stored metadata fresh (e.g. a source recorded after install)
+                        favs[k] = {**favs[k], **self._fav_meta(s)}
+                    refreshed = True
                 elif not value and hit:
                     for k in hit:
                         favs.pop(k, None)
                     changed.append(s)
-            if changed:
+            if changed or refreshed:
                 self.store.set("favs", favs)
         if changed:
             self.save_cache()

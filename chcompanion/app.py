@@ -544,6 +544,9 @@ class Companion:
         for x in new:
             if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
                 self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
+            elif item.get("source") == "rhythmverse":
+                self.store.update_song(x.key, src_rv_id=item.get("id"), src_rv_url=item.get("pageUrl"),
+                                       src_url=item.get("downloadUrl"))
             if job.options.get("mark_fav") and x in fav_targets:      # installed from the cloud favourites list
                 self.libmgr.set_fav([x], True)
                 if job.options.get("fav_key"):

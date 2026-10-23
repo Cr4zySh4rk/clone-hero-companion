@@ -275,8 +275,11 @@ async function startRun(ids = [...st.sel]) {
   const video = $("#optVideo").checked, lyrics = $("#optLyrics").checked, meta = $("#optMeta").checked, force = $("#optForce").checked;
   if (!video && !lyrics && !meta) return toast("Pick at least one thing to get");
   const kind = (video || lyrics) && meta ? "full" : meta ? "metadata" : "media";
-  const r = await api("/api/jobs", { ids, kind, options: { video, lyrics, force } });
-  toast(`Queued ${r.queued} song${r.queued === 1 ? "" : "s"} — see Jobs`);
+  const fav = st.filter === "fav" && cloud.favs.length;
+  const r = await api("/api/jobs", { ids, kind, options: { video, lyrics, force }, installMissing: !!fav });
+  if (r.installing?.queued) toast(`Installing ${r.installing.queued} missing favourite${r.installing.queued === 1 ? "" : "s"}, then running…${r.installing.notFound.length ? ` · ${r.installing.notFound.length} not found on Chorus Encore or RhythmVerse` : ""}`, 5000);
+  else toast(`Queued ${r.queued} song${r.queued === 1 ? "" : "s"} — see Jobs${r.installing?.notFound.length ? ` · ${r.installing.notFound.length} favourites not found on Chorus Encore or RhythmVerse` : ""}`);
+  if (r.installing) loadCloud();
   pollJobs(true);
 }
 $("#selbar").addEventListener("click", async (e) => {
@@ -305,7 +308,7 @@ $("#selbar").addEventListener("click", async (e) => {
     }
     if (act === "delete") {
       if (!await ask({ title: `Move ${ids.length} song${ids.length === 1 ? "" : "s"} to the Trash?`, text: "You can restore them from the Trash.", ok: "Move to Trash", danger: true })) return;
-      const d = await api("/api/songs/action", { ids, action: "delete" }); st.sel.clear(); toast(`Moved ${d.count} to the Trash`);
+      const d = await api("/api/songs/action", { ids, action: "delete" }); st.sel.clear(); toast(`Moved ${d.count} to the Trash`); loadCloud();
     }
   } catch (err) { toast(err.message, 4500); }
 });
@@ -857,7 +860,7 @@ const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 async function loadCloud() {
   try { cloud.status = await api("/api/cloud/status"); } catch (e) { cloud.status = { signedIn: false }; }
-  if (cloud.status.signedIn) { try { cloud.favs = (await api("/api/cloud/favorites")).items; } catch (e) { cloud.favs = []; } } else cloud.favs = [];
+  try { cloud.favs = (await api("/api/cloud/favorites")).items; } catch (e) { cloud.favs = []; }   // signed out too: favourites whose chart was trashed or moved
   renderCloudFavs();
   return cloud.status;
 }
@@ -866,17 +869,17 @@ function renderCloudFavs() {
   box.hidden = !(st.filter === "fav" && items.length);
   if (box.hidden) return;
   const missing = items.filter((i) => i.notFound).length;
-  box.innerHTML = `<header><b>In your cloud, not on this machine (${items.length})</b>
+  box.innerHTML = `<header><b>${cloud.status.signedIn ? "In your cloud, not on this machine" : "Favourites not on this machine"} (${items.length})</b>
       <label class="inline"><input type="checkbox" id="cfProcess" checked> then add video, lyrics and metadata</label>
       <button class="primary" id="cfAll">Install all</button></header>
     <div class="cfgrid">${items.map((i) => `<div class="cf"><div><b>${esc(i.name)}</b><span>${esc(i.artist)}${i.charter ? " · " + esc(i.charter) : ""}</span>
-        ${i.notFound ? "<em>not found on Chorus Encore</em>" : ""}</div><button data-k="${esc(i.key)}">Install</button></div>`).join("")}</div>
-    ${missing ? `<span class="hint">${missing} could not be found on Chorus Encore.</span>` : ""}`;
+        ${i.notFound ? "<em>not found on Chorus Encore or RhythmVerse</em>" : ""}</div><button data-k="${esc(i.key)}">Install</button></div>`).join("")}</div>
+    ${missing ? `<span class="hint">${missing} could not be found on Chorus Encore or RhythmVerse.</span>` : ""}`;
   const go = async (keys, btn) => {
     btn.disabled = true;
     try {
       const r = await api("/api/cloud/favorites/install", { keys, process: $("#cfProcess").checked });
-      toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${r.notFound.length ? ` · ${r.notFound.length} not found on Chorus Encore` : ""}${r.failed ? ` · ${r.failed} could not be looked up (offline?)` : ""}`, 5000);
+      toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${r.notFound.length ? ` · ${r.notFound.length} not found on Chorus Encore or RhythmVerse` : ""}${r.failed ? ` · ${r.failed} could not be looked up (offline?)` : ""}`, 5000);
       pollJobs(true); await loadCloud();
     } catch (e) { toast(e.message, 4500); }
     btn.disabled = false;

@@ -105,10 +105,16 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         prio = PRIO_USER if len(body.get("ids") or []) <= 3 else PRIO_BATCH
         opts = body.get("options") or {}
         n = 0
+        extra = {}
+        if body.get("installMissing"):
+            # Run in Favourites: install the missing favourites first. Their download jobs add video, lyrics
+            # and metadata themselves (process=True), so only the charts already here are queued below.
+            if _missing_favs(c):
+                extra = {"installing": _install_cloud_favs(c, {"process": True})}
         for s in lm.songs(body.get("ids") or []):
             c.queue_song(s, kind, prio, **opts)
             n += 1
-        return _json(h, {"queued": n}) or True
+        return _json(h, {"queued": n, **extra}) or True
     if path == "/api/jobs/cancel" and method == "POST":
         c.jobs.cancel(body.get("id"))
         return _json(h, {"ok": True}) or True
@@ -309,7 +315,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             threading.Thread(target=c.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/favorites" and method == "GET":
-        return _json(h, {"items": [_cloud_fav(r, c) for r in c.cloudsync.cloud_only]}) or True
+        return _json(h, {"items": [_cloud_fav(r, c) for r in _missing_favs(c)]}) or True
     if path == "/api/cloud/favorites/install" and method == "POST":
         return _json(h, _install_cloud_favs(c, body)) or True
 
@@ -568,6 +574,21 @@ def _auth_callback(h, c, q: dict):
     h._send(200 if ok else 400, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
 
 
+def _missing_favs(c) -> list[dict]:
+    """Favourites not on this machine: cloud rows with no local chart (signed in) plus the ones kept in the
+    local store (trashed or moved away; works signed out)."""
+    rows = list(c.cloudsync.cloud_only) if c.cloud.signed_in else []
+    have_k = {r["song_key"] for r in rows}
+    have_c = {(r.get("checksum") or "").upper() for r in rows} - {""}
+    have_i = {norm_key(f"{r.get('artist', '')} - {r.get('name', '')}") + "|" + norm_key(r.get("charter") or "") for r in rows}
+    for r in c.libmgr.missing_favs():
+        ident = norm_key(f"{r['artist']} - {r['name']}") + "|" + norm_key(r.get("charter") or "")
+        if r["song_key"] in have_k or (r.get("checksum") or "").upper() in have_c or ident in have_i:
+            continue
+        rows.append(r)
+    return rows
+
+
 def _cloud_fav(r: dict, c) -> dict:
     nf = c.cloudsync.not_found
     return {"key": r["song_key"], "artist": r.get("artist"), "name": r.get("name"), "charter": r.get("charter"),
@@ -575,17 +596,17 @@ def _cloud_fav(r: dict, c) -> dict:
 
 
 def _install_cloud_favs(c, body: dict) -> dict:
-    """Resolve cloud-only favourites on Chorus Encore and queue their downloads."""
-    from .cloud import resolve_on_encore
+    """Resolve missing favourites (recorded source, then Chorus Encore, then RhythmVerse) and queue their downloads."""
+    from .cloud import resolve_favourite
     keys = set(body.get("keys") or [])
-    rows = [r for r in c.cloudsync.cloud_only if not keys or r["song_key"] in keys]
+    rows = [r for r in _missing_favs(c) if not keys or r["song_key"] in keys]
     process = body.get("process", c.settings()["auto_process_downloads"])
 
     def one(r):
         try:
-            return r, resolve_on_encore(r)
+            return r, resolve_favourite(r)
         except Exception as e:
-            log.info("Encore lookup failed for %s: %s", r.get("name"), e)
+            log.info("Chart lookup failed for %s: %s", r.get("name"), e)
             return r, False
 
     queued, missing, failed = 0, [], 0

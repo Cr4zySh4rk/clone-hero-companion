@@ -312,12 +312,7 @@ class CloudSync:
 
     def _record(self, s) -> dict:
         m = s.meta
-        src = {}
-        per = self.store.song(s.key)
-        if per.get("src_encore_md5"):
-            src["encore_md5"] = per["src_encore_md5"]
-        if per.get("src_url"):
-            src["url"] = per["src_url"]
+        src = self.lm.source_of(s)
         return {"song_key": self.fav_key_of(s), "checksum": self.lm.chart_md5(s),
                 "artist": s.artist, "name": s.name, "charter": strip_tags(m.get("charter", "") or m.get("frets", "")),
                 "album": strip_tags(m.get("album", "")), "source": src}
@@ -344,6 +339,13 @@ class CloudSync:
         for s in self._songs():
             if self.lm.is_fav(s, sets):
                 out.setdefault(self.fav_key_of(s), self._record(s))
+        return out
+
+    def missing_local_favourites(self) -> dict[str, dict]:
+        """Favourites in the store whose chart is not on this machine (trashed, moved away), as cloud rows."""
+        out = {}
+        for r in self.lm.missing_favs():
+            out.setdefault(r["song_key"], r)
         return out
 
     # ------------------------------------------------------------ favourites: change hook
@@ -457,8 +459,16 @@ class CloudSync:
             remote.pop(k, None)
             self.state.get("aliases", {}).pop(k, None)
         local = self.local_favourites()
+        synced_before = set(self.state.get("synced") or [])
+        for k, r in self.missing_local_favourites().items():       # a trashed chart stays a favourite in the cloud
+            if k not in synced_before and not self.is_legacy_key(k):
+                local.setdefault(k, r)
+
+        def newer_source(k, r):
+            have = (remote.get(k) or {}).get("source") or {}
+            return any(v and have.get(sk) != v for sk, v in (r.get("source") or {}).items())
         up = [r for k, r in local.items()
-              if k not in remote or (r["checksum"] and not remote[k].get("checksum"))]
+              if k not in remote or (r["checksum"] and not remote[k].get("checksum")) or newer_source(k, r)]
         if up:
             c.rest("POST", "favorites", {"on_conflict": "user_id,song_key"}, up,
                    "resolution=merge-duplicates,return=minimal")
@@ -600,3 +610,68 @@ def resolve_on_encore(row: dict, search=None) -> dict | None:
             best = r
             break
     return best
+
+
+def _rv_hashes(r: dict) -> set:
+    return {h.lower() for h in (r.get("hashes") or []) if h}
+
+
+def resolve_on_rhythmverse(row: dict, search=None) -> dict | None:
+    """Find the RhythmVerse chart for a cloud favourite: the recorded RhythmVerse file id if it is among the
+    results, else the result with the same artist, title and charter (colour tags stripped). A checksum the
+    result exposes is used to prefer the confirmed file. Never returns a chart by another charter."""
+    if search is None:
+        from .sources import rhythmverse
+        search = rhythmverse.search
+    src = row.get("source") or {}
+    want_a, want_n = norm_key(row.get("artist") or ""), norm_key(row.get("name") or "")
+    want_c = norm_key(strip_tags(row.get("charter") or ""))
+    want_id = src.get("rv_id") or ""
+    md5s = {(row.get("checksum") or "").lower(), (src.get("encore_md5") or "").lower()} - {""}
+    match = confirmed = None
+    for q in dict.fromkeys(x for x in (row.get("name"), row.get("artist")) if x):
+        for r in search(q, per_page=100).get("songs") or []:
+            if not r.get("downloadUrl") or r.get("needsConversion"):
+                continue
+            if want_id and r.get("id") == want_id:
+                return r
+            if norm_key(r.get("name") or "") != want_n or norm_key(r.get("artist") or "") != want_a:
+                continue
+            if not want_c or norm_key(strip_tags(r.get("charter") or "")) != want_c:
+                continue
+            if md5s & _rv_hashes(r):
+                confirmed = confirmed or r
+            match = match or r
+        if confirmed:
+            break
+        if match:
+            break
+    return confirmed or match
+
+
+def source_order(row: dict) -> list[str]:
+    """Where to look first: the place the chart was recorded as coming from, then the other one."""
+    src = row.get("source") or {}
+    from_rv = bool(src.get("rv_id") or "rhythmverse" in (src.get("rv_url") or "").lower()
+                   or "rhythmverse" in (src.get("url") or "").lower())
+    return ["rhythmverse", "encore"] if from_rv and not src.get("encore_md5") else \
+        ["encore", "rhythmverse"]
+
+
+def resolve_favourite(row: dict, encore_search=None, rv_search=None) -> dict | None:
+    """Resolve a favourite to an installable chart: recorded source first, then Chorus Encore, then
+    RhythmVerse. None when no source has it by the same charter. Raises only when nothing matched and a
+    lookup failed (so 'not found' is never claimed after an outage)."""
+    errors = []
+    for name in source_order(row):
+        try:
+            item = resolve_on_encore(row, encore_search) if name == "encore" else resolve_on_rhythmverse(row, rv_search)
+        except Exception as e:
+            log.info("%s lookup failed for %s: %s", name, row.get("name"), e)
+            errors.append(e)
+            continue
+        if item:
+            return item
+    if errors:
+        raise errors[0]
+    return None

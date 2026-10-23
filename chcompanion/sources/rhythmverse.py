@@ -98,6 +98,7 @@ def normalize(song: dict) -> dict:
         "pageUrl": f.get("download_page_url_full") or _abs(f.get("download_page_url")),
         "format": fmt, "needsConversion": fmt in CONVERT_FORMATS, "size": _num(f.get("size")),
         "downloads": _num(f.get("downloads")), "fileName": f.get("file_name"),
+        "hashes": [str(f[k]).lower() for k in ("gameplay_file_hash", "configuration_file_hash", "gamefile_hash") if f.get(k)],
     }
 
 

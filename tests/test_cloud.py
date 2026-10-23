@@ -126,6 +126,7 @@ class FakeLib:
     def _hash_index(self): return {}
     def fav_setlist_enabled(self): return False
     def _fav_sets(self): return set(), set()
+    def missing_favs(self): return []
 
 
 class FakeStore:
