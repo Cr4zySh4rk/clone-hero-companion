@@ -335,7 +335,23 @@ class LibraryManager:
                         "name": favrecover.unknown_label(v, k) if unknown else (v.get("name") or ""),
                         "charter": v.get("charter") or "", "album": v.get("album") or "",
                         "source": v.get("source") or {}, "local": True, "unknown": unknown})
+        self._restore_charter_case(out)
         return out
+
+    def _restore_charter_case(self, rows: list[dict]):
+        """Recovered charters are stored normalised ('harmonix'); show them as the library spells them."""
+        need = [r for r in rows if r.get("charter") and r["charter"] == r["charter"].lower()]
+        if not need:
+            return
+        with self.lock:
+            songs = list(self.by_id.values())
+        seen: dict[str, str] = {}
+        for sg in songs:
+            c = self.charter_of(sg)
+            if c and c != c.lower():
+                seen.setdefault(norm_key(c), c)
+        for r in need:
+            r["charter"] = seen.get(norm_key(r["charter"]), r["charter"])
 
     # ---- recovery of favourites that were starred without metadata (v2.1.1) and whose chart is gone
     def trash_roots(self) -> list[Path]:
@@ -345,8 +361,31 @@ class LibraryManager:
         favs = self.store.get("favs", {}) or {}
         return [k for k, v in favs.items() if not v.get("name") and not v.get("recovered")]
 
+    def clean_recovered_names(self) -> int:
+        """One-time, idempotent: favourites recovered from a pid or folder name (2.1.3) kept the charter in
+        the title ('Da Funk (Justin? )', 'Welcome to the Jungle (Unknown Charter)'). Strip it."""
+        favs = self.store.get("favs", {}) or {}
+        if not any(v.get("recovered") in ("pid", "cache") for v in favs.values()):
+            return 0
+        n = 0
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            for k, v in favs.items():
+                if v.get("recovered") in ("pid", "cache") and v.get("name"):
+                    clean = favrecover.strip_charter_suffix(v["name"], v.get("charter") or "")
+                    if clean and clean != v["name"]:
+                        favs[k] = {**v, "name": clean}
+                        n += 1
+            if n:
+                self.store.set("favs", favs)
+        return n
+
     def start_fav_recovery(self):
         """Background, once per nameless favourite: see recover_fav_meta()."""
+        try:
+            self.clean_recovered_names()
+        except Exception as e:
+            log.debug("cleaning recovered names failed: %s", e)
         if not self._nameless() or not self._recover_lock.acquire(blocking=False):
             return
         def work():
@@ -453,6 +492,17 @@ class LibraryManager:
                         favs[k] = {**v, **self._fav_meta(s)}
                         changed = True
             if changed:
+                self.store.set("favs", favs)
+
+    def drop_missing_fav(self, old_key: str, s: Song):
+        """A favourite reinstalled as another chart (its recorded metadata was rough): the new chart's own
+        record (real artist, title, charter, source) replaces the old missing one."""
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            old = favs.get(old_key)
+            if old and old_key != self.chart_key(s) and old.get("pid") != self.chart_pid(s) \
+                    and not (old.get("md5") and old.get("md5") == self.chart_md5(s)):
+                favs.pop(old_key)
                 self.store.set("favs", favs)
 
     def set_fav(self, songs: list[Song], value: bool, notify: bool = True, _migrate: bool = True) -> list[Song]:

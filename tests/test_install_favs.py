@@ -37,7 +37,7 @@ class ResolveTests(unittest.TestCase):
 
     def test_rhythmverse_wrong_charter_rejected(self):
         self.assertIsNone(cloud.resolve_favourite(ROW, S(), S(rv("Other Charter"))))
-        self.assertIsNone(cloud.resolve_favourite({**ROW, "charter": ""}, S(), S(rv())))      # unverifiable: no guess
+        self.assertTrue(cloud.resolve_favourite({**ROW, "charter": ""}, S(), S(rv()))["guess"])      # empty charter: any, marked as a guess
 
     def test_checksum_confirms_among_same_charter(self):
         row = {**ROW, "checksum": "ABCD"}

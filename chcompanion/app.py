@@ -585,6 +585,7 @@ class Companion:
             if job.options.get("mark_fav") and x in fav_targets:      # installed from the cloud favourites list
                 self.libmgr.set_fav([x], True)
                 if job.options.get("fav_key"):
+                    self.libmgr.drop_missing_fav(job.options["fav_key"], x)
                     self.cloudsync.state.setdefault("aliases", {})[job.options["fav_key"]] = \
                         self.libmgr.chart_key(x, compute=True)
             self.libmgr.refresh_song(x)

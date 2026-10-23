@@ -81,6 +81,23 @@ def scan_trash(dirs, deadline: float | None = None):
             log.debug("trash folder %s not readable: %s", top, e)
 
 
+CHARTER_PLACEHOLDERS = {"unknown charter", "unknown", "no charter", "charter unknown", "unknown charter s", "n a"}
+_TAIL_RE = re.compile(r"\s*[\(\[]([^\(\)\[\]]*)[\)\]]\s*$")
+
+
+def strip_charter_suffix(title: str, charter: str = "") -> str:
+    """Drop a trailing '(...)' that is the charter ('Da Funk (Justin? )', matched loosely) or a placeholder
+    such as '(Unknown Charter)'. Idempotent; other bracketed qualifiers ('(Live)') are kept."""
+    from .favmatch import fold
+    want = fold(charter)
+    while True:
+        m = _TAIL_RE.search(title)
+        inner = fold(m.group(1)) if m else ""
+        if not m or not inner or not (inner == want or inner in CHARTER_PLACEHOLDERS):
+            return title.strip()
+        title = title[:m.start()]
+
+
 def parse_pid(pid: str) -> dict:
     """Readable metadata from 'norm(artist - name)|norm(charter)|relpath'. The first two parts are
     normalised (no hyphen, lower case), so artist and title come from the relpath's folder name when it
@@ -91,8 +108,7 @@ def parse_pid(pid: str) -> dict:
     ident, charter, rel = parts
     leaf = re.sub(r"\.sng$", "", rel.replace("\\", "/").rstrip("/").split("/")[-1], flags=re.I)
     leaf = strip_tags(leaf)
-    if charter:
-        leaf = re.sub(r"\s*[\(\[]\s*" + re.escape(charter) + r"\s*[\)\]]\s*$", "", leaf, flags=re.I)
+    leaf = strip_charter_suffix(leaf, charter)
     out = {}
     if " - " in leaf:
         artist, _, name = leaf.partition(" - ")

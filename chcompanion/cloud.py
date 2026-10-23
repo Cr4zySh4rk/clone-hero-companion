@@ -22,6 +22,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
+from . import favmatch
 from .library import norm_key, strip_tags
 from .net import urlopen
 from .paths import config_dir
@@ -597,27 +598,18 @@ class CloudSync:
 
 
 # ====================================================================== reinstalling favourites
+def _enc_hashes(r: dict) -> set:
+    return {(r.get("md5") or "").lower(), (r.get("chartMd5") or "").lower()} - {""}
+
+
 def resolve_on_encore(row: dict, search=None) -> dict | None:
-    """Find the Chorus Encore chart for a cloud favourite: by the recorded Encore md5 when it is among
-    the results for `artist name`, else the result with the same artist, name and charter."""
+    """Find the Chorus Encore chart for a cloud favourite (see favmatch): the recorded md5 first, then the
+    best title match by the same artist (bracketed suffixes ignored) and charter. An empty charter accepts
+    any, returned as a copy with guess=True."""
     if search is None:
         from .sources import encore
         search = encore.search
-    want_a, want_n = norm_key(row.get("artist") or ""), norm_key(row.get("name") or "")
-    want_c = norm_key(row.get("charter") or "")
-    md5s = {((row.get("source") or {}).get("encore_md5") or "").lower(), (row.get("checksum") or "").lower()} - {""}
-    best = None
-    for r in search(f"{row.get('artist', '')} {row.get('name', '')}".strip(), per_page=50)["songs"]:
-        if not r.get("downloadUrl"):
-            continue
-        if md5s & {(r.get("md5") or "").lower(), (r.get("chartMd5") or "").lower()} - {""}:
-            return r
-        if norm_key(r["name"]) != want_n or norm_key(r["artist"]) != want_a:
-            continue
-        if want_c and norm_key(r.get("charter") or "") == want_c:
-            best = r
-            break
-    return best
+    return favmatch.find(row, search, favmatch.queries_for(row), 48, _enc_hashes)
 
 
 def _rv_hashes(r: dict) -> set:
@@ -626,35 +618,15 @@ def _rv_hashes(r: dict) -> set:
 
 def resolve_on_rhythmverse(row: dict, search=None) -> dict | None:
     """Find the RhythmVerse chart for a cloud favourite: the recorded RhythmVerse file id if it is among the
-    results, else the result with the same artist, title and charter (colour tags stripped). A checksum the
-    result exposes is used to prefer the confirmed file. Never returns a chart by another charter."""
+    results, else the best match as for Encore (colour tags on the charter are ignored). RhythmVerse search
+    is word-order sensitive, so the title and the artist are searched separately before both together."""
     if search is None:
         from .sources import rhythmverse
         search = rhythmverse.search
-    src = row.get("source") or {}
-    want_a, want_n = norm_key(row.get("artist") or ""), norm_key(row.get("name") or "")
-    want_c = norm_key(strip_tags(row.get("charter") or ""))
-    want_id = src.get("rv_id") or ""
-    md5s = {(row.get("checksum") or "").lower(), (src.get("encore_md5") or "").lower()} - {""}
-    match = confirmed = None
-    for q in dict.fromkeys(x for x in (row.get("name"), row.get("artist")) if x):
-        for r in search(q, per_page=100).get("songs") or []:
-            if not r.get("downloadUrl") or r.get("needsConversion"):
-                continue
-            if want_id and r.get("id") == want_id:
-                return r
-            if norm_key(r.get("name") or "") != want_n or norm_key(r.get("artist") or "") != want_a:
-                continue
-            if not want_c or norm_key(strip_tags(r.get("charter") or "")) != want_c:
-                continue
-            if md5s & _rv_hashes(r):
-                confirmed = confirmed or r
-            match = match or r
-        if confirmed:
-            break
-        if match:
-            break
-    return confirmed or match
+    want_id = (row.get("source") or {}).get("rv_id") or ""
+    return favmatch.find({**row, "charter": strip_tags(row.get("charter") or "")}, search,
+                         favmatch.queries_for(row, rv=True), 48,
+                         lambda r: _rv_hashes(r), (lambda r: r.get("id") == want_id) if want_id else None)
 
 
 def source_order(row: dict) -> list[str]:
