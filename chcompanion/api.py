@@ -618,7 +618,19 @@ def _install_cloud_favs(c, body: dict) -> dict:
             log.info("Chart lookup failed for %s: %s", r.get("name"), e)
             return r, False
 
-    queued, missing, failed = 0, [], 0
+    queued, missing, failed, have, todo = 0, [], 0, 0, []
+    for r in rows:          # already here (same artist, title, charter, even under another md5): adopt, never reinstall
+        s = c.libmgr.find_present_chart(r)
+        if s is None:
+            todo.append(r)
+            continue
+        if not c.libmgr.adopt_fav(r["song_key"], s):        # a cloud-only row: no stored record to merge
+            c.libmgr.set_fav([s], True)
+            rk = getattr(c.cloudsync, "rekey", None)
+            if rk:
+                rk(r["song_key"], c.libmgr.chart_key(s, compute=True))
+        have += 1
+    rows = todo
     with ThreadPoolExecutor(4) as ex:
         for r, item in ex.map(one, rows):
             if item is False:
@@ -633,7 +645,7 @@ def _install_cloud_favs(c, body: dict) -> dict:
                                            "fav_charter": r.get("charter") or "", "fav_checksum": r.get("checksum") or ""},
                                   priority=PRIO_USER))
                 queued += 1
-    return {"queued": queued, "notFound": missing, "failed": failed}
+    return {"queued": queued, "notFound": missing, "failed": failed, "alreadyHave": have}
 
 
 def _lb_default(c, lm, sid, artist, name, charter, instrument, difficulty):

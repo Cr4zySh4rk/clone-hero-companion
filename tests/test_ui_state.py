@@ -24,3 +24,28 @@ class ViewFilterTests(unittest.TestCase):
     def test_late_responses_are_dropped(self):
         self.assertIn("if (gen !== libGen) return;", JS)
         self.assertIn("if (gen !== cloudGen)", JS)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class PollJobsRefreshTests(unittest.TestCase):
+    def test_finished_jobs_reload_library_and_cloud_box(self):
+        fn = re.search(r"function jobsNewlyFinished\(.*?\n}\n", JS, re.S).group(0)
+        poll = re.search(r"async function pollJobs\(.*?\n}\n", JS, re.S).group(0)
+        script = "let jobsSnap = null, jobsSeen = null;" + fn + poll + r"""
+const calls = []; let snaps = [];
+const api = async () => snaps.shift();
+const loadLibrary = () => calls.push("lib"), loadCloud = () => calls.push("cloud");
+const renderDock = () => {}, renderJobs = () => {};
+const currentView = "library", activeId = null, detail = null;
+const $ = () => ({ classList: { toggle() {} } });
+const J = (id, status) => ({ id, status });
+(async () => {
+  snaps = [{ jobs: [J("a", "running")] }]; await pollJobs(true);          // first poll seeds
+  snaps = [{ jobs: [J("a", "running")] }]; await pollJobs(true);          // nothing finished
+  snaps = [{ jobs: [J("a", "done")] }]; await pollJobs(true);             // a finished
+  snaps = [{ jobs: [J("a", "done")] }]; await pollJobs(true);             // nothing new
+  console.log(JSON.stringify(calls));
+})();
+"""
+        out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), '["lib","cloud"]')

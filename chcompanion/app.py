@@ -52,6 +52,7 @@ class Companion:
         self.cloud = Cloud()
         self.cloudsync = CloudSync(self.cloud, store, self.libmgr, self.playlog)
         self.libmgr.on_fav = self.cloudsync.fav_changed
+        self.libmgr.on_rekey = self.cloudsync.rekey
         self.lb = leaderboard.Client()
         self._score_cache: tuple[float, list[Path]] = (0.0, [])
         self.playwatcher = PlayWatcher(self.playlog, self._score_files, self._song_length,
@@ -553,17 +554,49 @@ class Companion:
                 log.warning("Could not refresh %s in the library view: %s", song.display, e)
         return "; ".join(parts) or "done"
 
+    def adopt_existing(self, job: Job, item: dict, loose: bool = False):
+        """An install of a missing favourite is skipped because the chart is already here: star that chart
+        and drop the missing record. Finds it by md5, else by favmatch on the favourite's (or item's)
+        artist/title/charter. loose: also accept the favourite's artist/title with the item's charter."""
+        key = job.options.get("fav_key")
+        if not (job.options.get("mark_fav") and key):
+            return None
+        lm = self.libmgr
+        rec = dict((lm.store.get("favs", {}) or {}).get(key) or {})
+        rec["md5"] = rec.get("md5") or job.options.get("fav_checksum") or item.get("md5")
+        rec["artist"] = rec.get("artist") or item.get("artist")
+        rec["name"] = rec.get("name") or item.get("name")
+        rec["charter"] = rec.get("charter") or job.options.get("fav_charter") or ""
+        found = lm.find_present_chart(rec)
+        if found is None and item.get("charter"):
+            found = lm.find_present_chart({"artist": item.get("artist"), "name": item.get("name"),
+                                           "md5": item.get("md5"), "charter": item["charter"]})
+        if found is None and loose and not rec["charter"]:
+            found = lm.find_present_chart({**rec, "charter": item.get("charter") or ""})
+        if found is None:
+            return None
+        if not lm.adopt_fav(key, found):                # no stored record (cloud-only row): just star it
+            lm.set_fav([found], True)
+            self.cloudsync.rekey(key, lm.chart_key(found, compute=True))
+        return found
+
     def _run_download(self, job: Job, progress) -> str:
         from .sources import install as inst
         s = self.settings()
         root = self.library.roots[0] if self.library.roots else self.data_dir / "Songs"
         dest = root / s["download_subdir"] if s["download_subdir"] else root
         item = job.item or {}
+        if not job.options.get("force"):
+            have = self.adopt_existing(job, item)       # a favourite's chart that is already here (fuzzy)
+            if have is not None:
+                return f"already in your library ({have.path.name}), not downloaded again"
         if item.get("ownedSameChart") and not job.options.get("force"):
+            self.adopt_existing(job, item, loose=True)
             return "already in your library (same chart), not downloaded again"
         try:
             paths = inst.install(item, dest, progress=progress, cancel=job.cancel)
         except inst.AlreadyInstalled as e:
+            self.adopt_existing(job, item, loose=True)
             return f"already in your library ({e}), not downloaded again"
         gone = [p for p in paths if not Path(p).exists()]
         if gone:        # never go on to processing something that was not written

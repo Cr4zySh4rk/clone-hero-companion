@@ -672,10 +672,19 @@ $("#spDl").onclick = async () => {
 };
 
 /* ================================================================ jobs */
-let jobsSnap = null;
+let jobsSnap = null, jobsSeen = null;
+/* ids of jobs that reached a final state since `seen` (a Set, updated); the first call only seeds it */
+function jobsNewlyFinished(seen, snap) {
+  const fin = snap.jobs.filter((j) => ["done", "failed", "cancelled"].includes(j.status)).map((j) => j.id);
+  const fresh = seen ? fin.filter((id) => !seen.has(id)) : [];
+  fin.forEach((id) => seen && seen.add(id));
+  return fresh;
+}
 async function pollJobs(once) {
   try {
     jobsSnap = await api("/api/jobs");
+    if (!jobsSeen) jobsSeen = new Set(jobsSnap.jobs.filter((j) => ["done", "failed", "cancelled"].includes(j.status)).map((j) => j.id));
+    else if (jobsNewlyFinished(jobsSeen, jobsSnap).length) { loadLibrary(); loadCloud(); }   // charts landed: the "not on this machine" box shrinks
     renderDock(); if (currentView === "jobs") renderJobs();
     if (activeId && detail) {
       const j = jobsSnap.jobs.find((x) => x.songId === activeId);

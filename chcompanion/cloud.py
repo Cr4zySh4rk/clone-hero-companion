@@ -363,6 +363,17 @@ class CloudSync:
             self._save_state()
         self.schedule()
 
+    def rekey(self, old_key: str, new_key: str):
+        """A missing favourite became another chart's: remember old -> new so the next sync deletes the old
+        cloud row and uploads the new one. No tombstone is written (that would un-favourite the chart)."""
+        with self.lock:
+            if old_key != new_key:
+                self.state.setdefault("aliases", {})[old_key] = new_key
+                self.state["tombstones"].pop(new_key, None)
+            self.cloud_only = [r for r in self.cloud_only if r.get("song_key") != old_key]
+            self._save_state()
+        self.schedule()
+
     def forget_keys(self, keys):
         """Explicit removal of favourites by cloud key (charters not on this machine): delete them in the cloud too."""
         with self.lock:
@@ -448,6 +459,9 @@ class CloudSync:
                     targets = cands
                 elif len(cands) == 1:
                     targets = cands
+            if not targets:
+                m = lm.find_present_chart(r)        # same artist, title and charter under another md5/path
+                targets = [m] if m is not None else []
             if not targets:
                 cloud_only.append(r)
                 continue

@@ -17,7 +17,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import favrecover, setlists
+from . import favmatch, favrecover, setlists
 from .library import Library, Song, norm_key, strip_tags
 from .paths import cache_dir, config_dir
 from .store import Store
@@ -73,6 +73,7 @@ class LibraryManager:
         self._delete_lock = threading.Lock()
         self.ops: dict[str, dict] = {}
         self.on_fav = None          # callback(songs, value) after favourites change (cloud sync)
+        self.on_rekey = None        # callback(old_key, new_key): a missing favourite became another chart's (cloud sync)
 
     # ------------------------------------------------------------ index
     def rescan(self):
@@ -85,6 +86,10 @@ class LibraryManager:
             self.backfill_fav_meta()
         except Exception as e:
             log.debug("favourite metadata backfill failed: %s", e)
+        try:
+            self.reconcile_fav_records()
+        except Exception as e:
+            log.debug("favourite reconcile failed: %s", e)
         self.start_fav_recovery()
         self.start_enrich()
 
@@ -324,6 +329,10 @@ class LibraryManager:
         trashing, deleting or losing a folder is not unfavouriting). Entries with partial metadata are listed;
         one with none at all is listed as an 'Unknown chart' (unknown=True) so it is never hidden."""
         self._ensure_fav_migrated()
+        try:
+            self.reconcile_fav_records()
+        except Exception as e:
+            log.debug("favourite reconcile failed: %s", e)
         favs = self.store.get("favs", {}) or {}
         md5s, pids = self._present()
         out = []
@@ -493,6 +502,86 @@ class LibraryManager:
                         changed = True
             if changed:
                 self.store.set("favs", favs)
+
+    # ---- a favourite whose record is stale (older copy's md5, old path) but whose chart is here
+    def find_present_chart(self, row: dict) -> Song | None:
+        """The library chart that is this favourite/row by md5, else by favmatch (same normalised artist,
+        title and a non-empty charter, the rules the resolver uses). Several: the best ranked."""
+        with self.lock:
+            songs = list(self.lib.songs)
+        return self._match_in(row, songs)
+
+    def _match_in(self, row: dict, songs: list[Song]) -> Song | None:
+        md5 = (row.get("md5") or row.get("checksum") or "").upper()
+        if md5:
+            for s in songs:
+                if self.chart_md5(s) == md5:
+                    return s
+        want_a, want_n, want_c = favmatch.artist_key(row.get("artist") or ""), row.get("name") or "", row.get("charter") or ""
+        if not want_a or not want_n or not favmatch.fold(want_c):
+            return None
+        want_bad, sets, best = favmatch.is_bad(want_n), self._fav_sets(), None
+        for s in songs:
+            if favmatch.artist_key(s.artist) != want_a:
+                continue
+            tier = favmatch.title_tier(want_n, s.name)
+            if tier is None or not favmatch.charter_ok(want_c, self.charter_of(s)):
+                continue
+            score = (tier, 1 if favmatch.is_bad(s.name) and not want_bad else 0, 0 if self.is_fav(s, sets) else 1, str(s.path))
+            if best is None or score < best[0]:
+                best = (score, s)
+        return best[1] if best else None
+
+    def adopt_fav(self, old_key: str, s: Song) -> bool:
+        """Make chart s the favourite that the missing record old_key stood for: star it (only it) and drop
+        the record. Persisted; the cloud row is re-keyed without a tombstone (on_rekey). False when there
+        is no stored record to adopt."""
+        new_key = self.chart_key(s, compute=True)
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            old = favs.get(old_key)
+            md5, pid = self.chart_md5(s), self.chart_pid(s)
+            hit = [k for k, v in favs.items() if (md5 and v.get("md5") == md5) or v.get("pid") == pid]
+            if old is None:
+                return False
+            if old_key not in hit:
+                favs.pop(old_key, None)
+            if hit:
+                for k in hit:
+                    favs[k] = {**favs[k], **self._fav_meta(s)}
+            else:
+                favs[new_key] = {"md5": md5, "pid": pid, "t": old.get("t") or int(time.time()), **self._fav_meta(s)}
+            self.store.set("favs", favs)
+        self.save_cache()
+        self.version += 1
+        if old_key != new_key and self.on_rekey:
+            try:
+                self.on_rekey(old_key, new_key)
+            except Exception as e:
+                log.debug("cloud re-key hook failed: %s", e)
+        if self.fav_setlist_enabled():
+            threading.Thread(target=self.sync_fav_setlist, daemon=True, name="fav-setlist").start()
+        return True
+
+    def reconcile_fav_records(self) -> int:
+        """Missing favourite records whose chart is in the library under another md5/path are merged into
+        that chart (starred, record dropped). Idempotent; run after every rescan."""
+        favs = self.store.get("favs", {}) or {}
+        if not favs:
+            return 0
+        md5s, pids = self._present()
+        todo = [(k, v) for k, v in favs.items()
+                if v.get("name") and not ((v.get("md5") and v["md5"] in md5s) or v.get("pid") in pids)]
+        if not todo:
+            return 0
+        with self.lock:
+            songs = list(self.lib.songs)
+        n = 0
+        for k, v in todo:
+            m = self._match_in(v, songs)
+            if m is not None and self.adopt_fav(k, m):
+                n += 1
+        return n
 
     def drop_missing_fav(self, old_key: str, s: Song):
         """A favourite reinstalled as another chart (its recorded metadata was rough): the new chart's own

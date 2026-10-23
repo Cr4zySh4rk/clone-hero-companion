@@ -2,6 +2,7 @@
 Run in Favourites, and favourites surviving trash/delete/rescan."""
 import shutil
 import types
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -131,7 +132,7 @@ class TrashTests(Harness):
         h = self.chart("Harmonix")
         self.lm.set_fav([h], True)
         back = h.path
-        saved = back.parent / "x"
+        saved = Path(self.tmp.name) / "x"
         shutil.move(str(back), str(saved))
         self.lm.rescan()
         self.assertEqual(self.favs(), [])

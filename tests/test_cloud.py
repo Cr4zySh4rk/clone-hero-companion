@@ -127,6 +127,7 @@ class FakeLib:
     def fav_setlist_enabled(self): return False
     def _fav_sets(self): return set(), set()
     def missing_favs(self): return []
+    def find_present_chart(self, row): return None
 
 
 class FakeStore:
