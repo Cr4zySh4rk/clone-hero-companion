@@ -320,6 +320,11 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/favorites" and method == "GET":
         return _json(h, {"items": [_cloud_fav(r, c) for r in _missing_favs(c)]}) or True
+    if path == "/api/cloud/favorites/remove" and method == "POST":
+        keys = [k for k in (body.get("keys") or []) if isinstance(k, str)]
+        n = lm.remove_favs(keys)
+        c.cloudsync.forget_keys(keys)
+        return _json(h, {"removed": n}) or True
     if path == "/api/cloud/favorites/install" and method == "POST":
         return _json(h, _install_cloud_favs(c, body)) or True
 
@@ -587,7 +592,7 @@ def _missing_favs(c) -> list[dict]:
     have_i = {norm_key(f"{r.get('artist', '')} - {r.get('name', '')}") + "|" + norm_key(r.get("charter") or "") for r in rows}
     for r in c.libmgr.missing_favs():
         ident = norm_key(f"{r['artist']} - {r['name']}") + "|" + norm_key(r.get("charter") or "")
-        if r["song_key"] in have_k or (r.get("checksum") or "").upper() in have_c or ident in have_i:
+        if r["song_key"] in have_k or (r.get("checksum") or "").upper() in have_c or (ident in have_i and not r.get("unknown")):
             continue
         rows.append(r)
     return rows
@@ -596,14 +601,14 @@ def _missing_favs(c) -> list[dict]:
 def _cloud_fav(r: dict, c) -> dict:
     nf = c.cloudsync.not_found
     return {"key": r["song_key"], "artist": r.get("artist"), "name": r.get("name"), "charter": r.get("charter"),
-            "album": r.get("album"), "checksum": r.get("checksum"), "notFound": r["song_key"] in nf, "addedAt": r.get("added_at")}
+            "album": r.get("album"), "checksum": r.get("checksum"), "notFound": r["song_key"] in nf, "addedAt": r.get("added_at"), "unknown": bool(r.get("unknown"))}
 
 
 def _install_cloud_favs(c, body: dict) -> dict:
     """Resolve missing favourites (recorded source, then Chorus Encore, then RhythmVerse) and queue their downloads."""
     from .cloud import resolve_favourite
     keys = set(body.get("keys") or [])
-    rows = [r for r in _missing_favs(c) if not keys or r["song_key"] in keys]
+    rows = [r for r in _missing_favs(c) if (not keys or r["song_key"] in keys) and not r.get("unknown")]
     process = body.get("process", c.settings()["auto_process_downloads"])
 
     def one(r):

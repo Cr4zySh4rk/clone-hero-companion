@@ -17,7 +17,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import setlists
+from . import favrecover, setlists
 from .library import Library, Song, norm_key, strip_tags
 from .paths import cache_dir, config_dir
 from .store import Store
@@ -69,6 +69,7 @@ class LibraryManager:
         self._save_lock = threading.Lock()
         self._fav_lock = threading.Lock()
         self._favs_lock = threading.RLock()
+        self._recover_lock = threading.Lock()
         self._delete_lock = threading.Lock()
         self.ops: dict[str, dict] = {}
         self.on_fav = None          # callback(songs, value) after favourites change (cloud sync)
@@ -84,6 +85,7 @@ class LibraryManager:
             self.backfill_fav_meta()
         except Exception as e:
             log.debug("favourite metadata backfill failed: %s", e)
+        self.start_fav_recovery()
         self.start_enrich()
 
     def _reindex(self):
@@ -319,18 +321,120 @@ class LibraryManager:
 
     def missing_favs(self) -> list[dict]:
         """Favourites whose chart is not on this machine, as cloud-style rows (kept in the store on purpose:
-        trashing, deleting or losing a folder is not unfavouriting). Needs the metadata captured at star time."""
+        trashing, deleting or losing a folder is not unfavouriting). Entries with partial metadata are listed;
+        one with none at all is listed as an 'Unknown chart' (unknown=True) so it is never hidden."""
         self._ensure_fav_migrated()
         favs = self.store.get("favs", {}) or {}
         md5s, pids = self._present()
         out = []
         for k, v in favs.items():
-            if (v.get("md5") and v["md5"] in md5s) or v.get("pid") in pids or not (v.get("name") and v.get("artist")):
+            if (v.get("md5") and v["md5"] in md5s) or v.get("pid") in pids:
                 continue
-            out.append({"song_key": k, "checksum": v.get("md5"), "artist": v["artist"], "name": v["name"],
+            unknown = not (v.get("name") or v.get("artist"))
+            out.append({"song_key": k, "checksum": v.get("md5"), "artist": v.get("artist") or "",
+                        "name": favrecover.unknown_label(v, k) if unknown else (v.get("name") or ""),
                         "charter": v.get("charter") or "", "album": v.get("album") or "",
-                        "source": v.get("source") or {}, "local": True})
+                        "source": v.get("source") or {}, "local": True, "unknown": unknown})
         return out
+
+    # ---- recovery of favourites that were starred without metadata (v2.1.1) and whose chart is gone
+    def trash_roots(self) -> list[Path]:
+        return favrecover.trash_dirs(self.data_dir, self.lib.roots)
+
+    def _nameless(self) -> list[str]:
+        favs = self.store.get("favs", {}) or {}
+        return [k for k, v in favs.items() if not v.get("name") and not v.get("recovered")]
+
+    def start_fav_recovery(self):
+        """Background, once per nameless favourite: see recover_fav_meta()."""
+        if not self._nameless() or not self._recover_lock.acquire(blocking=False):
+            return
+        def work():
+            try:
+                if self.recover_fav_meta():
+                    self.version += 1           # the UI reloads the library and the not-on-this-machine list
+            except Exception as e:
+                log.debug("favourite recovery failed: %s", e)
+            finally:
+                self._recover_lock.release()
+        threading.Thread(target=work, daemon=True, name="fav-recovery").start()
+
+    def recover_fav_meta(self) -> int:
+        """Fill artist/name/charter/source of nameless favourites: trash folders (md5, then the pid's
+        'artist - name|charter'), the pid itself, library_cache.json, legacy song-level keys. What nothing can
+        name is marked 'unknown' (shown as an Unknown chart). Each entry is processed once (recovered=...)."""
+        todo = self._nameless()
+        if not todo:
+            return 0
+        favs = self.store.get("favs", {}) or {}
+        # 1. trash
+        by_md5, by_leg = {}, {}
+        wanted_md5 = {favs[k].get("md5") for k in todo if favs[k].get("md5")}
+        wanted_leg = {"|".join((favs[k].get("pid") or "").split("|")[:2]) for k in todo if favs[k].get("pid")}
+        try:
+            for s in favrecover.scan_trash(self.trash_roots()):
+                leg = self.legacy_key(s)
+                h = None
+                try:
+                    h = setlists.song_hash(s)
+                except Exception:
+                    pass
+                if h and h.upper() in wanted_md5:
+                    by_md5.setdefault(h.upper(), s)
+                elif leg in wanted_leg:
+                    by_leg.setdefault(leg, s)
+        except Exception as e:
+            log.debug("trash scan failed: %s", e)
+        n = 0
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            for k in todo:
+                v = favs.get(k)
+                if not v or v.get("name") or v.get("recovered"):
+                    continue
+                meta, how = {}, ""
+                s = by_md5.get((v.get("md5") or "").upper()) or by_leg.get("|".join((v.get("pid") or "").split("|")[:2]))
+                if s:
+                    meta, how = self._fav_meta(s), "trash"
+                if not (meta.get("name") and meta.get("artist")):                       # 2. the pid
+                    p = favrecover.parse_pid(v.get("pid") or "")
+                    if p and not meta:
+                        meta, how = p, "pid"
+                if not (meta.get("name") and meta.get("artist")):                       # 3. library_cache.json
+                    for path, c in self.cache.items():
+                        if c.get("md5") and c["md5"].upper() == (v.get("md5") or "").upper():
+                            p = favrecover.parse_pid("||" + path.replace("\\", "/"))
+                            p.pop("charter", None)
+                            if p.get("artist") and p.get("name"):
+                                meta, how = {**meta, **p}, "cache"
+                                break
+                if not (meta.get("name") and meta.get("artist")):                       # 4. legacy song-level keys
+                    ident = (v.get("pid") or "").split("|")[0]
+                    per = self.store.song(ident) if ident else {}
+                    a, nm = per.get("artist"), per.get("name") or per.get("title")
+                    if nm:
+                        meta = {**meta, "artist": a or meta.get("artist") or "", "name": nm}
+                        how = how or "legacy"
+                        src = {o: per[i] for o, i in (("encore_md5", "src_encore_md5"), ("url", "src_url"),
+                                                      ("rv_id", "src_rv_id"), ("rv_url", "src_rv_url")) if per.get(i)}
+                        if src:
+                            meta["source"] = src
+                favs[k] = {**v, **{a: b for a, b in meta.items() if b}, "recovered": how if meta.get("name") else "unknown"}
+                n += 1
+            if n:
+                self.store.set("favs", favs)
+        return n
+
+    def remove_favs(self, keys: list[str]) -> int:
+        """Explicit unstar of favourites by store key (for charts that are not on this machine)."""
+        with self._favs_lock:
+            favs = dict(self.store.get("favs", {}) or {})
+            gone = [k for k in keys if k in favs]
+            for k in gone:
+                favs.pop(k)
+            if gone:
+                self.store.set("favs", favs)
+        return len(gone)
 
     def backfill_fav_meta(self):
         """Fill in artist/name/charter/source for favourites starred before they were recorded."""

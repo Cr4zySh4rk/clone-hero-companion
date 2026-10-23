@@ -25,7 +25,7 @@ def chart(root: Path, rel: str, name: str = None):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         t = self.tmp.name
         for e in (mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": t + "/cfg", "HOME": t + "/home"}),

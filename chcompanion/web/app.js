@@ -86,6 +86,7 @@ async function loadLibrary() {
   updateFavCount();
   $("#sideStatus").textContent = d.enriching ? `Checking songs… ${d.enrich[0]}/${d.enrich[1]}` : "";
   applyFilters();
+  if (st.filter === "fav") loadCloud();     // recovered favourites appear in "not on this machine"
   if (activeId && lib.byId.has(activeId) && currentView === "library") refreshDetail();
 }
 async function pollLibrary() {
@@ -897,8 +898,9 @@ function renderCloudFavs() {
   box.innerHTML = `<header><b>${cloud.status.signedIn ? "In your cloud, not on this machine" : "Favourites not on this machine"} (${items.length})</b>
       <label class="inline"><input type="checkbox" id="cfProcess" checked> then add video, lyrics and metadata</label>
       <button class="primary" id="cfAll">Install all</button></header>
-    <div class="cfgrid">${items.map((i) => `<div class="cf"><div><b>${esc(i.name)}</b><span>${esc(i.artist)}${i.charter ? " · " + esc(i.charter) : ""}</span>
-        ${i.notFound ? "<em>not found on Chorus Encore or RhythmVerse</em>" : ""}</div><button data-k="${esc(i.key)}">Install</button></div>`).join("")}</div>
+    <div class="cfgrid">${items.map((i) => `<div class="cf"><div><b>${esc(i.name)}</b><span>${esc(i.artist)}${i.artist && i.charter ? " · " : ""}${i.charter ? esc(i.charter) : ""}</span>
+        ${i.notFound ? "<em>not found on Chorus Encore or RhythmVerse</em>" : ""}${i.unknown ? "<em>no details were saved for this favourite, so it cannot be looked up</em>" : ""}</div>
+        <div class="cfbtns"><button data-k="${esc(i.key)}"${i.unknown ? " disabled" : ""}>Install</button>${i.unknown ? `<button class="rm" data-rm="${esc(i.key)}">Remove</button>` : ""}</div></div>`).join("")}</div>
     ${missing ? `<span class="hint">${missing} could not be found on Chorus Encore or RhythmVerse.</span>` : ""}`;
   const go = async (keys, btn) => {
     btn.disabled = true;
@@ -910,7 +912,12 @@ function renderCloudFavs() {
     btn.disabled = false;
   };
   $("#cfAll").onclick = (e) => go([], e.target);
-  $$("#cloudFavs .cf button").forEach((b) => b.onclick = () => go([b.dataset.k], b));
+  $$("#cloudFavs .cf button[data-k]").forEach((b) => b.onclick = () => go([b.dataset.k], b));
+  $$("#cloudFavs .cf button[data-rm]").forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    try { await api("/api/cloud/favorites/remove", { keys: [b.dataset.rm] }); toast("Removed from favourites"); await loadCloud(); lib.version = -1; }
+    catch (e) { toast(e.message, 4500); b.disabled = false; }
+  });
 }
 let cloudPoll = null;
 function watchLogin() {

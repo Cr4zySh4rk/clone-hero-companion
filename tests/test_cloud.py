@@ -35,7 +35,7 @@ def make_cloud(tmp, handler):
 
 class AuthTests(unittest.TestCase):
     def test_pkce_login_and_session_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             c, http = make_cloud(tmp, lambda *a: (200, SESSION))
             url = c.start_login(47823)
             self.assertIn("provider=google", url)
@@ -60,7 +60,7 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(ch, base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode())
 
     def test_refresh_before_expiry_and_on_401(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             state = {"n": 0}
 
             def h(method, url, headers, body):
@@ -79,7 +79,7 @@ class AuthTests(unittest.TestCase):
             self.assertIn("refresh_token", http.calls[before][1])
 
     def test_logout_deletes_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             c, http = make_cloud(tmp, lambda *a: (200, {}))
             c._store_session(SESSION)
             c.logout()
@@ -88,7 +88,7 @@ class AuthTests(unittest.TestCase):
             self.assertIn("/auth/v1/logout", http.calls[-1][1])
 
     def test_email_code_flow(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             def h(method, url, headers, body):
                 if url.endswith("/auth/v1/otp"):
                     return (429, {}) if body["email"] == "slow@x.com" else (200, {})
@@ -137,7 +137,7 @@ class FakeStore:
 
 class SyncTests(unittest.TestCase):
     def test_favorites_two_way_and_tombstones(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             remote = [{"song_key": "queen bohemian rhapsody|harmonix", "artist": "Queen", "name": "Bohemian Rhapsody",
                        "charter": "Harmonix", "checksum": None, "source": {}}]
             sent = []
@@ -167,7 +167,7 @@ class SyncTests(unittest.TestCase):
         self.assertIsNone(cloud.resolve_on_encore({**row, "charter": "Nobody"}, lambda q, per_page=50: {"songs": res}))
 
     def test_plays_upload_once_and_pull_merge(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             pl = playstats.PlayLog(Path(tmp) / "p.jsonl", Path(tmp) / "pc.jsonl")
             pl.append(playstats.parse_scorestats(SCORE, 1_700_000_000))
             posts = []
@@ -211,7 +211,7 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(r[0]["checksum"], "ABC123")
 
     def test_watcher_dedupes(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             f = Path(tmp) / "scorestats.json"
             pl = playstats.PlayLog(Path(tmp) / "p.jsonl", Path(tmp) / "pc.jsonl")
             got = []

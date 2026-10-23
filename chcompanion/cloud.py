@@ -362,6 +362,14 @@ class CloudSync:
             self._save_state()
         self.schedule()
 
+    def forget_keys(self, keys):
+        """Explicit removal of favourites by cloud key (charters not on this machine): delete them in the cloud too."""
+        with self.lock:
+            for k in keys:
+                self.state["tombstones"][k] = int(time.time())
+            self._save_state()
+        self.schedule()
+
     def schedule(self, delay: float = DEBOUNCE_S):
         if not self.cloud.signed_in:
             return

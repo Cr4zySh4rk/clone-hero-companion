@@ -25,7 +25,7 @@ def add_chart(root: Path, folder: str, artist: str, name: str, charter: str, bod
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         self.env = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.tmp.name + "/cfg"})
         self.env.start()
