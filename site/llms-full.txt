@@ -52,14 +52,14 @@ The app follows the game through its log file. It starts preparing a song as soo
 Latest release: https://github.com/Cr4zySh4rk/clone-hero-companion/releases/latest
 
 - macOS 11 or newer, Apple Silicon and Intel: CloneHeroCompanion-macOS-universal.dmg
-- Windows 10 / 11: CloneHeroCompanion-windows-x64.exe
+- Windows 10 / 11: CloneHeroCompanion-windows-x64.msi
 - Linux x64: CloneHeroCompanion-linux-x64.tar.gz
 
 Everything is included (ffmpeg and yt-dlp, which keeps itself up to date). Nothing else to install.
 
 macOS first launch: open the .dmg and drag Clone Hero Companion to Applications. The app is not notarized by Apple, so the first time, right-click it and choose Open, then Open again. If macOS says the app "is damaged", run once in Terminal: xattr -cr "/Applications/Clone Hero Companion.app" . Recommended: Game & folders, then Grant Full Disk Access, and switch Clone Hero Companion on.
 
-Windows: run the .exe. SmartScreen may warn because the app isn't code-signed: click More info, then Run anyway. The window uses Microsoft Edge WebView2, which comes with Windows 10/11.
+Windows: run the .msi installer, then launch Clone Hero Companion from the Start menu. The app and FFmpeg are installed under Program Files. Close old portable copies first. Signing integration is available but not configured yet; Windows may show an unknown-publisher warning. If Controlled folder access blocks writes, allow the installed CloneHeroCompanion.exe and restart the app.
 
 Linux: tar xzf CloneHeroCompanion-linux-x64.tar.gz, then ./CloneHeroCompanion . The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are saved as VP8 .webm, the format Clone Hero plays on Linux.
 

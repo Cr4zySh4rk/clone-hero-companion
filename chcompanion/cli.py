@@ -141,11 +141,17 @@ def cmd_doctor(args) -> int:
     say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")
     if ff:
         import subprocess
+        from .process import run as run_process, ToolStartError
         try:
-            result = subprocess.run([ff, "-version"], capture_output=True, timeout=15,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            result = run_process([ff, "-version"], capture_output=True, timeout=15)
             say("ffmpeg check: OK" if result.returncode == 0 else f"ffmpeg check: failed (exit {result.returncode})")
-        except (OSError, subprocess.TimeoutExpired) as e:
+            if result.returncode == 0:
+                # Exercise media processing from the installed app, not only -version.
+                media = run_process([ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                                     "-i", "sine=frequency=440:duration=0.1", "-f", "null", "-"],
+                                    capture_output=True, timeout=30)
+                say("ffmpeg media: OK" if media.returncode == 0 else f"ffmpeg media: failed (exit {media.returncode})")
+        except (OSError, subprocess.TimeoutExpired, ToolStartError) as e:
             say(f"ffmpeg check: failed ({e})")
     try:
         import numpy

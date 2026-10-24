@@ -801,12 +801,14 @@ async function checkPath(kind, path, statusSel) {
   if (kind === "game") msg = d.ok ? "✓ Clone Hero found" : "✗ This is not the Clone Hero game";
   else if (kind === "data") msg = d.ok ? `✓ ${d.settingsIni ? "settings.ini" : ""}${d.settingsIni && d.logs ? " and " : ""}${d.logs ? "Logs" : ""} found`
     : d.exists ? "✗ No settings.ini or Logs here. Start Clone Hero once, or pick the folder it writes to." : "✗ Folder not found";
-  el.textContent = msg; el.className = "status " + (d.ok ? "ok" : "bad");
+  if (d.writable === false) msg = "✗ " + d.writeError;
+  else if (d.writable === true) msg += " · write access OK";
+  el.textContent = msg; el.className = "status " + (d.ok && d.writable !== false ? "ok" : "bad");
   return d;
 }
 function renderSongDirs() {
   $("#suSongs").innerHTML = setup.songs.length ? setup.songs.map((s, i) => `<li data-i="${i}"><span class="p">${esc(s.path)}</span>
-    <span class="status ${s.ok ? (s.songs ? "ok" : "") : "bad"}">${s.ok ? `${s.songs}${s.songs >= 5000 ? "+" : ""} songs` : "not found"}</span>
+    <span class="status ${s.ok && s.writable !== false ? (s.songs ? "ok" : "") : "bad"}">${s.writable === false ? esc(s.writeError) : s.ok ? `${s.songs}${s.songs >= 5000 ? "+" : ""} songs${s.writable ? " · write access OK" : ""}` : "not found"}</span>
     <button class="ghost" data-rm="${i}" title="Remove">×</button></li>`).join("") : `<li class="hint">No song folders yet.</li>`;
   const det = (setup.detected?.songDirs || []).filter((p) => !setup.songs.some((s) => s.path === p));
   $("#suSongsFound").innerHTML = det.length ? `<span class="hint">Found:</span>` + det.map((p) => `<button data-addsong="${esc(p)}">+ ${esc(p)}</button>`).join("") : "";
@@ -847,7 +849,7 @@ async function loadSetup() {
   $("#suGame").value = d.current.game || ""; $("#suData").value = d.current.dataDir || "";
   foundChips("#suGameFound", d.detected.games, "suGame");
   foundChips("#suDataFound", d.detected.dataDirs, "suData");
-  setup.songs = d.check.songs;
+  setup.songs = await Promise.all(d.check.songs.map((s) => api("/api/setup/check", { kind: "songs", path: s.path })));
   renderSongDirs();
   checkPath("game", $("#suGame").value, "#suGameStatus");
   checkPath("data", $("#suData").value, "#suDataStatus");

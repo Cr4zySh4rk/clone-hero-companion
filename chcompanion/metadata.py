@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import shutil
-import subprocess
+from .process import run as run_process
 import threading
 import time
 import urllib.parse
@@ -133,7 +133,7 @@ def audio_length_ms(song: Song) -> int | None:
                 p.write_bytes(song.read_file(n) or b"")
             else:
                 p = song.path / n
-            err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True,
+            err = run_process([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True,
                                  timeout=30).stderr
             m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err)
             if m:

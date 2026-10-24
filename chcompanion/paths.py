@@ -248,7 +248,7 @@ def detect(configured_game: str | None = None) -> dict:
             "defaultDataDir": str(candidate_data_dirs()[0] if candidate_data_dirs() else Path.home() / "Clone Hero")}
 
 
-def describe_dir(p: str | Path, kind: str) -> dict:
+def describe_dir(p: str | Path, kind: str, check_write: bool = False) -> dict:
     """Quick validation info for a chosen folder."""
     p = Path(p).expanduser()
     d = {"path": str(p), "exists": p.exists()}
@@ -271,6 +271,12 @@ def describe_dir(p: str | Path, kind: str) -> dict:
         d.update(songs=n, ok=p.is_dir())
     elif kind == "game":
         d.update(ok=is_game(p))
+    if check_write and kind in ("data", "songs") and p.is_dir():
+        try:
+            ensure_writable_dir(p)
+            d["writable"] = True
+        except RuntimeError as e:
+            d.update(writable=False, writeError=str(e))
     return d
 
 

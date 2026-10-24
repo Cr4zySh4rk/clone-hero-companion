@@ -93,7 +93,7 @@ Grab the file for your system from the **[latest release](https://github.com/Cr4
 | System | File |
 | --- | --- |
 | **macOS** 11 or newer, Apple Silicon and Intel | `CloneHeroCompanion-macOS-universal.dmg` |
-| **Windows** 10 / 11 | `CloneHeroCompanion-windows-x64.exe` |
+| **Windows** 10 / 11 | `CloneHeroCompanion-windows-x64.msi` |
 | **Linux** x64 | `CloneHeroCompanion-linux-x64.tar.gz` |
 
 Everything is included (ffmpeg and yt-dlp, which keeps itself up to date). Nothing else to install.
@@ -113,7 +113,9 @@ Recommended: *Game & folders → Grant Full Disk Access…* opens the right page
 <details>
 <summary><b>Windows:</b> SmartScreen</summary>
 
-Run the .exe. SmartScreen may warn because the app isn't code-signed: click **More info → Run anyway**. The window uses Microsoft Edge WebView2, which comes with Windows 10/11.
+Run the .msi installer, then launch **Clone Hero Companion** from the Start menu. It installs the app and FFmpeg under `C:\Program Files\Clone Hero Companion`, supports upgrades and uninstall, and preserves your songs and settings. Close any old portable copy before launching the installed app.
+
+This release is unsigned until a trusted signing identity is configured; [signing setup](docs/windows-signing.md) is documented for maintainers. Windows may show an unknown-publisher warning. The app uses Microsoft Edge WebView2. If Controlled folder access blocks it, allow the **installed** `CloneHeroCompanion.exe` in Windows Security and restart it.
 </details>
 
 <details>

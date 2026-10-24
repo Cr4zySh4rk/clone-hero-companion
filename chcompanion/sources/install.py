@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
-import subprocess
+from ..process import run as run_process
 import tempfile
 import zipfile
 from pathlib import Path
@@ -65,7 +65,7 @@ def _extract(archive: Path, out: Path):
             if exe:
                 # Use the resolved executable, including its Windows extension.
                 try:
-                    r = subprocess.run([exe, *tool[1:]], capture_output=True)
+                    r = run_process([exe, *tool[1:]], capture_output=True)
                 except FileNotFoundError:
                     continue  # stale PATH entry: try the next extractor
                 if r.returncode == 0:

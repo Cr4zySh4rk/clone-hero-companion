@@ -7,7 +7,7 @@ var LATEST=RELEASES+"/latest";
 var CACHE="chc-latest-release",TTL=10*60*1000;
 var NAMES={mac:"macOS",win:"Windows",linux:"Linux"};
 var DIRECT={mac:LATEST+"/download/CloneHeroCompanion-macOS-universal.dmg",
-  win:LATEST+"/download/CloneHeroCompanion-windows-x64.exe",
+  win:LATEST+"/download/CloneHeroCompanion-windows-x64.msi",
   linux:LATEST+"/download/CloneHeroCompanion-linux-x64.tar.gz"};
 var $=function(id){return document.getElementById(id)};
 var ICON={mac:"",win:"",linux:""};
@@ -68,7 +68,7 @@ function getRelease(){
 function osOfAsset(name){
   var n=name.toLowerCase();
   if(/\.dmg$/.test(n)) return "mac";
-  if(/\.exe$/.test(n)) return "win";
+  if(/\.(msi|exe)$/.test(n)) return "win";
   if(/\.(tar\.gz|tgz|appimage|deb|rpm|tar\.xz)$/.test(n)||/linux/.test(n)) return "linux";
   return null;
 }

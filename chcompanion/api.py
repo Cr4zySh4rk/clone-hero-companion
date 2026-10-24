@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import subprocess
+from .process import popen as popen_process
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -383,7 +384,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         p = (body.get("path") or "").strip()
         if not p:
             return _json(h, {"ok": False}) or True
-        d = P.describe_dir(p, kind)
+        d = P.describe_dir(p, kind, check_write=True)
         if kind == "data" and d.get("ok"):
             d["songDirs"] = [str(x) for x in P.song_dirs(Path(p).expanduser())]
         if kind == "game" and d.get("ok"):
@@ -400,7 +401,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if game and not P.is_game(Path(game).expanduser()):
             problems.append(f"Clone Hero was not found at {game}")
         if body.get("createData") and not data.exists():
-            data.mkdir(parents=True, exist_ok=True)
+            try:
+                P.ensure_writable_dir(data)
+            except RuntimeError as e:
+                return _json(h, {"error": str(e)}, 400) or True
         if not data.is_dir():
             problems.append(f"The data folder {data} does not exist")
         missing = [x for x in songs if not Path(x).is_dir()]
@@ -408,6 +412,15 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             problems.append("Song folder not found: " + ", ".join(missing))
         if problems:
             return _json(h, {"error": "; ".join(problems)}, 400) or True
+        roots = P.song_dirs(data, only=songs or None)
+        # Verify the selected destinations before declaring setup complete.
+        # A readable Documents folder can still reject writes through Defender.
+        try:
+            for folder in dict.fromkeys([data, *(Path(x) for x in songs),
+                                         *(roots or [data / "Songs"])]):
+                P.ensure_writable_dir(folder)
+        except RuntimeError as e:
+            return _json(h, {"error": str(e)}, 400) or True
         c.update_settings({"data_dir": str(data), "song_dirs": songs, "game_path": game, "setup_done": True})
         roots = P.song_dirs(data, only=songs or None)
         c.reconfigure(data, roots)
@@ -507,8 +520,7 @@ def _chart_preview(h, url: str, start: float):
     if len(names) > 1:
         cmd += ["-filter_complex", f"amix=inputs={len(names)}:normalize=0,alimiter=limit=0.95"]
     cmd += ["-ac", "2", "-c:a", "libmp3lame", "-b:a", "160k", "-f", "mp3", "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    proc = popen_process(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         h.send_response(200)
         h.send_header("Content-Type", "audio/mpeg")
@@ -522,6 +534,7 @@ def _chart_preview(h, url: str, start: float):
         pass
     finally:
         proc.kill()
+        proc.wait()
         shutil.rmtree(tmpd, ignore_errors=True)
 
 
@@ -531,8 +544,7 @@ def _stream_audio(h, lm, s, start: float):
     except Exception:
         h._send(404, b"", "text/plain")
         return
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    proc = popen_process(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         h.send_response(200)
         h.send_header("Content-Type", "audio/mpeg")
@@ -547,6 +559,7 @@ def _stream_audio(h, lm, s, start: float):
         pass
     finally:
         proc.kill()
+        proc.wait()
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 

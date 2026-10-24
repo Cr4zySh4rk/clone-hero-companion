@@ -1,0 +1,37 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Clone Hero Companion" Manufacturer="Cr4zySh4rk"
+           Version="$(AppVersion)" UpgradeCode="9A693893-86D8-47A2-83EC-56DC975983D5"
+           Scope="perMachine" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Clone Hero Companion is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="build\icon\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Cr4zySh4rk/clone-hero-companion" />
+    <Property Id="INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="PreviousLocation" Root="HKLM" Key="Software\Cr4zySh4rk\CloneHeroCompanion"
+                      Name="InstallDir" Type="raw" Bitness="always64" />
+    </Property>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Clone Hero Companion" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Clone Hero Companion">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut Id="AppShortcut" Name="Clone Hero Companion" Target="[INSTALLFOLDER]CloneHeroCompanion.exe"
+                    WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+          <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\Cr4zySh4rk\CloneHeroCompanion"
+                         Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main" Title="Clone Hero Companion" Level="1">
+      <Files Include="!(bindpath.Payload)\**" Directory="INSTALLFOLDER" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="build\license.rtf" />
+  </Package>
+</Wix>

@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import shutil
-import subprocess
+from .process import run as run_process
 import sys
 import tempfile
 import threading
@@ -157,7 +157,7 @@ def _to_vp8(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
         raise InGameError("ffmpeg is needed to convert the video (Clone Hero on Linux only plays VP8 .webm)")
-    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
+    r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
                         "-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime",
                         "-cpu-used", "8", str(dst)], capture_output=True, text=True)
     if r.returncode != 0:
@@ -170,7 +170,7 @@ def _probe(p: Path) -> tuple[tuple[int, int], int]:
     if not ff:
         return (0, 0), 0
     try:
-        err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+        err = run_process([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
     except Exception:
         return (0, 0), 0
     m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", err)
@@ -200,7 +200,7 @@ _HW = {"ok": None}     # does this ffmpeg have a working hardware H.264 encoder?
 
 def _encode(ff: str, src: Path, dst: Path, args: list[str]) -> None:
     with _ENCODES:
-        r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", *args, str(dst)],
+        r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", *args, str(dst)],
                            capture_output=True, text=True)
     if r.returncode != 0:
         dst.unlink(missing_ok=True)
@@ -241,7 +241,7 @@ def _remux_mp4(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
         raise InGameError("ffmpeg not available")
-    r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", "-c:v", "copy",
+    r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", "-c:v", "copy",
                         "-movflags", "+faststart", "-f", "mp4", str(dst)], capture_output=True, text=True)
     if r.returncode != 0:
         raise InGameError("ffmpeg remux failed: " + r.stderr.strip()[-300:])
@@ -314,7 +314,7 @@ def probe_codec(p: Path) -> str:
     if not ff:
         return ""
     try:
-        err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+        err = run_process([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
     except Exception:
         return ""
     m = re.search(r"Video:\s*([A-Za-z0-9_]+)", err)
@@ -645,7 +645,7 @@ def _codec(p: Path) -> str:
     if not ff:
         return ""
     try:
-        err = subprocess.run([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+        err = run_process([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
         m = re.search(r"Video:\s*(\w+)", err)
         return m.group(1).lower() if m else ""
     except Exception:

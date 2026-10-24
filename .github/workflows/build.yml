@@ -3,7 +3,7 @@ name: Build apps
 # Every push builds and smoke-tests the apps. Pushing a tag like v2.0.0 publishes
 # them as a GitHub Release (uploaded straight to the release, no artifact storage).
 #   macOS:   universal (Apple Silicon + Intel) .app in a .dmg
-#   Windows: single .exe
+#   Windows: MSI installer with an onedir app and stable helper paths
 #   Linux:   single binary in a .tar.gz
 
 on:
@@ -115,8 +115,12 @@ jobs:
     needs: [test, release]
     if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      id-token: write
     env:
-      ASSET: CloneHeroCompanion-windows-x64.exe
+      ASSET: CloneHeroCompanion-windows-x64.msi
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -131,27 +135,68 @@ jobs:
           python -m unittest discover -s tests -p test_windows_download.py -v
           python -m unittest discover -s tests -p test_cloud_install_batch.py -v
           python -m unittest discover -s tests -p test_job_errors.py -v
+          python -m unittest discover -s tests -p test_process.py -v
+          python -m unittest discover -s tests -p test_setup_access.py -v
       - name: Build
         shell: bash
         run: |
           python scripts/make_icon.py build/icon
           mkdir -p build/bin
           python -c "import imageio_ffmpeg, shutil; shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), 'build/bin/ffmpeg.exe')"
-          pyinstaller --noconfirm --onefile --windowed --name CloneHeroCompanion --icon build/icon/icon.ico \
+          pyinstaller --noconfirm --onedir --windowed --name CloneHeroCompanion --icon build/icon/icon.ico \
             --add-data "chcompanion/web:chcompanion/web" \
             --add-binary "build/bin/ffmpeg.exe:bin" \
-            --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
+            --collect-data yt_dlp_ejs --exclude-module imageio_ffmpeg \
             --hidden-import yt_dlp --exclude-module tkinter run.py
-      - name: Smoke test
-        shell: bash
+      - name: Authenticate for release signing
+        if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign app and FFmpeg
+        if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\dist\CloneHeroCompanion\CloneHeroCompanion.exe
+            ${{ github.workspace }}\dist\CloneHeroCompanion\_internal\bin\ffmpeg.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Build MSI installer
+        shell: pwsh
+        run: ./scripts/build_windows_msi.ps1
+      - name: Sign installer
+        if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\${{ env.ASSET }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify release signatures
+        if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: pwsh
         run: |
-          mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
-          printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
-          ./dist/CloneHeroCompanion.exe doctor --data-dir "$RUNNER_TEMP/ch" --report "$RUNNER_TEMP/doctor.txt"
-          cat "$RUNNER_TEMP/doctor.txt"
-          grep -q "Songs       : 1" "$RUNNER_TEMP/doctor.txt"
-          grep -q "ffmpeg check: OK" "$RUNNER_TEMP/doctor.txt"
-          cp dist/CloneHeroCompanion.exe "$ASSET"
+          foreach ($file in @($env:ASSET, 'dist/CloneHeroCompanion/CloneHeroCompanion.exe', 'dist/CloneHeroCompanion/_internal/bin/ffmpeg.exe')) {
+            $signature = Get-AuthenticodeSignature $file
+            if ($signature.Status -ne 'Valid') { throw "Invalid signature: $file" }
+          }
+      - name: Report signing status
+        if: vars.WINDOWS_SIGNING_ENABLED != 'true'
+        shell: pwsh
+        run: '"Windows build is unsigned: signing has not been configured. See docs/windows-signing.md." >> $env:GITHUB_STEP_SUMMARY'
+      - name: Test installed app, FFmpeg, upgrade and uninstall
+        shell: pwsh
+        run: ./scripts/smoke_windows.ps1 -Installer (Join-Path $pwd $env:ASSET) -PreviousInstaller (Join-Path $pwd "build/smoke-previous.msi")
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

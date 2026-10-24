@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
+from .process import run as run_process
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def decode(paths: list[Path], seconds: float = 240.0, start: float = 0.0):
     if len(paths) > 1:
         cmd += ["-filter_complex", f"amix=inputs={len(paths)}:normalize=0:duration=longest"]
     cmd += ["-ac", "1", "-ar", str(SR), "-f", "f32le", "-"]
-    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    r = run_process(cmd, capture_output=True, timeout=180)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.decode(errors="replace")[-300:])
     return np.frombuffer(r.stdout, dtype=np.float32)

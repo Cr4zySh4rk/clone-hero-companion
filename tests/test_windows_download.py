@@ -66,7 +66,7 @@ class PackagedDownloadTests(unittest.TestCase):
             out = Path(tmp) / "out"
             with mock.patch("chcompanion.sources.install.shutil.which",
                             side_effect=["missing.exe", "C:/tools/bsdtar.exe"]), \
-                    mock.patch("chcompanion.sources.install.subprocess.run",
+                    mock.patch("chcompanion.sources.install.run_process",
                                side_effect=[FileNotFoundError(2, "missing"), mock.Mock(returncode=0)]) as run:
                 _extract(archive, out)
             self.assertEqual(run.call_args.args[0][0], "C:/tools/bsdtar.exe")

@@ -220,7 +220,9 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 .setup .status.ok { color: var(--green); }
 .setup .status.bad { color: #ff6b6b; }
 .setup .dirlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.setup .dirlist li { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,.04); }
+.setup .dirlist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,.04); }
+.setup .dirlist .status { grid-column: 1; overflow-wrap: anywhere; }
+.setup .dirlist button { grid-column: 2; grid-row: 1 / span 2; }
 .setup .dirlist .p { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #fdaCard { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: rgba(255,181,46,.05); }
 #fdaCard ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }

@@ -133,7 +133,7 @@
     <p class="tour-link"><a href="/assets/tour.mp4">Open the tour as a video file</a></p>
     <div class="platforms">
       <div class="plat"><h3>macOS</h3><p>11 or newer. One universal build for Apple Silicon and Intel.</p></div>
-      <div class="plat"><h3>Windows</h3><p>Windows 10 and 11. A single .exe, nothing to install.</p></div>
+      <div class="plat"><h3>Windows</h3><p>Windows 10 and 11. MSI installer with upgrades and uninstall.</p></div>
       <div class="plat"><h3>Linux</h3><p>x64. Videos are saved as VP8 .webm, the format Clone Hero plays there.</p></div>
     </div>
   </div>
@@ -155,7 +155,7 @@
         <button role="tab" id="t-linux" aria-controls="p-linux" aria-selected="false" tabindex="-1">Linux</button>
       </div>
       <div class="tabpanel" role="tabpanel" id="p-mac" aria-labelledby="t-mac"><ol><li>Open the <strong>.dmg</strong> and drag <strong>Clone Hero Companion</strong> to Applications.</li><li>The app is ad-hoc signed, not notarized. On first launch, <strong>right-click it and choose Open</strong>, then Open again.</li><li>If macOS asks about protected folders, grant <strong>Full Disk Access</strong> (Game &amp; folders, then Grant Full Disk Access).</li></ol></div>
-      <div class="tabpanel" role="tabpanel" id="p-win" aria-labelledby="t-win" hidden><ol><li>Run the <strong>.exe</strong>.</li><li>SmartScreen may warn because the app isn't code-signed. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</li><li>The window uses Microsoft Edge WebView2, which ships with Windows 10 and 11.</li></ol></div>
+      <div class="tabpanel" role="tabpanel" id="p-win" aria-labelledby="t-win" hidden><ol><li>Run the <strong>.msi installer</strong>, then open Clone Hero Companion from the Start menu.</li><li>This release is unsigned; Windows may show an unknown-publisher warning. If folder writes are blocked, allow the installed app through Controlled folder access.</li><li>The window uses Microsoft Edge WebView2, which ships with Windows 10 and 11.</li></ol></div>
       <div class="tabpanel" role="tabpanel" id="p-linux" aria-labelledby="t-linux" hidden><ol><li>Extract the archive: <code>tar xzf CloneHeroCompanion-linux-x64.tar.gz</code></li><li>Make it executable and run it: <code>chmod +x CloneHeroCompanion &amp;&amp; ./CloneHeroCompanion</code></li><li>It opens in Chrome, Chromium or Edge app mode if installed, otherwise in your browser.</li></ol></div>
       <p class="rel-date" style="margin-top:18px">Then in Clone Hero, turn on <strong>Settings, Custom Content, Song Videos</strong>.</p>
     </div>
