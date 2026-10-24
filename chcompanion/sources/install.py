@@ -61,8 +61,13 @@ def _extract(archive: Path, out: Path):
     if name.endswith((".rar", ".7z")):
         for tool in (["unar", "-q", "-o", str(out), str(archive)], ["bsdtar", "-xf", str(archive), "-C", str(out)],
                      ["7z", "x", "-y", f"-o{out}", str(archive)], ["unrar", "x", "-y", str(archive), str(out) + "/"]):
-            if shutil.which(tool[0]):
-                r = subprocess.run(tool, capture_output=True)
+            exe = shutil.which(tool[0])
+            if exe:
+                # Use the resolved executable, including its Windows extension.
+                try:
+                    r = subprocess.run([exe, *tool[1:]], capture_output=True)
+                except FileNotFoundError:
+                    continue  # stale PATH entry: try the next extractor
                 if r.returncode == 0:
                     return
         raise RuntimeError(f"Can't extract {archive.suffix} archives here; install 'unar' or 7-Zip")
@@ -99,7 +104,10 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
                 shutil.move(str(f), dst)
                 installed.append(dst)
             elif low.endswith((".zip", ".7z", ".rar")):
-                out = work / f"x{len(installed)}_{f.stem}"
+                # Archive names can be very long. Repeating them in the extraction
+                # path pushes otherwise valid charts over Windows' path limit.
+                out = work / "extract"
+                shutil.rmtree(out, ignore_errors=True)
                 out.mkdir(parents=True)
                 _extract(f, out)
                 for sng in out.rglob("*.sng"):

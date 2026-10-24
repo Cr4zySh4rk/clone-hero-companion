@@ -187,6 +187,12 @@ def _ydl_opts(clients=None, **extra) -> dict:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
             "retries": 5, "fragment_retries": 5, "noprogress": True}
+    # Frozen apps carry ffmpeg outside PATH (imageio also uses a versioned filename).
+    # yt-dlp must use the same executable as alignment and video conversion.
+    from .align import ffmpeg_path
+    ff = ffmpeg_path()
+    if ff:
+        opts["ffmpeg_location"] = ff
     if runtimes:
         opts["js_runtimes"] = runtimes
     if clients:

@@ -137,7 +137,16 @@ def cmd_doctor(args) -> int:
     say(f"In-game song videos setting: {'on' if sv == '1' else 'OFF (Settings > Custom Content > Song Videos)' if sv == '0' else 'unknown'}")
     say(f"yt-dlp      : {'available' if youtube.available() else 'missing'}")
     from .align import ffmpeg_path
-    say(f"ffmpeg      : {ffmpeg_path() or 'not found (needed for video/lyrics alignment)'}")
+    ff = ffmpeg_path()
+    say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")
+    if ff:
+        import subprocess
+        try:
+            result = subprocess.run([ff, "-version"], capture_output=True, timeout=15,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            say("ffmpeg check: OK" if result.returncode == 0 else f"ffmpeg check: failed (exit {result.returncode})")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            say(f"ffmpeg check: failed ({e})")
     try:
         import numpy
         say(f"numpy       : {numpy.__version__}")
