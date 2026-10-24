@@ -582,6 +582,7 @@ class Companion:
 
     def _run_download(self, job: Job, progress) -> str:
         from .sources import install as inst
+        progress("checking for an existing chart")
         s = self.settings()
         root = self.library.roots[0] if self.library.roots else self.data_dir / "Songs"
         dest = root / s["download_subdir"] if s["download_subdir"] else root
@@ -601,6 +602,7 @@ class Companion:
         gone = [p for p in paths if not Path(p).exists()]
         if gone:        # never go on to processing something that was not written
             raise RuntimeError(f"the download finished but {gone[0].name} is not in the Songs folder")
+        progress("indexing the installed chart")
         self.library.scan()
         self.libmgr._reindex()
         self.build_preview_index()
@@ -610,6 +612,7 @@ class Companion:
         if want_c:      # star exactly the chart that was favourited (the charter), not other charts in a pack
             fav_targets = [x for x in new if norm_key(self.libmgr.charter_of(x)) == want_c] or fav_targets
         for x in new:
+            progress("saving the installed chart and favourite")
             if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
                 self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
             elif item.get("source") == "rhythmverse":
@@ -623,6 +626,7 @@ class Companion:
                         self.libmgr.chart_key(x, compute=True)
             self.libmgr.refresh_song(x)
             if job.options.get("process", s["auto_process_downloads"]):
+                progress("queuing video and lyrics processing")
                 self.queue_song(x, "full", PRIO_BATCH)
         return f"installed {len(paths)} chart{'s' if len(paths) != 1 else ''}"
 

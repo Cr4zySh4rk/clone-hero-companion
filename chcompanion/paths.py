@@ -11,6 +11,29 @@ from pathlib import Path
 APP_NAME = "CloneHeroCompanion"
 
 
+def folder_write_error(folder: Path, error: OSError) -> RuntimeError:
+    """Explain destination failures, including Defender's misleading WinError 2."""
+    message = f'Cannot write to folder "{folder}". '
+    if sys.platform == "win32" or getattr(error, "winerror", None) is not None:
+        message += (
+            "Check Windows Security > Protection history. If Controlled folder access blocked "
+            "Clone Hero Companion, allow this app through Controlled folder access, then restart it. "
+        )
+    message += f"Also check the folder location and write permissions. Details: {error}"
+    return RuntimeError(message)
+
+
+def ensure_writable_dir(folder: Path) -> None:
+    """Actually create/write a file; exists() and os.access() cannot detect CFA blocks."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(prefix=".chc-write-", suffix=".chc-tmp", dir=folder) as probe:
+            probe.write(b"Clone Hero Companion write check\n")
+            probe.flush()
+    except OSError as e:
+        raise folder_write_error(folder, e) from e
+
+
 def _windows_documents() -> Path | None:
     try:
         import ctypes

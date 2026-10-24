@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from ..paths import cache_dir, config_dir
+from ..paths import cache_dir, ensure_writable_dir
 from . import hosts
 
 log = logging.getLogger(__name__)
@@ -156,16 +156,25 @@ def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Pat
                           + (f" ({item['charter']})" if item.get("charter") else ""))
         if (songs_dir / (label + ".sng")).exists():
             raise AlreadyInstalled(label + ".sng")
+    if progress:
+        progress("checking the Songs folder is writable")
+    ensure_writable_dir(songs_dir)
+    if progress:
+        progress("creating the download folder")
     tmp = Path(tempfile.mkdtemp(prefix="chc-dl-", dir=cache_dir()))
     try:
         def prog(done, total):
             if progress:
                 progress(f"downloading {done * 100 // total}%" if total else f"downloading {done // 1048576} MB")
+        if progress:
+            progress("connecting to the chart download")
         files = hosts.download(url, tmp, prog, cancel)
         if item.get("source") == "encore" and files and not files[0].name.lower().endswith(".sng"):
+            if progress:
+                progress("renaming the downloaded chart")
             files[0] = files[0].rename(files[0].with_suffix(".sng"))
         if progress:
-            progress("installing")
+            progress(f"installing into {songs_dir}")
         # Drive folders come back as nested paths: treat the folder as one song
         all_files = []
         for f in files:

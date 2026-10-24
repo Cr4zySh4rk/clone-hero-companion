@@ -127,7 +127,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pillow pywebview py7zr send2trash
       - name: Test Windows download regressions
-        run: python -m unittest discover -s tests -p test_windows_download.py -v
+        run: |
+          python -m unittest discover -s tests -p test_windows_download.py -v
+          python -m unittest discover -s tests -p test_cloud_install_batch.py -v
+          python -m unittest discover -s tests -p test_job_errors.py -v
       - name: Build
         shell: bash
         run: |

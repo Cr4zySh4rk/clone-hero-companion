@@ -203,8 +203,13 @@ class JobManager:
                         self.active -= 1
                     self.on_change(job)
                     continue
-                log.warning("%s failed for %s: %s", job.kind, job.title, e)
-                job.status, job.error, job.step = "failed", str(e) or type(e).__name__, ""
+                # Keep the operation and traceback: Windows' missing-executable
+                # errors often have no filename and otherwise look identical.
+                detail = str(e) or type(e).__name__
+                log.exception("Job %s (%s) failed for %s during %s: %s",
+                              job.id, job.kind, job.title, job.step or "starting", detail)
+                job.status = "failed"
+                job.error = f"{job.step}: {detail}" if job.step else detail
             finally:
                 if job.status != "waiting":
                     job.finished = time.time()

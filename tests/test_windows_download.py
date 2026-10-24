@@ -7,10 +7,43 @@ from unittest import mock
 
 from chcompanion import youtube
 from chcompanion.align import ffmpeg_path
+from chcompanion.paths import ensure_writable_dir
 from chcompanion.sources.install import _extract, install_files
 
 
 class PackagedDownloadTests(unittest.TestCase):
+    def test_blocked_destination_stops_before_downloading(self):
+        from chcompanion.sources.install import install
+        # Defender CFA can report FILE_NOT_FOUND even though Documents exists.
+        blocked = FileNotFoundError(2, "The system cannot find the file specified")
+        blocked.winerror = 2
+        with tempfile.TemporaryDirectory() as tmp:
+            songs = Path(tmp) / "Songs"
+            songs.mkdir()
+            with mock.patch("chcompanion.paths.tempfile.TemporaryFile", side_effect=blocked), \
+                    mock.patch("chcompanion.sources.hosts.download") as download:
+                with self.assertRaisesRegex(RuntimeError, "Controlled folder access") as cm:
+                    install({"source": "encore", "artist": "Artist", "name": "Song",
+                             "downloadUrl": "https://files.enchor.us/chart.sng"}, songs)
+            download.assert_not_called()
+            self.assertIn(str(songs), str(cm.exception))
+            self.assertIs(cm.exception.__cause__, blocked)
+
+    def test_blocked_folder_creation_reports_destination(self):
+        blocked = FileNotFoundError(2, "The system cannot find the file specified")
+        blocked.winerror = 2
+        with mock.patch.object(Path, "mkdir", side_effect=blocked):
+            with self.assertRaisesRegex(RuntimeError, "Cannot write to folder") as cm:
+                ensure_writable_dir(Path("Songs"))
+        self.assertIn("Protection history", str(cm.exception))
+
+    def test_write_check_creates_folder_and_cleans_up_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            songs = Path(tmp) / "new" / "Songs"
+            ensure_writable_dir(songs)
+            self.assertTrue(songs.is_dir())
+            self.assertEqual(list(songs.iterdir()), [])
+
     def test_ytdlp_uses_bundled_ffmpeg_even_without_path_tools(self):
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp) / "bin" / "ffmpeg.exe"

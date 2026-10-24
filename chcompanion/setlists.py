@@ -15,13 +15,17 @@ import struct
 from pathlib import Path
 
 from .library import Song
+from .paths import folder_write_error
 
 HEADER = bytes([0xEA, 0xEC, 0x33, 0x01])
 
 
 def setlists_dir(data_dir: Path) -> Path:
     d = data_dir / "Setlists"
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise folder_write_error(d, e) from e
     return d
 
 

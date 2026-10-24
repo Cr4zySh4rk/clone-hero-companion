@@ -176,6 +176,24 @@ No accounts and no telemetry. The app only talks to the services it gets content
 </details>
 
 <details>
+<summary><b>Windows downloads fail with WinError 2 / cannot write to folder</b></summary>
+
+If the app can read your library but cannot install charts or create the Favourites setlist,
+check **Windows Security → Virus & threat protection → Protection history**. Controlled folder
+access can block writes to Documents and report “The system cannot find the file specified”.
+
+If Companion is listed as blocked, open **Manage ransomware protection → Allow an app through
+Controlled folder access → Add an allowed app**, then select the Companion executable you run.
+Restart Companion and retry the failed jobs. The allowance applies to that executable's location;
+if you move or rename it, update the allowance. Keep Controlled folder access enabled.
+See [Microsoft's instructions](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/virus-and-threat-protection-in-the-windows-security-app).
+
+The app checks that the Songs folder is writable before downloading. For other failures, the Jobs
+tab includes the failed step, and `%APPDATA%\CloneHeroCompanion\companion.log` contains the traceback.
+Copy the log before restarting the app, which replaces it.
+</details>
+
+<details>
 <summary><b>Command line</b></summary>
 
 The same program has a command line (the app window opens when it's started without arguments):
