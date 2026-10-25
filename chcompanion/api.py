@@ -320,7 +320,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             threading.Thread(target=c.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/favorites" and method == "GET":
-        return _json(h, {"items": [_cloud_fav(r, c) for r in _missing_favs(c)]}) or True
+        rows = _missing_favs(c)
+        return _json(h, {"items": [_cloud_fav(r, c) for r in rows], "counts": fav_counts(c, rows)}) or True
     if path == "/api/cloud/favorites/remove" and method == "POST":
         keys = [k for k in (body.get("keys") or []) if isinstance(k, str)]
         n = lm.remove_favs(keys)
@@ -609,6 +610,47 @@ def _missing_favs(c) -> list[dict]:
             continue
         rows.append(r)
     return rows
+
+
+def fav_counts(c, missing: list[dict] | None = None) -> dict:
+    """Distinct favourited charts in the collection: on-disk favourites plus the ones not on this machine,
+    de-duplicated by chart identity (md5, else artist/title/charter). Several local copies count once, so two
+    synced machines show the same total whatever they have on disk."""
+    lm = c.libmgr
+    rows = _missing_favs(c) if missing is None else missing
+    parent: dict[str, str] = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def add(tokens):
+        tokens = [t for t in tokens if t]
+        for t in tokens[1:]:
+            parent[find(t)] = find(tokens[0])
+        return tokens[0]
+
+    sets = lm._fav_sets()
+    with lm.lock:
+        songs = list(lm.lib.songs)
+    disk = []
+    for s in songs:
+        if not lm.is_fav(s, sets):
+            continue
+        md5, charter = lm.chart_md5(s), lm.charter_of(s)
+        ident = lm.legacy_key(s) if norm_key(charter) else None
+        disk.append(add(["m:" + md5 if md5 else None, "i:" + ident if ident else None, "p:" + lm.chart_pid(s)]))
+    other = []
+    for r in rows:
+        chk = (r.get("checksum") or "").upper()
+        ident = norm_key(f"{r.get('artist', '')} - {r.get('name', '')}") + "|" + norm_key(r.get("charter") or "")
+        has_i = bool(norm_key(r.get("charter") or "")) and not r.get("unknown")
+        other.append(add(["m:" + chk if chk else None, "i:" + ident if has_i else None, "k:" + r["song_key"]]))
+    on_disk = {find(t) for t in disk}
+    everything = on_disk | {find(t) for t in other}
+    return {"total": len(everything), "onDisk": len(on_disk), "notHere": len(everything - on_disk)}
 
 
 def _cloud_fav(r: dict, c) -> dict:

@@ -43,6 +43,7 @@ function setFilter(f) {
   $$("#libFilters button").forEach((b) => b.classList.toggle("on", b.dataset.f === f));
   applyFilters();
   renderCloudFavs();
+  updateFavCount();
 }
 /* Which library filter a sidebar entry implies: "★ Favourites" -> fav, "Library" -> All, anything else keeps it. */
 function viewFilter(view, cur) { return view === "favs" ? "fav" : view === "library" ? "all" : cur; }
@@ -348,9 +349,20 @@ $("#selbar").addEventListener("click", async (e) => {
 });
 
 /* ================================================================ favourites */
-function updateFavCount() {
+/* One number everywhere: distinct favourited charts in the collection (on disk + not on this machine), the
+   same on every synced machine. Before the server has answered, fall back to the favourites on disk. */
+function favTotals() {
+  const c = cloud.counts;
+  if (c) return c;
   const n = lib.songs.filter((s) => s.fav).length;
-  $("#navFavCount").textContent = n || "";
+  return { total: n, onDisk: n, notHere: 0 };
+}
+function updateFavCount() {
+  const t = favTotals();
+  $("#navFavCount").textContent = t.total || "";
+  const sum = $("#favSummary");
+  sum.hidden = !(st.filter === "fav" && currentView === "library");
+  sum.textContent = `${nf(t.total)} favourite${t.total === 1 ? "" : "s"}${t.notHere ? ` · ${nf(t.notHere)} not on this machine` : ""}`;
 }
 async function setFav(ids, value) {
   ids = ids.filter((i) => lib.byId.has(i));
@@ -358,7 +370,7 @@ async function setFav(ids, value) {
   await api("/api/songs/action", { ids, action: "favorite", value });
   const want = new Set(ids);                                   // favourites are per chart: other copies are untouched
   lib.songs.forEach((x) => { if (want.has(x.id)) x.fav = value; });
-  updateFavCount(); renderTable(true); updateSelbar();
+  updateFavCount(); renderTable(true); updateSelbar(); loadCloud();
   if (detail && ids.includes(detail.id)) { detail.fav = value; paintDetailFav(); }
   if (!value && ids.length > 1) toast(`Removed ${ids.length} charts from favourites. Press F again to undo.`, 6000);
   else toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " charts to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " charts from"} favourites`);
@@ -898,18 +910,19 @@ $("#suData").addEventListener("change", async () => {
 $("#suSongAdd").addEventListener("keydown", async (e) => { if (e.key === "Enter") { await addSongDir(e.target.value); e.target.value = ""; } });
 
 /* ================================================================ cloud account, favourites in the cloud */
-const cloud = { status: null, favs: [] };
+const cloud = { status: null, favs: [], counts: null };
 const nf = (n) => Number(n || 0).toLocaleString();
 const pct = (a) => (a == null ? "—" : (a * 100).toFixed(1) + "%");
 const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 async function loadCloud() {
   const gen = ++cloudGen;
-  let status, favs;
+  let status, favs, counts = null;
   try { status = await api("/api/cloud/status"); } catch (e) { status = { signedIn: false }; }
-  try { favs = (await api("/api/cloud/favorites")).items; } catch (e) { favs = []; }   // signed out too: favourites whose chart was trashed or moved
+  try { const d = await api("/api/cloud/favorites"); favs = d.items; counts = d.counts || null; } catch (e) { favs = []; }   // signed out too: favourites whose chart was trashed or moved
   if (gen !== cloudGen) return cloud.status;
-  cloud.status = status; cloud.favs = favs;
+  cloud.status = status; cloud.favs = favs; cloud.counts = counts;
+  updateFavCount();
   renderCloudFavs();
   return cloud.status;
 }

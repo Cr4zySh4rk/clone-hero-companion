@@ -286,6 +286,9 @@ class CloudSync:
                 self.state.update(s)
         except (OSError, ValueError):
             pass
+        co = self.state.get("cloud_only")
+        if isinstance(co, list) and self.cloud.signed_in:
+            self.cloud_only = [r for r in co if isinstance(r, dict) and r.get("song_key")]
 
     def _save_state(self):
         try:
@@ -371,6 +374,7 @@ class CloudSync:
                 self.state.setdefault("aliases", {})[old_key] = new_key
                 self.state["tombstones"].pop(new_key, None)
             self.cloud_only = [r for r in self.cloud_only if r.get("song_key") != old_key]
+            self.state["cloud_only"] = self.cloud_only
             self._save_state()
         self.schedule()
 
@@ -472,7 +476,10 @@ class CloudSync:
             else:
                 starred += [s for s in targets if not lm.is_fav(s, sets)]
             if exact is None or self.fav_key_of(targets[0]) != k:
-                stale.append(k)                 # keyed differently from the chart here: re-key below
+                # a path-only key is not stable (it differs per machine): re-keying to it would make two
+                # machines delete each other's row forever, so only re-key to a checksum or from a legacy row
+                if self.is_legacy_key(k) or lm.chart_md5(targets[0]):
+                    stale.append(k)                 # keyed differently from the chart here: re-key below
         if starred:
             lm.set_fav(starred, True, notify=False)
             sets = lm._fav_sets()
@@ -483,9 +490,16 @@ class CloudSync:
             self.state.get("aliases", {}).pop(k, None)
         local = self.local_favourites()
         synced_before = set(self.state.get("synced") or [])
+        dropped = []
         for k, r in self.missing_local_favourites().items():       # a trashed chart stays a favourite in the cloud
-            if k not in synced_before and not self.is_legacy_key(k):
+            if self.is_legacy_key(k):
+                continue
+            if k in synced_before and k not in remote:
+                dropped.append(k)       # it was in the cloud at the last sync and is gone now: removed on another machine
+            else:
                 local.setdefault(k, r)
+        if dropped:
+            lm.remove_favs(dropped)
 
         def newer_source(k, r):
             have = (remote.get(k) or {}).get("source") or {}
@@ -504,6 +518,8 @@ class CloudSync:
             if lm.fav_setlist_enabled():
                 threading.Thread(target=lm.sync_fav_setlist, daemon=True).start()
         self.cloud_only = cloud_only
+        self.state["cloud_only"] = cloud_only       # so the count is right at the next launch, before any sync
+        self._save_state()
 
     # ------------------------------------------------------------ plays
     def _uid(self):
@@ -605,7 +621,7 @@ class CloudSync:
 
     def reset_account_state(self):
         """After sign-out: forget per-account progress so the next account starts clean."""
-        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, lastSync=None, lastError=None)
+        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, lastSync=None, lastError=None, cloud_only=[])
         self.cloud_only = []
         self.playlog.clear_cloud()
         self._save_state()
