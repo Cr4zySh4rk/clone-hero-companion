@@ -12,17 +12,34 @@ Set-Content "$dataDir\Songs\Artist - Song\song.ini" "[song]`nartist = Artist`nna
 $publicDesktop = Join-Path $env:PUBLIC 'Desktop\Clone Hero Companion.lnk'
 $userDesktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Clone Hero Companion.lnk'
 $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Clone Hero Companion\Clone Hero Companion.lnk'
+$msiLog = Join-Path $env:RUNNER_TEMP 'msi-install.log'
+function Show-ShortcutDiagnostics {
+    Write-Output '--- shortcut diagnostics ---'
+    $roots = @($env:ProgramData, $env:APPDATA, $env:PUBLIC, $env:USERPROFILE, [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) |
+        Where-Object { $_ } | Select-Object -Unique
+    foreach ($root in $roots) {
+        Get-ChildItem -Path $root -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'Clone Hero' } | ForEach-Object { Write-Output "lnk: $($_.FullName)" }
+    }
+    if (Test-Path $msiLog) {
+        Select-String -Path $msiLog -Pattern 'Property\(\w+\): (DESKTOPSHORTCUT|STARTMENUSHORTCUT|PREV\w*SHORTCUT|Stored\w*Shortcut|UILevel|INSTALLFOLDER) =',
+            'Component: (StartMenuShortcut|DesktopShortcut|AppRegistry);', 'Action start .*(RemoveExistingProducts|CostFinalize|InstallValidate)',
+            'Doing action: ' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Line -notmatch 'Doing action: ' } | ForEach-Object { Write-Output $_.Line.Trim() }
+    }
+    Write-Output '--- end diagnostics ---'
+}
 function Invoke-Msi([string[]]$Arguments, [string]$What) {
-    $run = Start-Process msiexec.exe -ArgumentList $Arguments -Wait -PassThru
+    $run = Start-Process msiexec.exe -ArgumentList ($Arguments + @('/l*v', "`"$msiLog`"")) -Wait -PassThru
     if ($run.ExitCode -notin @(0, 3010)) {
-        if (Test-Path "$env:RUNNER_TEMP\msi-install.log") { Get-Content "$env:RUNNER_TEMP\msi-install.log" -Tail 100 }
+        if (Test-Path $msiLog) { Get-Content $msiLog -Tail 100 }
         throw "$What failed: $($run.ExitCode)"
     }
 }
 function Assert-Shortcuts([bool]$Desktop, [bool]$StartMenu, [string]$Case) {
     $desktopFound = (Test-Path $publicDesktop) -or (Test-Path $userDesktop)
-    if ($desktopFound -ne $Desktop) { throw "${Case}: desktop shortcut present=$desktopFound, expected $Desktop" }
-    if ((Test-Path $startMenu) -ne $StartMenu) { throw "${Case}: Start menu shortcut present=$(Test-Path $startMenu), expected $StartMenu" }
+    if ($desktopFound -ne $Desktop) { Show-ShortcutDiagnostics; throw "${Case}: desktop shortcut present=$desktopFound, expected $Desktop" }
+    if ((Test-Path $startMenu) -ne $StartMenu) { Show-ShortcutDiagnostics; throw "${Case}: Start menu shortcut present=$(Test-Path $startMenu), expected $StartMenu" }
     Write-Output "${Case}: desktop=$Desktop startmenu=$StartMenu OK"
 }
 
@@ -69,22 +86,20 @@ $scenarios = @(
 foreach ($scenario in $scenarios) {
     $wantDesktop = $scenario.Desktop -eq '1'
     $wantStart = $scenario.StartMenu -eq '1'
-    $log = "`"$env:RUNNER_TEMP\msi-install.log`""
-    Invoke-Msi @('/i', "`"$Installer`"", '/qn', '/norestart', '/l*v', $log, "INSTALLFOLDER=`"$installDir`"",
+    Invoke-Msi @('/i', "`"$Installer`"", '/qn', '/norestart', "INSTALLFOLDER=`"$installDir`"",
                  "DESKTOPSHORTCUT=$($scenario.Desktop)", "STARTMENUSHORTCUT=$($scenario.StartMenu)") "Install ($($scenario.Name))"
     Assert-Shortcuts $wantDesktop $wantStart "install: $($scenario.Name)"
     # A repair without properties remembers the earlier choices.
-    Invoke-Msi @('/fa', "`"$Installer`"", '/qn', '/norestart', '/l*v', $log) "Repair ($($scenario.Name))"
+    Invoke-Msi @('/fa', "`"$Installer`"", '/qn', '/norestart') "Repair ($($scenario.Name))"
     Assert-Shortcuts $wantDesktop $wantStart "repair: $($scenario.Name)"
     Invoke-Msi @('/x', "`"$Installer`"", '/qn', '/norestart') "Uninstall ($($scenario.Name))"
     Assert-Shortcuts $false $false "uninstall: $($scenario.Name)"
 }
 
 # Choices made on the older package survive a major upgrade that gives no properties.
-$log = "`"$env:RUNNER_TEMP\msi-install.log`""
-Invoke-Msi @('/i', "`"$PreviousInstaller`"", '/qn', '/norestart', '/l*v', $log, "INSTALLFOLDER=`"$installDir`"",
+Invoke-Msi @('/i', "`"$PreviousInstaller`"", '/qn', '/norestart', "INSTALLFOLDER=`"$installDir`"",
              'DESKTOPSHORTCUT=0', 'STARTMENUSHORTCUT=1') 'Install previous (start menu only)'
-Invoke-Msi @('/i', "`"$Installer`"", '/qn', '/norestart', '/l*v', $log) 'Upgrade'
+Invoke-Msi @('/i', "`"$Installer`"", '/qn', '/norestart') 'Upgrade'
 Assert-Shortcuts $false $true 'upgrade remembers choices'
 Invoke-Msi @('/x', "`"$Installer`"", '/qn', '/norestart') 'Uninstall after upgrade'
 Assert-Shortcuts $false $false 'uninstall after upgrade'
