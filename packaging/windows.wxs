@@ -19,32 +19,34 @@
     <!-- Shortcut choices. DESKTOPSHORTCUT / STARTMENUSHORTCUT are public: "1" creates the
          shortcut, "0" (or an unchecked box) does not. When unspecified they default to the
          remembered choice, else "1". Earlier choices are read from the registry in AppSearch. -->
-    <Property Id="PrevDesktopShortcut" Value="1">
+    <Property Id="DESKTOPSHORTCUT" Secure="yes" />
+    <Property Id="STARTMENUSHORTCUT" Secure="yes" />
+    <Property Id="PREVDESKTOPSHORTCUT" Secure="yes" Value="1">
       <RegistrySearch Id="PrevDesktopChoice" Root="HKLM" Key="Software\Cr4zySh4rk\CloneHeroCompanion"
                       Name="DesktopShortcutChoice" Type="raw" Bitness="always64" />
     </Property>
-    <Property Id="PrevStartMenuShortcut" Value="1">
+    <Property Id="PREVSTARTMENUSHORTCUT" Secure="yes" Value="1">
       <RegistrySearch Id="PrevStartMenuChoice" Root="HKLM" Key="Software\Cr4zySh4rk\CloneHeroCompanion"
                       Name="StartMenuShortcutChoice" Type="raw" Bitness="always64" />
     </Property>
     <!-- Wizard sequences apply the default before the dialog is shown. The execute sequence only
          applies it for silent/basic installs (UILevel below 4), so an unchecked box stays unchecked. -->
-    <SetProperty Id="DefaultDesktopUi" Property="DESKTOPSHORTCUT" Value="[PrevDesktopShortcut]"
+    <SetProperty Action="DefaultDesktopUi" Id="DESKTOPSHORTCUT" Value="[PREVDESKTOPSHORTCUT]"
                  After="AppSearch" Sequence="ui" Condition="DESKTOPSHORTCUT = &quot;&quot;" />
-    <SetProperty Id="DefaultDesktopExec" Property="DESKTOPSHORTCUT" Value="[PrevDesktopShortcut]"
+    <SetProperty Action="DefaultDesktopExec" Id="DESKTOPSHORTCUT" Value="[PREVDESKTOPSHORTCUT]"
                  After="AppSearch" Sequence="execute" Condition="DESKTOPSHORTCUT = &quot;&quot; AND UILevel &lt; 4" />
-    <SetProperty Id="DefaultStartMenuUi" Property="STARTMENUSHORTCUT" Value="[PrevStartMenuShortcut]"
+    <SetProperty Action="DefaultStartMenuUi" Id="STARTMENUSHORTCUT" Value="[PREVSTARTMENUSHORTCUT]"
                  After="AppSearch" Sequence="ui" Condition="STARTMENUSHORTCUT = &quot;&quot;" />
-    <SetProperty Id="DefaultStartMenuExec" Property="STARTMENUSHORTCUT" Value="[PrevStartMenuShortcut]"
+    <SetProperty Action="DefaultStartMenuExec" Id="STARTMENUSHORTCUT" Value="[PREVSTARTMENUSHORTCUT]"
                  After="AppSearch" Sequence="execute" Condition="STARTMENUSHORTCUT = &quot;&quot; AND UILevel &lt; 4" />
     <!-- Normalised 0/1 values that are written to the registry. -->
-    <SetProperty Id="StoreDesktopOn" Property="StoredDesktopShortcut" Value="1"
+    <SetProperty Action="StoreDesktopOn" Id="StoredDesktopShortcut" Value="1"
                  Before="InstallValidate" Sequence="execute" Condition="DESKTOPSHORTCUT = &quot;1&quot;" />
-    <SetProperty Id="StoreDesktopOff" Property="StoredDesktopShortcut" Value="0"
+    <SetProperty Action="StoreDesktopOff" Id="StoredDesktopShortcut" Value="0"
                  Before="InstallValidate" Sequence="execute" Condition="DESKTOPSHORTCUT &lt;&gt; &quot;1&quot;" />
-    <SetProperty Id="StoreStartMenuOn" Property="StoredStartMenuShortcut" Value="1"
+    <SetProperty Action="StoreStartMenuOn" Id="StoredStartMenuShortcut" Value="1"
                  Before="InstallValidate" Sequence="execute" Condition="STARTMENUSHORTCUT = &quot;1&quot;" />
-    <SetProperty Id="StoreStartMenuOff" Property="StoredStartMenuShortcut" Value="0"
+    <SetProperty Action="StoreStartMenuOff" Id="StoredStartMenuShortcut" Value="0"
                  Before="InstallValidate" Sequence="execute" Condition="STARTMENUSHORTCUT &lt;&gt; &quot;1&quot;" />
 
     <ComponentGroup Id="AppRegistryGroup" Directory="INSTALLFOLDER">
@@ -60,8 +62,7 @@
 
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ApplicationProgramsFolder" Name="Clone Hero Companion">
-        <Component Id="StartMenuShortcut" Guid="*">
-          <Condition>STARTMENUSHORTCUT = "1"</Condition>
+        <Component Id="StartMenuShortcut" Guid="*" Condition="STARTMENUSHORTCUT = &quot;1&quot;">
           <Shortcut Id="AppShortcut" Name="Clone Hero Companion" Target="[INSTALLFOLDER]CloneHeroCompanion.exe"
                     WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
           <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
@@ -72,8 +73,7 @@
     </StandardDirectory>
     <!-- Per-machine package: DesktopFolder resolves to the all-users desktop. -->
     <StandardDirectory Id="DesktopFolder">
-      <Component Id="DesktopShortcut" Guid="*">
-        <Condition>DESKTOPSHORTCUT = "1"</Condition>
+      <Component Id="DesktopShortcut" Guid="*" Condition="DESKTOPSHORTCUT = &quot;1&quot;">
         <Shortcut Id="AppDesktopShortcut" Name="Clone Hero Companion" Target="[INSTALLFOLDER]CloneHeroCompanion.exe"
                   WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
         <RegistryValue Root="HKLM" Key="Software\Cr4zySh4rk\CloneHeroCompanion"
@@ -91,20 +91,20 @@
     <!-- Shortcut options page: WelcomeDlg > LicenseAgreementDlg > InstallDirDlg > ShortcutsDlg > VerifyReadyDlg -->
     <UI>
       <Dialog Id="ShortcutsDlg" Width="370" Height="270" Title="[ProductName] Setup">
-        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Shortcuts" />
         <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose where Clone Hero Companion can be launched from." />
         <Control Id="DesktopCheck" Type="CheckBox" X="25" Y="65" Width="320" Height="18" Property="DESKTOPSHORTCUT" CheckBoxValue="1" Text="Create a desktop shortcut" />
         <Control Id="StartMenuCheck" Type="CheckBox" X="25" Y="90" Width="320" Height="18" Property="STARTMENUSHORTCUT" CheckBoxValue="1" Text="Add to the Start menu" />
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
           <Publish Event="NewDialog" Value="InstallDirDlg" />
         </Control>
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
           <Publish Event="NewDialog" Value="VerifyReadyDlg" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
           <Publish Event="SpawnDialog" Value="CancelDlg" />
         </Control>
       </Dialog>
