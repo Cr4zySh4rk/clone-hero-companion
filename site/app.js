@@ -74,7 +74,12 @@ function osOfAsset(name){
 }
 function pickAssets(rel){
   var out={};
-  (rel.assets||[]).forEach(function(a){var o=osOfAsset(a.name);if(o&&!out[o])out[o]=a});
+  (rel.assets||[]).forEach(function(a){
+    var o=osOfAsset(a.name);if(!o)return;
+    // Windows: prefer the .msi installer, else the portable .exe, whichever the latest release has
+    if(o==="win"&&out.win&&/\.msi$/i.test(out.win.name))return;
+    if(!out[o]||(o==="win"&&/\.msi$/i.test(a.name)))out[o]=a;
+  });
   return out;
 }
 function mb(n){return (n/1048576).toFixed(n>=104857600?0:1)+" MB"}
