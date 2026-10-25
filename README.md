@@ -111,11 +111,11 @@ Recommended: *Game & folders → Grant Full Disk Access…* opens the right page
 </details>
 
 <details>
-<summary><b>Windows:</b> SmartScreen</summary>
+<summary><b>Windows:</b> SmartScreen, shortcuts</summary>
 
-Run the .msi installer, then launch **Clone Hero Companion** from the Start menu. It installs the app and FFmpeg under `C:\Program Files\Clone Hero Companion`, supports upgrades and uninstall, and preserves your songs and settings. Close any old portable copy before launching the installed app.
+Run the .msi installer, then launch **Clone Hero Companion** from the desktop or Start menu. The installer has a **Shortcuts** page with two options, both on by default: *Create a desktop shortcut* and *Add to the Start menu*. For a silent install use `msiexec /i CloneHeroCompanion-windows-x64.msi /qn DESKTOPSHORTCUT=0 STARTMENUSHORTCUT=1`; upgrades and repairs remember your choice. It installs the app and FFmpeg under `C:\Program Files\Clone Hero Companion`, supports upgrades and uninstall, and preserves your songs and settings. Close any old portable copy before launching the installed app.
 
-This release is unsigned until a trusted signing identity is configured; [signing setup](docs/windows-signing.md) is documented for maintainers. Windows may show an unknown-publisher warning. The app uses Microsoft Edge WebView2. If Controlled folder access blocks it, allow the **installed** `CloneHeroCompanion.exe` in Windows Security and restart it.
+This release is unsigned until a trusted signing identity is configured; [signing setup](docs/windows-signing.md) is documented for maintainers. If Windows shows "Windows protected your PC", or Defender or Controlled folder access gets in the way, follow [Windows setup](#windows-setup) below.
 </details>
 
 <details>
@@ -128,6 +128,17 @@ tar xzf CloneHeroCompanion-linux-x64.tar.gz
 
 The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are saved as VP8 `.webm`, the format Clone Hero plays on Linux.
 </details>
+
+## Windows setup
+
+Windows may stop the installer or the app in four ways. Work through the steps that apply to you.
+
+1. **SmartScreen.** When the installer shows "Windows protected your PC", click **More info → Run anyway**. This release is unsigned, so Windows reports an unknown publisher. Code signing removes that warning over time: an EV certificate immediately, a standard (OV) or Azure Trusted Signing certificate once it builds reputation.
+2. **Controlled folder access.** You only need this if Controlled folder access is on, or if the app reports a blocked folder (for example "Cannot write to folder ... Controlled folder access blocked Clone Hero Companion"). It stops unknown apps writing to protected folders such as Documents, Desktop and Pictures, which is where the Clone Hero Songs folder usually lives. Open **Windows Security → Virus & threat protection → Manage ransomware protection → Allow an app through Controlled folder access → Add an allowed app → Browse all apps** and pick `C:\Program Files\Clone Hero Companion\CloneHeroCompanion.exe`. Restart the app. If Clone Hero itself cannot save, allow it the same way. Alternatively, move your Songs folder outside the protected folders, for example `C:\CloneHero\Songs`, and point the app at it under **Game & folders**.
+3. **If Defender quarantines the app.** Unsigned apps built with PyInstaller are occasionally flagged by mistake. Open **Windows Security → Virus & threat protection → Protection history**, choose the item and click **Actions → Restore** (and **Allow on device** if offered). Then report the false positive at <https://www.microsoft.com/en-us/wdsi/filesubmission>.
+4. **WebView2.** The app window uses Microsoft Edge WebView2, which comes with Windows 10 and 11. If the window is blank, install the [WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+
+Signing will remove the SmartScreen warning, but Controlled folder access always needs the app to be allowed, signed or not.
 
 ## Quick start
 

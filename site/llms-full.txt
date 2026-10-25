@@ -59,7 +59,14 @@ Everything is included (ffmpeg and yt-dlp, which keeps itself up to date). Nothi
 
 macOS first launch: open the .dmg and drag Clone Hero Companion to Applications. The app is not notarized by Apple, so the first time, right-click it and choose Open, then Open again. If macOS says the app "is damaged", run once in Terminal: xattr -cr "/Applications/Clone Hero Companion.app" . Recommended: Game & folders, then Grant Full Disk Access, and switch Clone Hero Companion on.
 
-Windows: run the .msi installer, then launch Clone Hero Companion from the Start menu. The app and FFmpeg are installed under Program Files. Close old portable copies first. Signing integration is available but not configured yet; Windows may show an unknown-publisher warning. If Controlled folder access blocks writes, allow the installed CloneHeroCompanion.exe and restart the app.
+Windows: run the .msi installer; it offers a desktop shortcut and a Start menu entry (both on by default; silent installs use DESKTOPSHORTCUT=0/1 and STARTMENUSHORTCUT=0/1). The app and FFmpeg are installed under C:\Program Files\Clone Hero Companion. Close old portable copies first. Full steps: https://cloneherocompanion.com/guide.html#windows-setup
+
+Windows setup (SmartScreen, Controlled folder access, Defender):
+1. SmartScreen: when the installer shows "Windows protected your PC", click More info, then Run anyway. This release is unsigned. Signing removes the unknown-publisher warning over time (an EV certificate immediately; an OV or Azure Trusted Signing certificate builds reputation).
+2. Controlled folder access: only needed if it is on, or if the app reports a blocked folder. It blocks unknown apps from writing to protected folders such as Documents, Desktop and Pictures, where the Clone Hero Songs folder usually lives. Open Windows Security, Virus & threat protection, Manage ransomware protection, Allow an app through Controlled folder access, Add an allowed app, Browse all apps, and pick C:\Program Files\Clone Hero Companion\CloneHeroCompanion.exe. Restart the app. Allow Clone Hero too if it cannot save. Alternatively move the Songs folder outside protected folders (for example C:\CloneHero\Songs) and point the app at it under Game & folders.
+3. If Defender quarantines the app: Windows Security, Protection history, Restore, then report the false positive at https://www.microsoft.com/en-us/wdsi/filesubmission.
+4. WebView2: it ships with Windows 10 and 11. If the window is blank, install the WebView2 runtime.
+Signing will remove the SmartScreen warning, but Controlled folder access always needs the app to be allowed, signed or not.
 
 Linux: tar xzf CloneHeroCompanion-linux-x64.tar.gz, then ./CloneHeroCompanion . The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are saved as VP8 .webm, the format Clone Hero plays on Linux.
 
@@ -73,6 +80,9 @@ Linux: tar xzf CloneHeroCompanion-linux-x64.tar.gz, then ./CloneHeroCompanion . 
 After downloading new charts, run Settings, Scan Songs in Clone Hero so the game sees them. Setlist changes show after restarting the game.
 
 ## FAQ
+
+Q: Windows says the app is blocked or can't save songs.
+A: Click More info, then Run anyway, if SmartScreen shows "Windows protected your PC". If the app can't save songs, Controlled folder access is probably blocking it: allow C:\Program Files\Clone Hero Companion\CloneHeroCompanion.exe in Windows Security, Virus & threat protection, Manage ransomware protection, Allow an app through Controlled folder access. Signing removes the SmartScreen warning but never bypasses Controlled folder access. If Defender quarantined the app, restore it from Protection history and report the false positive to Microsoft. See https://cloneherocompanion.com/guide.html#windows-setup
 
 Q: Will it mess up my songs or my scores?
 A: Every file the app changes is backed up first (*.chc-backup next to it), and Undo changes puts the originals back. Videos, video alignment and metadata don't affect scores. Adding lyrics changes the chart file, so Clone Hero starts a fresh high-score list for that chart (your old scores come back if you undo). To leave charts untouched, turn off Settings, In the game, Lyrics. For song folders the video is saved as video.mp4 (H.264), or video.webm (VP8) on Linux, with the alignment stored as video_start_time in song.ini. For .sng packages the video is added inside the package.
