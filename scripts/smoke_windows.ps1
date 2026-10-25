@@ -11,7 +11,7 @@ Set-Content "$dataDir\Songs\Artist - Song\song.ini" "[song]`nartist = Artist`nna
 
 $publicDesktop = Join-Path $env:PUBLIC 'Desktop\Clone Hero Companion.lnk'
 $userDesktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Clone Hero Companion.lnk'
-$startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Clone Hero Companion\Clone Hero Companion.lnk'
+$startMenuLnk = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Clone Hero Companion\Clone Hero Companion.lnk'
 $msiLog = Join-Path $env:RUNNER_TEMP 'msi-install.log'
 function Show-ShortcutDiagnostics {
     Write-Output '--- shortcut diagnostics ---'
@@ -39,7 +39,7 @@ function Invoke-Msi([string[]]$Arguments, [string]$What) {
 function Assert-Shortcuts([bool]$Desktop, [bool]$StartMenu, [string]$Case) {
     $desktopFound = (Test-Path $publicDesktop) -or (Test-Path $userDesktop)
     if ($desktopFound -ne $Desktop) { Show-ShortcutDiagnostics; throw "${Case}: desktop shortcut present=$desktopFound, expected $Desktop" }
-    if ((Test-Path $startMenu) -ne $StartMenu) { Show-ShortcutDiagnostics; throw "${Case}: Start menu shortcut present=$(Test-Path $startMenu), expected $StartMenu" }
+    if ((Test-Path $startMenuLnk) -ne $StartMenu) { Show-ShortcutDiagnostics; throw "${Case}: Start menu shortcut present=$(Test-Path $startMenuLnk), expected $StartMenu" }
     Write-Output "${Case}: desktop=$Desktop startmenu=$StartMenu OK"
 }
 
