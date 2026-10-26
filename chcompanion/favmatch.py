@@ -79,20 +79,21 @@ def title_tier(want: str, got: str) -> int | None:
     return None
 
 
-def rank(row: dict, results, hashes_of, id_hit=None):
-    """The best chart among results for a favourite row, or None. hashes_of(r) gives the checksums of r.
-    A chart returned for an empty charter is a copy marked guess=True."""
+def rank_all(row: dict, results, hashes_of, id_hit=None) -> list:
+    """Every acceptable chart among results for a favourite row, best first (same charter only). Charts
+    returned for an empty charter are copies marked guess=True."""
     src = row.get("source") or {}
     want_a, want_n = artist_key(row.get("artist") or ""), row.get("name") or ""
     want_c = row.get("charter") or ""
     md5s = {(row.get("checksum") or "").lower(), (src.get("encore_md5") or "").lower()} - {""}
     want_bad = is_bad(want_n)
-    best = None
+    scored = []
     for r in results:
         if not r.get("downloadUrl") or r.get("needsConversion"):
             continue
         if id_hit and id_hit(r):
-            return r
+            scored.append(((0, 0, []), r, 0))
+            continue
         sure = bool(md5s & hashes_of(r))
         if sure:
             tier = 1
@@ -103,17 +104,18 @@ def rank(row: dict, results, hashes_of, id_hit=None):
             if tier is None or not charter_ok(want_c, r.get("charter") or ""):
                 continue
         pen = 1 if (is_bad(r.get("name") or "") and not want_bad) else 0
-        key = (tier, pen, str(r.get("modified") or ""))
         # lowest tier, no penalty, then newest: compare the first two ascending, the date descending
-        score = (key[0], key[1], _neg(key[2]))
-        if best is None or score < best[0]:
-            best = (score, r)
-    if best is None:
-        return None
-    r = best[1]
-    if not fold(want_c) and best[0][0] != 1:
-        return {**r, "guess": True}
-    return r
+        scored.append(((tier, pen, _neg(str(r.get("modified") or ""))), r, tier))
+    scored.sort(key=lambda t: t[0])           # stable: equal scores keep search order
+    guess = not fold(want_c)
+    return [{**r, "guess": True} if guess and tier != 1 and sc != (0, 0, []) else r for sc, r, tier in scored]
+
+
+def rank(row: dict, results, hashes_of, id_hit=None):
+    """The best chart among results for a favourite row, or None. hashes_of(r) gives the checksums of r.
+    A chart returned for an empty charter is a copy marked guess=True."""
+    ranked = rank_all(row, results, hashes_of, id_hit)
+    return ranked[0] if ranked else None
 
 
 def _neg(s: str):
@@ -121,6 +123,11 @@ def _neg(s: str):
 
 
 def find(row: dict, search, queries, per_page: int, hashes_of, id_hit=None):
+    ranked = find_all(row, search, queries, per_page, hashes_of, id_hit)
+    return ranked[0] if ranked else None
+
+
+def find_all(row: dict, search, queries, per_page: int, hashes_of, id_hit=None) -> list:
     """Run the queries in order, merging their results; stop at the first one that gives an exact title (or
     checksum) match. Raises the first lookup error only when nothing at all could be searched."""
     seen, pool, errors, done = set(), [], [], 0
@@ -136,13 +143,14 @@ def find(row: dict, search, queries, per_page: int, hashes_of, id_hit=None):
             if k not in seen:
                 seen.add(k)
                 pool.append(r)
-        best = rank(row, pool, hashes_of, id_hit)
+        ranked = rank_all(row, pool, hashes_of, id_hit)
+        best = ranked[0] if ranked else None
         if best is not None and (id_hit and id_hit(best) or title_tier(row.get("name") or "", best.get("name") or "") == 2
                                  or hashes_of(best) & _row_md5s(row)):
-            return best
+            return ranked
     if errors and not done:
         raise errors[0]
-    return rank(row, pool, hashes_of, id_hit)
+    return rank_all(row, pool, hashes_of, id_hit)
 
 
 def _row_md5s(row: dict) -> set:

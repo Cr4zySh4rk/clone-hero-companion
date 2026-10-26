@@ -685,3 +685,71 @@ def resolve_favourite(row: dict, encore_search=None, rv_search=None) -> dict | N
     if errors:
         raise errors[0]
     return None
+
+
+def recorded_candidate(row: dict) -> dict | None:
+    """The chart exactly as it was installed before (its recorded download link), or None. It may be stale."""
+    from .sources import hosts
+    src = row.get("source") or {}
+    md5, url = (src.get("encore_md5") or "").strip(), (src.get("url") or "").strip()
+    base = {"artist": row.get("artist") or "", "name": row.get("name") or "", "charter": row.get("charter") or "",
+            "recorded": True}
+    if md5:
+        return {**base, "source": "encore", "md5": md5, "downloadUrl": f"https://files.enchor.us/{md5}.sng",
+                "pageUrl": f"https://www.enchor.us/chart/{md5}"}
+    if url:
+        url = hosts.normalize_url(url)
+        host = hosts.host_of(url).lower()
+        if host.endswith("enchor.us"):
+            kind = "encore"
+        elif src.get("rv_id") or "rhythmverse" in host or "rhythmverse" in (src.get("rv_url") or "").lower():
+            kind = "rhythmverse"
+        else:
+            kind = "link"
+        return {**base, "source": kind, "downloadUrl": url, "id": src.get("rv_id"),
+                "pageUrl": hosts.normalize_url(src.get("rv_url") or "") or None}
+    return None
+
+
+def resolve_candidates(row: dict, encore_search=None, rv_search=None, skip_urls=()) -> list[dict]:
+    """Ranked download candidates for a favourite, all by the same charter (favmatch): the recorded source
+    (unless in skip_urls, e.g. it just 404ed), then the best Chorus Encore chart, the best RhythmVerse chart,
+    then the remaining matches of either. Items whose downloadUrl is in skip_urls are left out. Raises only
+    when nothing was found and a lookup failed."""
+    from .sources import hosts
+    skip = {hosts.normalize_url(u) for u in skip_urls if u}
+    enc, rvs, errors = [], [], []
+    for name, fn, store in (("encore", lambda: _all_on_encore(row, encore_search), enc),
+                            ("rhythmverse", lambda: _all_on_rhythmverse(row, rv_search), rvs)):
+        try:
+            store.extend(fn())
+        except Exception as e:
+            log.info("%s lookup failed for %s: %s", name, row.get("name"), e)
+            errors.append(e)
+    ordered = [c for c in (recorded_candidate(row),) if c] + enc[:1] + rvs[:1] + enc[1:] + rvs[1:]
+    out, seen = [], set(skip)
+    for c in ordered:
+        u = hosts.normalize_url(c.get("downloadUrl") or "")
+        if u and u not in seen:
+            seen.add(u)
+            out.append(c)
+    if not out and errors:
+        raise errors[0]
+    return out
+
+
+def _all_on_encore(row: dict, search=None) -> list:
+    if search is None:
+        from .sources import encore
+        search = encore.search
+    return favmatch.find_all(row, search, favmatch.queries_for(row), 48, _enc_hashes)
+
+
+def _all_on_rhythmverse(row: dict, search=None) -> list:
+    if search is None:
+        from .sources import rhythmverse
+        search = rhythmverse.search
+    want_id = (row.get("source") or {}).get("rv_id") or ""
+    return favmatch.find_all({**row, "charter": strip_tags(row.get("charter") or "")}, search,
+                             favmatch.queries_for(row, rv=True), 48, _rv_hashes,
+                             (lambda r: r.get("id") == want_id) if want_id else None)

@@ -149,7 +149,7 @@ def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Pat
     if item.get("needsConversion"):
         raise RuntimeError("Rock Band CON charts need conversion, which isn't supported; pick a Clone Hero version")
     url = item.get("downloadUrl") or item.get("url")
-    if not url:
+    if not url or not str(url).strip():
         raise hosts.ManualDownload("No direct download for this chart; open its page to download it")
     if item.get("source") == "encore":
         label = safe_name(f"{item.get('artist', '')} - {item.get('name', '')}"

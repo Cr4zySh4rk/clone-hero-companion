@@ -697,7 +697,8 @@ def _install_cloud_favs(c, body: dict) -> dict:
                 c.cloudsync.not_found.discard(r["song_key"])
                 c.jobs.submit(Job("download", f"Download: {item['artist']} - {item['name']}", item=item,
                                   options={"process": process, "mark_fav": True, "fav_key": r["song_key"],
-                                           "fav_charter": r.get("charter") or "", "fav_checksum": r.get("checksum") or ""},
+                                           "fav_charter": r.get("charter") or "", "fav_checksum": r.get("checksum") or "",
+                                           "fav_row": {k: r.get(k) for k in ("artist", "name", "charter", "checksum", "source")}},
                                   priority=PRIO_USER))
                 queued += 1
     return {"queued": queued, "notFound": missing, "failed": failed, "alreadyHave": have}

@@ -594,8 +594,15 @@ class Companion:
         if item.get("ownedSameChart") and not job.options.get("force"):
             self.adopt_existing(job, item, loose=True)
             return "already in your library (same chart), not downloaded again"
+        from .sources import fallback
+        row = job.options.get("fav_row")
+
+        def more(tried):        # a favourite: other charts by the same charter, ignoring links that just failed
+            from .cloud import resolve_candidates
+            return resolve_candidates(row, skip_urls=tried) if row else []
         try:
-            paths = inst.install(item, dest, progress=progress, cancel=job.cancel)
+            paths, item = fallback.download_first_working(
+                item, lambda it: inst.install(it, dest, progress=progress, cancel=job.cancel), more, progress)
         except inst.AlreadyInstalled as e:
             self.adopt_existing(job, item, loose=True)
             return f"already in your library ({e}), not downloaded again"

@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 from ..net import urlopen
+from . import hosts
 
 BASE = "https://rhythmverse.co"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -24,10 +25,11 @@ SORTS = {"name": "title", "artist": "artist", "newest": "update_date", "download
 
 
 def _abs(url):
-    if not url or str(url).lower() == "none":
+    """Absolute, whitespace-free, percent-encoded link. The API returns relative paths with spaces and
+    brackets, e.g. "/download_file/user/id/Germany (Deutschland).7z"."""
+    if not url or str(url).strip().lower() == "none":
         return None
-    url = str(url)
-    return url if url.startswith("http") else BASE + (url if url.startswith("/") else "/" + url)
+    return hosts.normalize_url(url, BASE) or None
 
 
 def _clean(s: str) -> str:
@@ -95,7 +97,7 @@ def normalize(song: dict) -> dict:
         "album": str(d.get("album") or ""), "genre": str(d.get("genre") or ""), "year": str(d.get("year") or ""),
         "charter": _clean(charter or ""), "length": _num(d.get("song_length")), "difficulties": diffs, "levels": _levels(f),
         "artUrl": _abs(d.get("album_art") or f.get("album_art")), "downloadUrl": None if official else dl,
-        "pageUrl": f.get("download_page_url_full") or _abs(f.get("download_page_url")),
+        "pageUrl": _abs(f.get("download_page_url_full")) or _abs(f.get("download_page_url")),
         "format": fmt, "needsConversion": fmt in CONVERT_FORMATS, "size": _num(f.get("size")),
         "downloads": _num(f.get("downloads")), "fileName": f.get("file_name"),
         "hashes": [str(f[k]).lower() for k in ("gameplay_file_hash", "configuration_file_hash", "gamefile_hash") if f.get(k)],
