@@ -250,23 +250,46 @@ def download_slot():
 
 _TOOL_CACHE: dict = {}
 JS_RUNTIMES = ("deno", "node", "bun", "qjs")
-JS_HELP = "YouTube needs Deno or Node for some videos; install Deno from deno.land"
+JS_HELP = "YouTube needs Deno or Node for some videos; install Deno from deno.land (the official apps include one)"
+
+
+def bundled_dirs() -> list[Path]:
+    """Folders that can hold the tools shipped inside the app: PyInstaller's extraction folder
+    (_MEIPASS: _internal in the Windows onedir, Contents/Frameworks in the .app, a temp folder for
+    the Linux onefile) and, as a fallback, _internal next to a frozen executable."""
+    dirs: list[Path] = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        dirs.append(Path(base) / "bin")
+    if getattr(sys, "frozen", False):
+        dirs.append(Path(sys.executable).resolve().parent / "_internal" / "bin")
+    return dirs
+
+
+def _bundled_tool(name: str) -> str | None:
+    import os
+    exe = name + (".exe" if sys.platform == "win32" else "")
+    for d in bundled_dirs():
+        f = d / exe
+        if f.is_file() and (sys.platform == "win32" or os.access(f, os.X_OK)):
+            return str(f)
+    return None
+
+
+def is_bundled(path: str | None) -> bool:
+    return bool(path) and any(Path(path).parent == d for d in bundled_dirs())
 
 
 def _find_tool(name: str) -> str | None:
-    """shutil.which plus the usual install folders (a macOS app started from Finder or the
-    Dock only gets /usr/bin:/bin:/usr/sbin:/sbin as PATH; a Windows app keeps the PATH it was
-    started with, so a runtime installed later is missing from it). Only hits are cached: a
-    runtime installed while the app runs is picked up."""
+    """The copy shipped inside the app first, then shutil.which plus the usual install folders
+    (a macOS app started from Finder or the Dock only gets /usr/bin:/bin:/usr/sbin:/sbin as PATH;
+    a Windows app keeps the PATH it was started with, so a runtime installed later is missing from
+    it). Only hits are cached: a runtime installed while the app runs is picked up."""
     if _TOOL_CACHE.get(name):
         return _TOOL_CACHE[name]
     import os
     exe = name + (".exe" if sys.platform == "win32" else "")
-    base = getattr(sys, "_MEIPASS", None)
-    if base and (Path(base) / "bin" / exe).is_file():      # shipped inside the app
-        p = str(Path(base) / "bin" / exe)
-    else:
-        p = shutil.which(name)
+    p = _bundled_tool(name) or shutil.which(name)
     if not p:
         home = os.path.expanduser("~")
         dirs = ["/opt/homebrew/bin", "/usr/local/bin", f"{home}/.deno/bin", f"{home}/.bun/bin",
@@ -296,6 +319,69 @@ def js_runtime() -> tuple[str, str] | None:
     return None
 
 
+_DENO_VERSIONS: dict[str, str | None] = {}
+
+
+def deno_info() -> dict | None:
+    """{"version", "path", "bundled"} for the Deno yt-dlp will use, or None. Runs `deno --version`
+    (through process.run, so no console window) and caches the answer per path."""
+    p = _find_tool("deno")
+    if not p:
+        return None
+    if p not in _DENO_VERSIONS:
+        ver = None
+        try:
+            from .process import run, ToolStartError
+            r = run([p, "--version"], capture_output=True, text=True, timeout=20)
+            m = re.match(r"deno (\S+)", r.stdout or "") if r.returncode == 0 else None
+            ver = m.group(1) if m else None
+        except Exception:   # OSError, timeout, ToolStartError
+            ver = None
+        _DENO_VERSIONS[p] = ver
+    return {"version": _DENO_VERSIONS[p], "path": p, "bundled": is_bundled(p)}
+
+
+def setup_deno_env() -> None:
+    """Deno writes its cache next to the user's data, never into Program Files or the .app
+    bundle. yt-dlp starts Deno with a copy of os.environ, so setting it once at startup is enough.
+    A DENO_DIR the user already set is respected."""
+    import os
+    if os.environ.get("DENO_DIR"):
+        return
+    try:
+        from .paths import config_dir
+        d = config_dir() / "deno"
+        d.mkdir(parents=True, exist_ok=True)
+        os.environ["DENO_DIR"] = str(d)
+    except OSError:
+        log.debug("could not prepare DENO_DIR", exc_info=True)
+
+
+_POPEN_PATCHED = False
+
+
+def hide_deno_console() -> None:
+    """yt-dlp starts Deno with its own Popen, which only sets STARTF_USESHOWWINDOW. In the
+    windowed Windows app (no parent console) deno.exe, a console program, could still be given a
+    console, so add CREATE_NO_WINDOW. Scoped to the Deno provider module; other yt-dlp
+    subprocesses are untouched."""
+    global _POPEN_PATCHED
+    if _POPEN_PATCHED or sys.platform != "win32":
+        return
+    try:
+        import subprocess
+        import yt_dlp.extractor.youtube.jsc._builtin.deno as mod
+
+        class _QuietPopen(mod.Popen):
+            def __init__(self, *a, **kw):
+                kw["creationflags"] = kw.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+                super().__init__(*a, **kw)
+        mod.Popen = _QuietPopen
+        _POPEN_PATCHED = True
+    except Exception:   # older/newer yt-dlp layouts: its own startupinfo still hides the window
+        log.debug("could not patch yt-dlp's Deno launcher", exc_info=True)
+
+
 def ejs_status() -> str:
     """Whether yt-dlp's challenge-solver scripts (yt-dlp-ejs) are present."""
     try:
@@ -309,6 +395,7 @@ def ejs_status() -> str:
 
 def _ydl_opts(clients=None, **extra) -> dict:
     runtimes = {}
+    hide_deno_console()
     for rt in JS_RUNTIMES:
         p = _find_tool(rt)
         if p:

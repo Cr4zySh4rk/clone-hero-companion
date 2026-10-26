@@ -69,6 +69,8 @@ jobs:
           delocate-merge wheels/arm/*.whl wheels/x86/*.whl -w wheels/fused
           pip install wheels/fused/*.whl
           python scripts/fuse_ffmpeg_mac.py build/bin/ffmpeg
+          # Deno (pinned and SHA-256 verified in scripts/deno.lock.json) for yt-dlp's JS challenges
+          python scripts/fetch_deno.py mac build/bin/deno
           python -c "import numpy, webview, yt_dlp; print('numpy', numpy.__version__)"
       - name: Build universal .app
         run: |
@@ -80,6 +82,8 @@ jobs:
             --osx-bundle-identifier com.cr4zysh4rk.clonehero-companion \
             --add-data "chcompanion/web:chcompanion/web" \
             --add-binary "build/bin/ffmpeg:bin" \
+            --add-binary "build/bin/deno:bin" \
+            --add-data "packaging/licenses:licenses" \
             --collect-data yt_dlp_ejs --hidden-import yt_dlp \
             --exclude-module tkinter run.py
           APP="dist/Clone Hero Companion.app"
@@ -87,10 +91,18 @@ jobs:
           plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true,"NSAllowsArbitraryLoads":true}' "$PLIST"
           plutil -replace CFBundleShortVersionString -string "${GITHUB_REF_NAME#v}" "$PLIST" || true
           plutil -replace NSHighResolutionCapable -bool true "$PLIST" || plutil -insert NSHighResolutionCapable -bool true "$PLIST"
+          # Ad-hoc signing without the hardened runtime: Deno's V8 JIT needs no entitlements then.
+          # (If a Developer ID + --options runtime is ever added, give bin/deno
+          # com.apple.security.cs.allow-jit and allow-unsigned-executable-memory.)
+          DENO_BIN="$(find "$APP" -path '*bin/deno' -type f | head -1)"
+          chmod +x "$DENO_BIN"
+          codesign --force --sign - "$DENO_BIN"
           codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
           echo "Main executable:"; lipo -archs "$APP/Contents/MacOS/Clone Hero Companion"
           echo "numpy:"; lipo -archs "$(find "$APP" -name '_multiarray_umath*.so' | head -1)"
           echo "ffmpeg:"; lipo -archs "$(find "$APP" -path '*bin/ffmpeg' | head -1)"
+          echo "deno:"; lipo -archs "$DENO_BIN"; test -x "$DENO_BIN"
       - name: Smoke test (arm64 and x86_64 under Rosetta)
         run: |
           BIN="dist/Clone Hero Companion.app/Contents/MacOS/Clone Hero Companion"
@@ -98,8 +110,15 @@ jobs:
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
           "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
           grep -q "ffmpeg      : /" doctor.txt
+          grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
+          grep -q "Contents/.*/bin/deno" doctor.txt
           (softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true)
-          arch -x86_64 "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" || echo "x86_64 run not possible on this runner"
+          if arch -x86_64 true 2>/dev/null; then
+            arch -x86_64 "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor-x86.txt
+            grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor-x86.txt
+          else
+            echo "x86_64 run not possible on this runner"
+          fi
       - name: Make .dmg
         run: |
           mkdir -p dmg && cp -R "dist/Clone Hero Companion.app" dmg/ && ln -s /Applications dmg/Applications
@@ -136,6 +155,7 @@ jobs:
           python -m unittest discover -s tests -p test_cloud_install_batch.py -v
           python -m unittest discover -s tests -p test_job_errors.py -v
           python -m unittest discover -s tests -p test_process.py -v
+          python -m unittest discover -s tests -p test_deno_bundle.py -v
           python -m unittest discover -s tests -p test_setup_access.py -v
       - name: Build
         shell: bash
@@ -143,9 +163,12 @@ jobs:
           python scripts/make_icon.py build/icon
           mkdir -p build/bin
           python -c "import imageio_ffmpeg, shutil; shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), 'build/bin/ffmpeg.exe')"
+          python scripts/fetch_deno.py windows build/bin/deno.exe
           pyinstaller --noconfirm --onedir --windowed --name CloneHeroCompanion --icon build/icon/icon.ico \
             --add-data "chcompanion/web:chcompanion/web" \
             --add-binary "build/bin/ffmpeg.exe:bin" \
+            --add-binary "build/bin/deno.exe:bin" \
+            --add-data "packaging/licenses:licenses" \
             --collect-data yt_dlp_ejs --exclude-module imageio_ffmpeg \
             --hidden-import yt_dlp --exclude-module tkinter run.py
       - name: Authenticate for release signing
@@ -155,7 +178,7 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign app and FFmpeg
+      - name: Sign app, FFmpeg and Deno
         if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
         uses: azure/artifact-signing-action@v2
         with:
@@ -165,6 +188,7 @@ jobs:
           files: |
             ${{ github.workspace }}\dist\CloneHeroCompanion\CloneHeroCompanion.exe
             ${{ github.workspace }}\dist\CloneHeroCompanion\_internal\bin\ffmpeg.exe
+            ${{ github.workspace }}\dist\CloneHeroCompanion\_internal\bin\deno.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -186,7 +210,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') && vars.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
         run: |
-          foreach ($file in @($env:ASSET, 'dist/CloneHeroCompanion/CloneHeroCompanion.exe', 'dist/CloneHeroCompanion/_internal/bin/ffmpeg.exe')) {
+          foreach ($file in @($env:ASSET, 'dist/CloneHeroCompanion/CloneHeroCompanion.exe', 'dist/CloneHeroCompanion/_internal/bin/ffmpeg.exe', 'dist/CloneHeroCompanion/_internal/bin/deno.exe')) {
             $signature = Get-AuthenticodeSignature $file
             if ($signature.Status -ne 'Valid') { throw "Invalid signature: $file" }
           }
@@ -194,7 +218,7 @@ jobs:
         if: vars.WINDOWS_SIGNING_ENABLED != 'true'
         shell: pwsh
         run: '"Windows build is unsigned: signing has not been configured. See docs/windows-signing.md." >> $env:GITHUB_STEP_SUMMARY'
-      - name: Test installed app, FFmpeg, upgrade and uninstall
+      - name: Test installed app, FFmpeg, Deno, upgrade and uninstall
         shell: pwsh
         run: ./scripts/smoke_windows.ps1 -Installer (Join-Path $pwd $env:ASSET) -PreviousInstaller (Join-Path $pwd "build/smoke-previous.msi")
       - name: Upload to release
@@ -221,7 +245,9 @@ jobs:
           pip install -r requirements.txt pyinstaller py7zr send2trash
       - name: Build
         run: |
+          python scripts/fetch_deno.py linux build/bin/deno
           pyinstaller --noconfirm --onefile --console --name CloneHeroCompanion \
+            --add-binary "build/bin/deno:bin" --add-data "packaging/licenses:licenses" \
             --add-data "chcompanion/web:chcompanion/web" \
             --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
             --hidden-import yt_dlp --exclude-module tkinter run.py
@@ -231,6 +257,7 @@ jobs:
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
           ./dist/CloneHeroCompanion doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
           grep -q "Songs       : 1" doctor.txt
+          grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
           chmod +x dist/CloneHeroCompanion
           tar -C dist -czf "$ASSET" CloneHeroCompanion
       - name: Upload to release

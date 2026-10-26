@@ -96,7 +96,7 @@ Grab the file for your system from the **[latest release](https://github.com/Cr4
 | **Windows** 10 / 11 | `CloneHeroCompanion-windows-x64.msi` |
 | **Linux** x64 | `CloneHeroCompanion-linux-x64.tar.gz` |
 
-Everything is included (ffmpeg and yt-dlp, which keeps itself up to date). Nothing else to install.
+Everything is included (ffmpeg, Deno and yt-dlp, which keeps itself up to date). Nothing else to install.
 
 <details>
 <summary><b>macOS:</b> first launch</summary>
@@ -113,7 +113,7 @@ Recommended: *Game & folders → Grant Full Disk Access…* opens the right page
 <details>
 <summary><b>Windows:</b> SmartScreen, shortcuts</summary>
 
-Run the .msi installer, then launch **Clone Hero Companion** from the desktop or Start menu. The installer has a **Shortcuts** page with two options, both on by default: *Create a desktop shortcut* and *Add to the Start menu*. For a silent install use `msiexec /i CloneHeroCompanion-windows-x64.msi /qn DESKTOPSHORTCUT=0 STARTMENUSHORTCUT=1`; upgrades and repairs remember your choice. It installs the app and FFmpeg under `C:\Program Files\Clone Hero Companion`, supports upgrades and uninstall, and preserves your songs and settings. Close any old portable copy before launching the installed app.
+Run the .msi installer, then launch **Clone Hero Companion** from the desktop or Start menu. The installer has a **Shortcuts** page with two options, both on by default: *Create a desktop shortcut* and *Add to the Start menu*. For a silent install use `msiexec /i CloneHeroCompanion-windows-x64.msi /qn DESKTOPSHORTCUT=0 STARTMENUSHORTCUT=1`; upgrades and repairs remember your choice. It installs the app, FFmpeg and Deno under `C:\Program Files\Clone Hero Companion`, supports upgrades and uninstall, and preserves your songs and settings. Close any old portable copy before launching the installed app.
 
 This release is unsigned until a trusted signing identity is configured; [signing setup](docs/windows-signing.md) is documented for maintainers. If Windows shows "Windows protected your PC", or Defender or Controlled folder access gets in the way, follow [Windows setup](#windows-setup) below.
 </details>
@@ -248,6 +248,17 @@ Clone Hero Companion brings together ideas and features from three great communi
 Built on [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org), [LRCLIB](https://lrclib.net), [Chorus Encore](https://www.enchor.us), [RhythmVerse](https://rhythmverse.co) and [pywebview](https://pywebview.flowrl.com).
 
 Clone Hero Companion is a fan-made tool and isn't affiliated with Clone Hero or its developers. Videos and lyrics are downloaded for your personal use; please respect the rights of the artists.
+
+## Bundled components
+
+The apps ship these third-party programs next to the Companion code (not used when you run from source):
+
+| Component | Version | Licence | Used for |
+|---|---|---|---|
+| [FFmpeg](https://ffmpeg.org) | static build from imageio-ffmpeg | LGPL/GPL, see ffmpeg.org/legal.html | video and audio conversion, lyric alignment |
+| [Deno](https://deno.com) | 2.9.5 (pinned, SHA-256 verified in `scripts/deno.lock.json`) | MIT, Copyright 2018-2026 the Deno authors; full text in `licenses/DENO-LICENSE.txt` inside the app and `packaging/licenses/DENO-LICENSE.txt` | the JavaScript runtime yt-dlp needs to solve YouTube's challenges |
+
+Companion uses the bundled Deno first and your own Deno, Node or Bun only if it is missing. Deno's cache lives in the Companion settings folder (`DENO_DIR`), never in the install folder.
 
 ## License
 

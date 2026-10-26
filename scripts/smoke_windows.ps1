@@ -58,15 +58,20 @@ $exe = Join-Path $installDir 'CloneHeroCompanion.exe'
 Assert-Shortcuts $true $true 'default install + upgrade'
 $ffmpeg = Join-Path $installDir '_internal\bin\ffmpeg.exe'
 if (!(Test-Path $ffmpeg)) { throw 'The installed FFmpeg executable is missing' }
+$deno = Join-Path $installDir '_internal\bin\deno.exe'
+if (!(Test-Path $deno)) { throw 'The installed Deno executable is missing' }
+$denoVersion = & $deno --version 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -or $denoVersion -notmatch '^deno \d+\.\d+\.\d+') { throw "Installed Deno does not run: $denoVersion" }
 $doctor = Start-Process -FilePath $exe -ArgumentList @('doctor', '--data-dir', "`"$dataDir`"", '--report', "`"$report`"") -Wait -PassThru
 if ($doctor.ExitCode -ne 0) { throw "Installed app failed: $($doctor.ExitCode)" }
 $text = Get-Content $report -Raw
 Write-Output $text
-# Informational only: a runner without Deno/Node must not fail the build.
 Write-Output ('YouTube JS runtime: ' + (($text -split "`n" | Where-Object { $_ -match '^JS runtime' }) -join ''))
-foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK', $ffmpeg)) {
+foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK', $ffmpeg, $deno)) {
     if (!$text.Contains($expected)) { throw "Doctor did not confirm: $expected" }
 }
+# The bundled Deno must be the runtime in use, and it must run through the app's process helper.
+if ($text -notmatch '(?m)^JS runtime  : deno \d+\.\d+\.\d+ \(bundled\)') { throw 'Doctor did not report the bundled Deno' }
 # Uninstall removes the program but must preserve the library and user settings.
 $settings = Join-Path $env:APPDATA 'CloneHeroCompanion\keep-settings.txt'
 Set-Content $settings 'Keep user settings'

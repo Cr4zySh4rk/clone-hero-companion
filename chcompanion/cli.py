@@ -137,7 +137,15 @@ def cmd_doctor(args) -> int:
     say(f"In-game song videos setting: {'on' if sv == '1' else 'OFF (Settings > Custom Content > Song Videos)' if sv == '0' else 'unknown'}")
     say(f"yt-dlp      : {'available' if youtube.available() else 'missing'}")
     rt = youtube.js_runtime()
-    say(f"JS runtime  : {rt[0] + ' ' + rt[1] if rt else 'none - ' + youtube.JS_HELP}")
+    dn = youtube.deno_info() if rt and rt[0] == "deno" else None
+    if dn:
+        where = "bundled" if dn["bundled"] else "system"
+        say(f"JS runtime  : deno {dn['version'] or 'unknown (does not run)'} ({where})")
+        say(f"JS path     : {dn['path']}")
+    elif rt:
+        say(f"JS runtime  : {rt[0]} {rt[1]}")
+    else:
+        say(f"JS runtime  : none - {youtube.JS_HELP}")
     say(f"yt-dlp-ejs  : {youtube.ejs_status()}")
     from .align import ffmpeg_path
     ff = ffmpeg_path()
@@ -343,6 +351,7 @@ def main(argv=None) -> int:
         sys.stderr = open(os.devnull, "w")
     from . import ytupdate
     ytupdate.activate_cached()
+    youtube.setup_deno_env()
     ap = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     # macOS passes -psn_* when an .app is opened from Finder

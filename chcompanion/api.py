@@ -361,7 +361,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         return _json(h, {"settings": c.settings(), "dataDir": str(c.data_dir),
                          "songDirs": [str(r) for r in c.library.roots], "game": str(game) if game else None,
                          "version": __version__, "ytdlp": _ytdlp_version(),
-                         "jsRuntime": (youtube.js_runtime() or ("", ""))[0] or None, "jsHelp": youtube.JS_HELP,
+                         "jsRuntime": _js_label(), "jsHelp": youtube.JS_HELP,
                          "ejs": youtube.ejs_status(), "ffmpeg": bool(ffmpeg_path()),
                          "minP": youtube.MIN_P}) or True
     if path == "/api/settings" and method == "POST":
@@ -470,6 +470,16 @@ def _safe_res(c, vid: str) -> int:
         return c.game_yt.best_res(vid)
     except Exception:
         return 0
+
+
+def _js_label() -> str | None:
+    rt = youtube.js_runtime()
+    if not rt:
+        return None
+    dn = youtube.deno_info() if rt[0] == "deno" else None
+    if dn:
+        return f"deno {dn['version'] or ''} ({'bundled' if dn['bundled'] else 'system'})".replace("  ", " ")
+    return rt[0]
 
 
 def _ytdlp_version() -> str:
