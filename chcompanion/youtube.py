@@ -37,34 +37,108 @@ BAD_WORDS = ["lyric", "lyrics", "cover", "reaction", "karaoke", "tutorial", "les
              "teaser", "trailer", "behind the scenes", "making of", "interview", "full album",
              "expert", "hard", "medium", "easy", "fc", "full combo", "gameplay", "yarg",
              "rocksmith", "pivot", "sickfigures", "chart", "custom song", "100", "fret", "rb3", "gh3"]
-BOT_SIGNS = ("sign in to confirm", "not a bot", "http error 429", "too many requests")
-# yt-dlp player clients to fall back on when the default one can't get HD formats
-# (BackstageHero's set: no PO token needed for DASH streams).
-CLIENT_FALLBACKS = [None, ["tv_embedded", "android_vr", "android"], ["web_safari", "mweb"]]
+# What counts as YouTube limiting us. Only these are throttling/bot signals; they start the shared
+# cool-down. Matched against yt-dlp's real messages (tests/fixtures/youtube/errors.json): note that
+# "Sign in to confirm your age" is NOT one of them, it is an age-restricted video, and the bot message
+# is "Sign in to confirm you're not a bot".
+LIMIT_SIGNS = ("not a bot", "http error 429", "too many requests", "rate-limited by youtube",
+               "rate limited by youtube", "your ip is likely being blocked")
+AGE_SIGNS = ("confirm your age", "age-restricted", "age restricted", "inappropriate for some users")
+UNAVAILABLE_SIGNS = ("video unavailable", "this video is not available", "private video", "members-only",
+                     "has been removed", "is no longer available", "blocked it in your country",
+                     "not made this video available in your country", "copyright")
+# Player clients. yt-dlp 2026.8-2026.10 (observed live, tests/fixtures/youtube/clients.json): its own
+# default clients (visionos, tv_samsung, web; visionos alone without a JS runtime) give the full list, and
+# web_embedded joins them for age-gated videos. tv_embedded no longer exists (yt-dlp silently ignores it),
+# and web_safari, mweb, android and android_vr need a GVS PO token, so they only ever return the reduced
+# list (storyboards + one muxed 360p stream). Asking them again cost ~10 requests each and never helped.
+CLIENT_FALLBACKS = [None]
 
 
 class BotDetected(Exception):
-    pass
+    """YouTube really is limiting us (HTTP 429, "not a bot", an explicit rate-limit message)."""
 
 
-def degraded(formats: list) -> bool:
-    """YouTube sometimes answers (when limiting requests) with only a muxed SD stream and
-    no separate video streams. A genuinely SD video still has video-only streams."""
-    vo = [f for f in formats or [] if f.get("vcodec") not in (None, "none") and f.get("acodec") in (None, "none")]
-    return not vo
+class VideoProblem(Exception):
+    """This video can't give us what we need; not a statement about YouTube limiting us. The
+    next candidate may work and no cool-down starts. `label` is a short reason for job messages."""
+    label = "problem"
+
+    def __init__(self, message: str = ""):
+        super().__init__(message)
+        self.detail = message
 
 
-class YouTubeLimited(Exception):
-    """A temporary answer from YouTube; try this video again later."""
+class AgeRestricted(VideoProblem):
+    label = "age-restricted"
+
+
+class VideoUnavailable(VideoProblem):
+    label = "unavailable"
+
+
+class ReducedFormats(VideoProblem):
+    """The answer held no separate video streams (the PO-token-gated clients only give storyboards and
+    one muxed 360p stream), or no streams at all."""
+    label = "no video streams offered"
 
 
 class NoHDVideo(Exception):
     pass
 
 
+def list_state(formats: list) -> str:
+    """'full' (has separate video streams), 'reduced' (streams, but none video-only: what the clients
+    that lack a PO token get), or 'empty' (nothing but storyboards, or nothing at all)."""
+    real = [f for f in formats or [] if f.get("protocol") != "mhtml"
+            and (f.get("vcodec") not in (None, "none") or f.get("acodec") not in (None, "none"))]
+    if not real:
+        return "empty"
+    vo = [f for f in real if f.get("vcodec") not in (None, "none") and f.get("acodec") in (None, "none")]
+    return "full" if vo else "reduced"
+
+
 def is_bot_error(e: Exception) -> bool:
+    """Genuine throttling or bot detection."""
     m = str(e).lower()
-    return any(s in m for s in BOT_SIGNS)
+    return any(s in m for s in LIMIT_SIGNS)
+
+
+def is_age_error(e: Exception) -> bool:
+    m = str(e).lower()
+    return not is_bot_error(e) and any(s in m for s in AGE_SIGNS)
+
+
+def is_unavailable_error(e: Exception) -> bool:
+    m = str(e).lower()
+    return not is_bot_error(e) and any(s in m for s in UNAVAILABLE_SIGNS)
+
+
+def _short(e: Exception) -> str:
+    """yt-dlp's own message without the "ERROR: [youtube] id:" prefix and the cookies advice."""
+    m = re.sub(r"^\s*ERROR:\s*(\[[^\]]+\]\s*)?([\w-]{11}:\s*)?", "", str(e).strip())
+    m = re.sub(r"\s*(Use --cookies-from-browser|See\s+https?://|Also see).*$", "", m, flags=re.S)
+    return m.strip()[:200] or type(e).__name__
+
+
+def classify_error(e: Exception, state: str | None = None, nformats: int = 0) -> Exception:
+    """The exception to raise for what yt-dlp raised: BotDetected only for real throttling, a VideoProblem
+    with the real message for a video that can't be had, `e` itself for everything else.
+    state: what the selector saw ('sd' = full list without HD, 'reduced', 'empty')."""
+    if isinstance(e, (BotDetected, VideoProblem, NoHDVideo)):
+        return e
+    if is_bot_error(e):
+        return BotDetected(str(e))
+    if is_age_error(e):
+        return AgeRestricted(_short(e))
+    if is_unavailable_error(e):
+        return VideoUnavailable(_short(e))
+    if state == "sd":
+        return NoHDVideo(f"no format at {MIN_P}p or better")
+    if state in ("reduced", "empty"):
+        return ReducedFormats(f"YouTube offered {'no usable' if state == 'empty' else 'no separate video'} "
+                              f"streams ({nformats} formats listed)")
+    return e
 
 
 # ------------------------------------------------------------------ rate gate
@@ -139,9 +213,8 @@ class RateGate:
         return max(0, int(self.paused_until - time.time() + 0.999))
 
     def max_waits(self) -> int:
-        """How many cool-downs a job sits through before it fails. Without a JS runtime a cool-down
-        will not help (YouTube cuts the formats down), so it gets one try."""
-        return len(self.BACKOFF) if js_runtime() else 1
+        """How many cool-downs a job sits through before it fails."""
+        return len(self.BACKOFF)
 
     def wait_cooldown(self, progress=None):
         """Block while YouTube requests are paused, telling the job why."""
@@ -177,7 +250,7 @@ def download_slot():
 
 _TOOL_CACHE: dict = {}
 JS_RUNTIMES = ("deno", "node", "bun", "qjs")
-JS_HELP = "YouTube needs Deno or Node; install Deno from deno.land"
+JS_HELP = "YouTube needs Deno or Node for some videos; install Deno from deno.land"
 
 
 def _find_tool(name: str) -> str | None:
@@ -419,20 +492,14 @@ class YouTube:
 
     # -------------------------------------------------------------- formats
     def info(self, video_id: str) -> dict:
-        """Full extraction (formats with URLs), cached ~1 h. Tries fallback player
-        clients when the default one returns no format at >= MIN_P."""
+        """Full extraction (formats with URLs), cached ~1 h. One extraction with yt-dlp's own player
+        clients (see CLIENT_FALLBACKS); real errors are raised as what they are."""
         with self._lock:
             hit = self._infos.get(video_id)
             if hit and hit[0] > time.time():
                 return hit[1]
         from yt_dlp import YoutubeDL
-        last_err, info = None, None
-
-        def rank(i: dict) -> tuple:
-            fm = i.get("formats") or []
-            # HD available > full format list (video streams listed) > more formats
-            return (bool(pick_format(fm, self.pref_p)), not degraded(fm), len(fm))
-
+        info = None
         for clients in CLIENT_FALLBACKS:
             try:
                 with GATE.slot(), YoutubeDL(_ydl_opts(clients)) as ydl:
@@ -440,22 +507,26 @@ class YouTube:
             except BotDetected:
                 raise
             except Exception as e:
-                last_err = e
-                continue
-            if info is None or rank(cur) > rank(info):
-                info = cur           # keep the most complete answer, not just the last one
-            fm = cur.get("formats") or []
-            if pick_format(fm, self.pref_p):
+                c = classify_error(e)
+                if c is e:
+                    raise
+                raise c from e
+            if info is None or (bool(pick_format(cur.get("formats") or [], self.pref_p)),
+                                len(cur.get("formats") or [])) > (bool(pick_format(info.get("formats") or [], self.pref_p)),
+                                                                  len(info.get("formats") or [])):
+                info = cur
+            if pick_format(cur.get("formats") or [], self.pref_p):
                 break
-            if not degraded(fm):
-                # A full list of streams without any HD one: the video really isn't HD.
-                # Other clients only give cut-down lists, so asking them again is pointless.
-                break
-        if info is None:
-            raise last_err or RuntimeError("extraction failed")
         with self._lock:
             self._infos[video_id] = (time.time() + 3000, info)
         return info
+
+    def _no_hd(self, formats: list) -> Exception:
+        st = list_state(formats)
+        if st == "full":
+            return NoHDVideo(f"no format at {MIN_P}p or better")
+        return ReducedFormats(f"YouTube offered {'no usable' if st == 'empty' else 'no separate video'} "
+                              f"streams ({len(formats or [])} formats listed)")
 
     def best_res(self, video_id: str) -> int:
         f = pick_format(self.info(video_id).get("formats") or [], self.pref_p, min_p=MIN_P)
@@ -470,7 +541,7 @@ class YouTube:
         info = self.info(video_id)
         fmt = pick_format(info.get("formats") or [], self.pref_p, max_p=self.max_height, for_game=False)
         if not fmt:
-            raise NoHDVideo(f"no format at {MIN_P}p or better")
+            raise self._no_hd(info.get("formats") or [])
         url = fmt["url"]
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         expire = float(qs.get("expire", [time.time() + 3600])[0])
@@ -489,12 +560,10 @@ class YouTube:
         info = self.info(video_id)
         fmt = pick_format(info.get("formats") or [], self.pref_p, max_p=max(self.pref_p, 1080))
         if not fmt:
-            if degraded(info.get("formats") or []):
+            if list_state(info.get("formats") or []) != "full":
                 with self._lock:           # don't keep the cut-down answer cached
                     self._infos.pop(video_id, None)
-                GATE.throttled()
-                raise YouTubeLimited("YouTube only offered a reduced format list")
-            raise NoHDVideo(f"no format at {MIN_P}p or better")
+            raise self._no_hd(info.get("formats") or [])
         hooks = []
         if progress:
             def hook(d):
@@ -509,9 +578,15 @@ class YouTube:
         opts = _ydl_opts(format=selector, outtmpl=dest_noext + ".%(ext)s",
                          progress_hooks=hooks, overwrites=True, continuedl=False,
                          concurrent_fragment_downloads=4)
-        with GATE.slot(), download_slot(), YoutubeDL(opts) as ydl:
-            done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
-            path = ydl.prepare_filename(done)
+        try:
+            with GATE.slot(), download_slot(), YoutubeDL(opts) as ydl:
+                done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+                path = ydl.prepare_filename(done)
+        except Exception as e:
+            c = classify_error(e)
+            if c is e:
+                raise
+            raise c from e
         got = (done.get("requested_formats") or [done])[0]
         got_res = res_class(got.get("width"), got.get("height"))
         if got_res and got_res < MIN_P:
@@ -529,95 +604,90 @@ class YouTube:
     def fetch(self, video_id: str, dest_noext: str, with_audio: bool = False, progress=None) -> tuple[str, dict, str | None]:
         """One YouTube lookup, then the HD video stream (and the audio stream, for lining the
         video up) downloaded in the same session: (video_path, format, audio_path).
-        Raises NoHDVideo when the video has no >= 640p stream, YouTubeLimited when YouTube
-        only answered with a cut-down format list."""
+        Raises NoHDVideo when the video has no >= 640p stream; BotDetected only when YouTube really
+        limits us; a VideoProblem (age-restricted, unavailable, no video streams offered) with
+        yt-dlp's own message otherwise. Exactly one extraction, whatever the answer."""
         from yt_dlp import YoutubeDL
         pref, maxp = self.pref_p, max(self.pref_p, 1080)
-        last_limited = None
-        for clients in CLIENT_FALLBACKS:
-            state: dict = {"gate": True}
+        state: dict = {"gate": True}
 
-            def selector(ctx, state=state):
-                fm = ctx.get("formats") or []
-                if state["gate"]:                 # the lookup is done: let the next one start
-                    GATE.release()
-                    state["gate"] = False
-                    DOWNLOADS.acquire()
-                    state["dl"] = True
-                v = pick_format(fm, pref, max_p=maxp)
-                if not v:
-                    state["why"] = "limited" if degraded(fm) else "sd"
-                    return
-                state["fmt"] = v
-                yield next(f for f in fm if f.get("format_id") == v["format_id"])
-                if with_audio:
-                    auds = [f for f in fm if f.get("vcodec") in (None, "none")
-                            and f.get("acodec") not in (None, "none") and f.get("url")]
-                    a = max(auds, key=lambda f: (f.get("ext") == "m4a", "m3u8" not in (f.get("protocol") or ""),
-                                                 f.get("abr") or 0), default=None)
-                    if a:
-                        yield a
+        def selector(ctx):
+            fm = ctx.get("formats") or []
+            if state["gate"]:                 # the lookup is done: let the next one start
+                GATE.release()
+                state["gate"] = False
+                DOWNLOADS.acquire()
+                state["dl"] = True
+            state["n"] = len(fm)
+            v = pick_format(fm, pref, max_p=maxp)
+            if not v:
+                st = list_state(fm)
+                state["why"] = "sd" if st == "full" else st
+                return
+            state["fmt"] = v
+            yield next(f for f in fm if f.get("format_id") == v["format_id"])
+            if with_audio:
+                auds = [f for f in fm if f.get("vcodec") in (None, "none")
+                        and f.get("acodec") not in (None, "none") and f.get("url")]
+                a = max(auds, key=lambda f: (f.get("ext") == "m4a", "m3u8" not in (f.get("protocol") or ""),
+                                             f.get("abr") or 0), default=None)
+                if a:
+                    yield a
 
-            hooks = []
-            if progress:
-                def hook(d):
-                    if d.get("status") == "downloading" and (d.get("info_dict") or {}).get("vcodec") not in (None, "none"):
-                        tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                        progress(d.get("downloaded_bytes", 0), tot)
-                hooks.append(hook)
-            opts = _ydl_opts(clients, format=selector, outtmpl=dest_noext + ".f%(format_id)s.%(ext)s",
-                             progress_hooks=hooks, overwrites=True, continuedl=False,
-                             concurrent_fragment_downloads=4)
-            GATE.acquire()
-            ok = True
-            try:
-                with YoutubeDL(opts) as ydl:
-                    done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
-            except Exception as e:
-                ok = False
-                if is_bot_error(e):
-                    GATE.throttled()
-                    raise BotDetected(str(e)) from e
-                why = state.get("why")
-                if why == "sd":
-                    raise NoHDVideo(f"no format at {MIN_P}p or better") from e
-                if why == "limited":
-                    last_limited = e
-                    continue                      # ask YouTube's other clients
+        hooks = []
+        if progress:
+            def hook(d):
+                if d.get("status") == "downloading" and (d.get("info_dict") or {}).get("vcodec") not in (None, "none"):
+                    tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    progress(d.get("downloaded_bytes", 0), tot)
+            hooks.append(hook)
+        opts = _ydl_opts(CLIENT_FALLBACKS[0], format=selector, outtmpl=dest_noext + ".f%(format_id)s.%(ext)s",
+                         progress_hooks=hooks, overwrites=True, continuedl=False,
+                         concurrent_fragment_downloads=4)
+        GATE.acquire()
+        ok = True
+        try:
+            with YoutubeDL(opts) as ydl:
+                done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+        except Exception as e:
+            ok = False
+            c = classify_error(e, state.get("why"), state.get("n", 0))
+            if isinstance(c, BotDetected):
+                GATE.throttled()
+            if c is e:
                 raise
-            finally:
-                if state["gate"]:
-                    GATE.release(ok)
-                if state.get("dl"):
-                    DOWNLOADS.release()
-            vpath = apath = None
-            got = state.get("fmt") or {}
-            for d in done.get("requested_downloads") or []:
-                if d.get("vcodec") not in (None, "none"):
-                    vpath, got = d.get("filepath"), d
-                else:
-                    apath = d.get("filepath")
-            if not vpath:
-                raise RuntimeError("the video stream wasn't downloaded")
-            if with_audio and not apath and got.get("acodec") not in (None, "none"):
-                # ffmpeg was found, so yt-dlp merged the streams into one file. Split it again with a
-                # stream copy: the video must stay video-only, and the audio is needed for lining up.
-                # Asking YouTube for the audio a second time is what used to trigger rate limiting.
-                vpath, apath = _split_merged(vpath)
-            got_res = res_class(got.get("width"), got.get("height"))
-            if got_res and got_res < MIN_P:
-                for x in (vpath, apath):
-                    try:
-                        Path(x).unlink()
-                    except (OSError, TypeError):
-                        pass
-                raise NoHDVideo(f"only {got_res}p was delivered")
-            fmt = dict(state.get("fmt") or {})
-            fmt.update({k: got.get(k) for k in ("format_id", "vcodec", "width", "height", "ext") if got.get(k)})
-            fmt["res_class"] = got_res or fmt.get("res_class")
-            return vpath, fmt, apath
-        GATE.throttled()          # every player client answered with a cut-down list: pause all lookups
-        raise YouTubeLimited("YouTube only offered a reduced format list") from last_limited
+            raise c from e
+        finally:
+            if state["gate"]:
+                GATE.release(ok)
+            if state.get("dl"):
+                DOWNLOADS.release()
+        vpath = apath = None
+        got = state.get("fmt") or {}
+        for d in done.get("requested_downloads") or []:
+            if d.get("vcodec") not in (None, "none"):
+                vpath, got = d.get("filepath"), d
+            else:
+                apath = d.get("filepath")
+        if not vpath:
+            raise RuntimeError("the video stream wasn't downloaded")
+        if with_audio and not apath and got.get("acodec") not in (None, "none"):
+            # ffmpeg was found, so yt-dlp merged the streams into one file. Split it again with a
+            # stream copy: the video must stay video-only, and the audio is needed for lining up.
+            # Asking YouTube for the audio a second time is what used to trigger rate limiting.
+            vpath, apath = _split_merged(vpath)
+        got_res = res_class(got.get("width"), got.get("height"))
+        if got_res and got_res < MIN_P:
+            for x in (vpath, apath):
+                try:
+                    Path(x).unlink()
+                except (OSError, TypeError):
+                    pass
+            raise NoHDVideo(f"only {got_res}p was delivered")
+        fmt = dict(state.get("fmt") or {})
+        fmt.update({k: got.get(k) for k in ("format_id", "vcodec", "width", "height", "ext") if got.get(k)})
+        fmt["res_class"] = got_res or fmt.get("res_class")
+        return vpath, fmt, apath
 
     def download_audio(self, video_id: str, dest_noext: str) -> str:
         from yt_dlp import YoutubeDL
@@ -630,7 +700,10 @@ class YouTube:
                     return ydl.prepare_filename(info)
             except BotDetected:
                 raise
-            except Exception as e:  # sporadic 403s: try another format
+            except Exception as e:  # sporadic 403s or a format that isn't there: try another format
+                c = classify_error(e)
+                if c is not e:      # age-restricted / unavailable: another format will not help
+                    raise c from e
                 last = e
         raise last  # type: ignore[misc]
 

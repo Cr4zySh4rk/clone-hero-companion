@@ -1,4 +1,5 @@
-"""YouTube lookups per chart, the global cool-down, and the missing JS runtime message (yt-dlp is mocked)."""
+"""YouTube lookups per chart, the global cool-down and what does (and does not) count as YouTube limiting us
+(yt-dlp is mocked; the real format lists and messages are in tests/fixtures/youtube)."""
 import tempfile
 import time
 import unittest
@@ -103,16 +104,17 @@ class LookupCountTests(Base):
                 mock.patch.object(ingame, "cached_video", return_value=None):
             return ingame.download_video(sg or song(), yt, store)
 
-    def test_limited_answer_stops_after_first_candidate_and_pauses(self):
+    def test_reduced_answer_is_not_limiting_and_costs_one_lookup_per_candidate(self):
         FakeYDL.formats = CUT_DOWN
         yt = youtube.YouTube()
-        with self.assertRaises(youtube.YouTubeLimited):
+        with self.assertRaises(ingame.InGameError) as cm:
             self._download_video(yt, Store())
-        searches = [c for c in FakeYDL.calls if c.startswith("ytsearch")]
         watches = [c for c in FakeYDL.calls if "watch?v=" in c]
-        self.assertEqual(len(searches), 1)
-        self.assertEqual(len(watches), len(youtube.CLIENT_FALLBACKS))   # one candidate, each client once
-        self.assertGreater(youtube.GATE.remaining(), 0)
+        self.assertEqual(len(watches), 3)            # three candidates, each looked up exactly once
+        self.assertEqual(youtube.GATE.remaining(), 0)    # no cool-down: YouTube did not limit anything
+        self.assertEqual(youtube.GATE.strikes, 0)
+        self.assertIn("no video streams offered", str(cm.exception))
+        self.assertNotIn("limiting", str(cm.exception))
 
     def test_install_all_of_ten_charts_looks_up_each_chart_once(self):
         store = Store()
@@ -160,20 +162,19 @@ class BackoffTests(Base):
         self._wait(job, lambda j: j.status == "done")
         self.assertEqual((len(attempts), job.result), (2, "done it"))
 
-    def test_fails_only_after_cooldowns_are_used_up_with_js_hint(self):
+    def test_fails_only_after_cooldowns_are_used_up(self):
         youtube.GATE.BACKOFF = [1, 1, 1]
 
         def runner(job, progress):
             progress("downloading the video")
-            raise youtube.YouTubeLimited("reduced format list")
+            raise youtube.BotDetected("HTTP Error 429: Too Many Requests")
 
         m = self._manager(runner)
         m.start()
-        with mock.patch.object(youtube, "js_runtime", return_value=None):
-            job = m.submit(Job("full", "Artist - Song"))
-            self._wait(job, lambda j: j.status == "failed")
+        job = m.submit(Job("full", "Artist - Song"))
+        self._wait(job, lambda j: j.status == "failed")
         self.assertTrue(job.error.startswith("downloading the video: "), job.error)
-        self.assertIn("YouTube needs Deno or Node; install Deno from deno.land", job.error)
+        self.assertIn("YouTube kept limiting requests after 3 cool-down(s)", job.error)
 
     def test_media_and_full_for_one_chart_are_one_job(self):
         m = JobManager(lambda j, p: "x", workers=1)
@@ -212,7 +213,7 @@ class JsRuntimeTests(unittest.TestCase):
                 mock.patch("builtins.print") as pr:
             cli.cmd_doctor(SimpleNamespace(data_dir=tmp, songs_dir=None, report=None))
         text = pr.call_args[0][0]
-        self.assertIn("JS runtime  : none - YouTube needs Deno or Node; install Deno from deno.land", text)
+        self.assertIn("JS runtime  : none - " + youtube.JS_HELP, text)
 
 
 if __name__ == "__main__":

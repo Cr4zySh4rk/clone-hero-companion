@@ -1,0 +1,45 @@
+{
+ "captured": "2026-10-26, yt-dlp 2026.10.21, str(exception) as raised by YoutubeDL.extract_info",
+ "errors": {
+  "age_gate_embedding_disabled": {
+   "video": "Tq92D6wQ1mg",
+   "class": "DownloadError",
+   "message": "ERROR: [youtube] Tq92D6wQ1mg: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies"
+  },
+  "age_gate_no_js_runtime": {
+   "video": "HtVdAasjOgU",
+   "class": "DownloadError",
+   "message": "ERROR: [youtube] HtVdAasjOgU: Sign in to confirm your age. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies"
+  },
+  "unavailable": {
+   "video": "gGdGFtwCNBE",
+   "class": "DownloadError",
+   "message": "ERROR: [youtube] gGdGFtwCNBE: Video unavailable. This video is not available"
+  },
+  "requested_format_not_available_no_formats": {
+   "video": "dQw4w9WgXcQ",
+   "class": "DownloadError",
+   "message": "ERROR: [youtube] dQw4w9WgXcQ: Requested format is not available. Use --list-formats for a list of available formats"
+  },
+  "bot_check": {
+   "video": "jH5Pgf_Rd9s",
+   "class": "DownloadError",
+   "message": "ERROR: [youtube] jH5Pgf_Rd9s: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  for tips on effectively exporting YouTube cookies"
+  },
+  "http_429": {
+   "class": "HTTPError",
+   "message": "HTTP Error 429: Too Many Requests",
+   "note": "captured live from www.youtube.com"
+  },
+  "googlevideo_403": {
+   "class": "DownloadError",
+   "message": "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+   "note": "captured live; datacenter IP, not a limit signal"
+  },
+  "rate_limited_by_youtube": {
+   "class": "ExtractorError",
+   "message": "ERROR: [youtube] xxxxxxxxxxx: This content isn't available, try again later. The current session has been rate-limited by YouTube for up to an hour. It is recommended to use `-t sleep` to add a delay between video requests to avoid exceeding the rate limit.",
+   "note": "NOT captured live: yt-dlp 2026.10.21 extractor/youtube/_video.py:4079 builds this text"
+  }
+ }
+}

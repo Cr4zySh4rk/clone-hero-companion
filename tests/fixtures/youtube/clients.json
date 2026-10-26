@@ -1,0 +1,101 @@
+{
+ "captured": "2026-10-26, yt-dlp 2026.10.21 + node 22 (js) / no runtime (nojs). Each row: one extraction asking for only that client. tv_embedded is absent from yt-dlp's client list and silently ignored.",
+ "clients": {
+  "visionos|js": {
+   "formats": 47,
+   "video_only": 37,
+   "max_height": 2160
+  },
+  "tv_samsung|js": {
+   "formats": 30,
+   "video_only": 22,
+   "max_height": 2160
+  },
+  "web_embedded|js": {
+   "formats": 36,
+   "video_only": 22,
+   "max_height": 2160
+  },
+  "web|js": {
+   "formats": 5,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "web_safari|js": {
+   "formats": 11,
+   "video_only": 0,
+   "max_height": 1080
+  },
+  "mweb|js": {
+   "formats": 5,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "android_vr|js": {
+   "formats": 4,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "android|js": {
+   "formats": 4,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "tv_simply|js": {
+   "formats": 4,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "visionos|nojs": {
+   "formats": 47,
+   "video_only": 37,
+   "max_height": 2160
+  },
+  "android_vr|nojs": {
+   "formats": 4,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "android|nojs": {
+   "formats": 4,
+   "video_only": 0,
+   "max_height": 360
+  },
+  "tv|js": {
+   "error": "The page needs to be reloaded."
+  },
+  "tv_downgraded|js": {
+   "error": "The page needs to be reloaded."
+  },
+  "ios|js": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "tv_samsung|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "tv|nojs": {
+   "error": "The page needs to be reloaded."
+  },
+  "tv_downgraded|nojs": {
+   "error": "The page needs to be reloaded."
+  },
+  "web_embedded|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "web|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "web_safari|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "mweb|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "ios|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  },
+  "tv_simply|nojs": {
+   "error": "Requested format is not available. Use --list-formats for a list of available fo"
+  }
+ }
+}

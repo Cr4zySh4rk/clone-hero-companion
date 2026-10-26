@@ -730,8 +730,7 @@ function renderJobs() {
   const w = $("#jobWorkers"); if (document.activeElement !== w) { w.value = jobsSnap.workers; $("#jobWorkersVal").textContent = jobsSnap.workers; }
   const yt = jobsSnap.youtube || {};
   $("#ytWarn").hidden = !yt.pausedFor;
-  $("#ytWarn").textContent = `YouTube is rate-limiting. YouTube requests resume in ${yt.pausedFor}s; nothing is lost.` +
-    (yt.jsRuntime ? "" : " No JavaScript runtime found: YouTube needs Deno or Node; install Deno from deno.land.");
+  $("#ytWarn").textContent = `YouTube is rate-limiting. YouTube requests resume in ${yt.pausedFor}s; nothing is lost.`;
   $("#jobList").innerHTML = jobsSnap.jobs.map((j) => `<div class="job"><span class="st ${j.status}">${j.status}</span>
       <span>${esc(j.title)}</span><span class="msg" title="${esc(j.error || j.result || j.step)}">${esc(j.error || j.result || j.step)}</span>
       <span>${["queued", "running", "waiting"].includes(j.status) ? `<button data-cancel="${j.id}">Cancel</button>` : ""}</span></div>`).join("") || '<p class="hint">Nothing running. Select songs in the Library and press Run.</p>';
@@ -777,7 +776,7 @@ async function loadSettings() {
       <div class="row2"><span></span><span><button id="setChange" class="primary">Change game &amp; folders…</button> <button id="setOpen">Open data folder</button> <button id="setRescan">Rescan library</button></span></div>
     </section>
     <section><h3>About</h3>
-      <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? `JavaScript runtime: ${esc(d.jsRuntime)} · ${esc(d.ejs)}` : `<b>No JavaScript runtime found.</b> ${esc(d.jsHelp)}, then restart Companion. Without it YouTube answers with reduced format lists and downloads get stuck on “rate-limiting”.`}</span></div>
+      <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? `JavaScript runtime: ${esc(d.jsRuntime)} · ${esc(d.ejs)}` : `<b>No JavaScript runtime found.</b> ${esc(d.jsHelp)}, then restart Companion. Without one, age-restricted music videos can’t be downloaded.`}</span></div>
       <div class="row2"><span>Version</span><span>${esc(d.version)} · yt-dlp ${esc(d.ytdlp)} (updates itself) · ffmpeg ${d.ffmpeg ? "included" : "missing"}</span></div>
     </section>`;
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {

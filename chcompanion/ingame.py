@@ -426,7 +426,7 @@ def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and
     in a codec Clone Hero plays on this OS. Raises InGameError if there is none."""
-    from .youtube import GATE, NoHDVideo, YouTubeLimited
+    from .youtube import GATE, BotDetected, NoHDVideo, VideoProblem
     info = store.song(song.key)
     bkey = base_key(song)
     base = store.song(bkey)
@@ -458,6 +458,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
         if progress and total:
             progress(f"downloading video {done * 100 // total}%")
     path, vid, fmt, reasons = None, None, None, []
+    transient_seen = False
     from_cache = False
     fetched_audio = None
     need_align = not per_manual_offset(store, song)
@@ -483,18 +484,23 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
             reasons.append("below 640p")
             continue
-        except YouTubeLimited:
-            # Every other candidate would get the same cut-down answer: stop, let the job wait out the
-            # cool-down and retry, instead of spending more lookups on this chart.
-            log.info("YouTube returned a reduced format list for %s (%s)", cand, song.display)
+        except BotDetected:
+            # YouTube really is limiting us: every other candidate would be refused too. Stop, let the
+            # job wait out the shared cool-down and retry, instead of spending more lookups on this chart.
+            log.info("YouTube is limiting requests (%s)", song.display)
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise
+        except VideoProblem as e:
+            # This video can't be had (age-restricted, unavailable, no video streams offered). That is
+            # not YouTube limiting us: say what it is, try the next candidate, no cool-down.
+            log.info("Skipping %s for %s: %s (%s)", cand, song.display, e.label, e.detail)
+            reasons.append(f"{e.label}: {e.detail}" if e.detail else e.label)
+            transient_seen = True
+            continue
         except Exception as e:
-            if type(e).__name__ == "BotDetected":
-                shutil.rmtree(tmpdir, ignore_errors=True)
-                raise
             log.info("Skipping %s for %s: download failed (%s)", cand, song.display, str(e)[:120])
-            reasons.append("download failed")
+            reasons.append(f"download failed: {str(e).strip()[:120] or type(e).__name__}")
+            transient_seen = True
             continue
         p = Path(p)
         if not chosen and looks_static(p):
@@ -506,13 +512,11 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
         break
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        why = ", ".join(sorted(set(reasons))) or "no usable video"
-        transient = {"download failed", "YouTube limited"}
-        if reasons and not (set(reasons) & transient):
-            # every candidate was really checked and rejected: remember it for all charts of the song
+        why = "; ".join(dict.fromkeys(reasons)) or "no usable video"
+        if reasons and not transient_seen:
+            # every candidate was really checked and rejected for its resolution: remember it for all
+            # charts of the song (errors like "age-restricted" or "download failed" are not remembered)
             _remember_failure(store, song, bkey, why)
-        if "YouTube limited" in reasons:
-            raise InGameError(f"YouTube is limiting requests right now ({why}); try again later")
         raise InGameError(f"no HD music video found ({why})")
     store.update_song(bkey, video_id=vid, failed=None, failed_at=None)
     store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None,

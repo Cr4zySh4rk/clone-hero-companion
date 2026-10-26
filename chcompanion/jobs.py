@@ -206,9 +206,9 @@ class JobManager:
             except Cancelled:
                 job.status, job.step = "cancelled", ""
             except Exception as e:
-                if type(e).__name__ in ("BotDetected", "YouTubeLimited"):
-                    # YouTube pushed back: the gate pauses everyone. Wait out the cool-down and retry;
-                    # fail only once every cool-down has been used.
+                if type(e).__name__ == "BotDetected":
+                    # YouTube really is limiting us (429 / "not a bot"): the gate pauses everyone. Wait
+                    # out the cool-down and retry; fail only once every cool-down has been used.
                     from . import youtube
                     youtube.GATE.throttled()
                     job.cooldowns += 1
@@ -223,8 +223,6 @@ class JobManager:
                         self.on_change(job)
                         continue
                     why = f"YouTube kept limiting requests after {job.cooldowns - 1} cool-down(s); try again later"
-                    if not youtube.js_runtime():
-                        why += f". {youtube.JS_HELP}"
                     log.warning("Job %s (%s) failed for %s: %s", job.id, job.kind, job.title, why)
                     job.status = "failed"
                     job.error = f"{job.work_step or 'searching YouTube'}: {why}"
