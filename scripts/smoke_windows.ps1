@@ -62,6 +62,8 @@ $doctor = Start-Process -FilePath $exe -ArgumentList @('doctor', '--data-dir', "
 if ($doctor.ExitCode -ne 0) { throw "Installed app failed: $($doctor.ExitCode)" }
 $text = Get-Content $report -Raw
 Write-Output $text
+# Informational only: a runner without Deno/Node must not fail the build.
+Write-Output ('YouTube JS runtime: ' + (($text -split "`n" | Where-Object { $_ -match '^JS runtime' }) -join ''))
 foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK', $ffmpeg)) {
     if (!$text.Contains($expected)) { throw "Doctor did not confirm: $expected" }
 }

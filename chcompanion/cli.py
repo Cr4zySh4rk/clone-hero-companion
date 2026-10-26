@@ -136,6 +136,9 @@ def cmd_doctor(args) -> int:
     sv = cp.get("custom", "song_videos", fallback="?")
     say(f"In-game song videos setting: {'on' if sv == '1' else 'OFF (Settings > Custom Content > Song Videos)' if sv == '0' else 'unknown'}")
     say(f"yt-dlp      : {'available' if youtube.available() else 'missing'}")
+    rt = youtube.js_runtime()
+    say(f"JS runtime  : {rt[0] + ' ' + rt[1] if rt else 'none - ' + youtube.JS_HELP}")
+    say(f"yt-dlp-ejs  : {youtube.ejs_status()}")
     from .align import ffmpeg_path
     ff = ffmpeg_path()
     say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")

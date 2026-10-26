@@ -426,7 +426,7 @@ def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and
     in a codec Clone Hero plays on this OS. Raises InGameError if there is none."""
-    from .youtube import NoHDVideo, YouTubeLimited
+    from .youtube import GATE, NoHDVideo, YouTubeLimited
     info = store.song(song.key)
     bkey = base_key(song)
     base = store.song(bkey)
@@ -441,6 +441,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     if chosen:
         order = [chosen]
     else:
+        GATE.wait_cooldown(progress)        # a YouTube cool-down is running: wait it out, visibly
         if progress:
             progress("searching YouTube")
         cands = yt.search(song)
@@ -471,6 +472,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             fmt = {"res_class": video_res(p) or store.song(song.key).get("video_res"),
                    "vcodec": "avc1" if codec == "h264" else codec}
             break
+        GATE.wait_cooldown(progress)
         try:
             if hasattr(yt, "fetch"):
                 # one lookup: the video stream, plus the audio stream when the video gets lined up
@@ -482,9 +484,11 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             reasons.append("below 640p")
             continue
         except YouTubeLimited:
-            log.info("Skipping %s for %s for now: YouTube returned a reduced format list", cand, song.display)
-            reasons.append("YouTube limited")
-            continue
+            # Every other candidate would get the same cut-down answer: stop, let the job wait out the
+            # cool-down and retry, instead of spending more lookups on this chart.
+            log.info("YouTube returned a reduced format list for %s (%s)", cand, song.display)
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
         except Exception as e:
             if type(e).__name__ == "BotDetected":
                 shutil.rmtree(tmpdir, ignore_errors=True)

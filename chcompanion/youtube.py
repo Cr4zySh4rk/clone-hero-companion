@@ -70,8 +70,9 @@ def is_bot_error(e: Exception) -> bool:
 # ------------------------------------------------------------------ rate gate
 class RateGate:
     """Limits concurrent YouTube API calls, spaces them out, and pauses everyone
-    after a bot/rate-limit response (60 s, 3 min, 7 min, ...)."""
-    BACKOFF = [60, 180, 420, 900]
+    after a bot/rate-limit response (60 s, 2 min, 5 min). Jobs wait for the cool-down and
+    retry; they only fail once every cool-down has been used up."""
+    BACKOFF = [60, 120, 300]
 
     def __init__(self, concurrent: int = 2, spacing: float = 1.0):
         self.sem = threading.BoundedSemaphore(concurrent)
@@ -127,13 +128,35 @@ class RateGate:
 
     def throttled(self):
         with self.lock:
+            if self.paused_until > time.time():
+                return          # requests already in flight when we paused: one strike per cool-down
             wait = self.BACKOFF[min(self.strikes, len(self.BACKOFF) - 1)]
             self.strikes += 1
             self.paused_until = max(self.paused_until, time.time() + wait)
         log.warning("YouTube is rate-limiting; pausing YouTube requests for %ds", wait)
 
+    def remaining(self) -> int:
+        return max(0, int(self.paused_until - time.time() + 0.999))
+
+    def max_waits(self) -> int:
+        """How many cool-downs a job sits through before it fails. Without a JS runtime a cool-down
+        will not help (YouTube cuts the formats down), so it gets one try."""
+        return len(self.BACKOFF) if js_runtime() else 1
+
+    def wait_cooldown(self, progress=None):
+        """Block while YouTube requests are paused, telling the job why."""
+        while True:
+            left = self.remaining()
+            if left <= 0:
+                return
+            if progress:
+                progress(f"waiting for YouTube cool-down {left // 60}:{left % 60:02d}")
+            if self.cancel.wait(min(left, 1.0)):
+                raise RuntimeError("cancelled")
+
     def status(self) -> dict:
-        return {"pausedFor": max(0, int(self.paused_until - time.time())), "strikes": self.strikes}
+        return {"pausedFor": self.remaining(), "strikes": self.strikes,
+                "jsRuntime": (js_runtime() or ("", ""))[0] or None}
 
 
 GATE = RateGate()
@@ -153,15 +176,24 @@ def download_slot():
 
 
 _TOOL_CACHE: dict = {}
+JS_RUNTIMES = ("deno", "node", "bun", "qjs")
+JS_HELP = "YouTube needs Deno or Node; install Deno from deno.land"
 
 
 def _find_tool(name: str) -> str | None:
     """shutil.which plus the usual install folders (a macOS app started from Finder or the
-    Dock only gets /usr/bin:/bin:/usr/sbin:/sbin as PATH)."""
-    if name in _TOOL_CACHE:
+    Dock only gets /usr/bin:/bin:/usr/sbin:/sbin as PATH; a Windows app keeps the PATH it was
+    started with, so a runtime installed later is missing from it). Only hits are cached: a
+    runtime installed while the app runs is picked up."""
+    if _TOOL_CACHE.get(name):
         return _TOOL_CACHE[name]
     import os
-    p = shutil.which(name)
+    exe = name + (".exe" if sys.platform == "win32" else "")
+    base = getattr(sys, "_MEIPASS", None)
+    if base and (Path(base) / "bin" / exe).is_file():      # shipped inside the app
+        p = str(Path(base) / "bin" / exe)
+    else:
+        p = shutil.which(name)
     if not p:
         home = os.path.expanduser("~")
         dirs = ["/opt/homebrew/bin", "/usr/local/bin", f"{home}/.deno/bin", f"{home}/.bun/bin",
@@ -169,26 +201,50 @@ def _find_tool(name: str) -> str | None:
         if sys.platform == "win32":
             la = os.environ.get("LOCALAPPDATA", "")
             pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-            dirs += [f"{home}\\.deno\\bin", f"{home}\\.bun\\bin", f"{pf}\\nodejs", f"{la}\\Programs\\nodejs"]
+            pd = os.environ.get("ProgramData", r"C:\ProgramData")
+            dirs += [f"{home}\\.deno\\bin", f"{home}\\.bun\\bin", f"{pf}\\nodejs", f"{pf}\\deno",
+                     f"{la}\\Programs\\nodejs", f"{la}\\Microsoft\\WinGet\\Links", f"{la}\\Volta\\bin",
+                     f"{home}\\scoop\\shims", f"{pd}\\chocolatey\\bin", os.environ.get("NVM_SYMLINK", "")]
         nvm = Path(home) / ".nvm" / "versions" / "node"
         if nvm.is_dir():
             dirs += [str(d / "bin") for d in sorted(nvm.iterdir(), reverse=True)]
-        exe = name + (".exe" if sys.platform == "win32" else "")
         p = next((str(Path(d) / exe) for d in dirs if d and (Path(d) / exe).is_file()), None)
-    _TOOL_CACHE[name] = p
+    if p:
+        _TOOL_CACHE[name] = p
     return p
+
+
+def js_runtime() -> tuple[str, str] | None:
+    """(name, path) of the JavaScript runtime yt-dlp will use to solve YouTube's challenges."""
+    for rt in JS_RUNTIMES:
+        p = _find_tool(rt)
+        if p:
+            return rt, p
+    return None
+
+
+def ejs_status() -> str:
+    """Whether yt-dlp's challenge-solver scripts (yt-dlp-ejs) are present."""
+    try:
+        import yt_dlp_ejs.yt.solver as solver
+        import yt_dlp_ejs
+        solver.core()
+        return f"yt-dlp-ejs {getattr(yt_dlp_ejs, 'version', '?')}"
+    except Exception as e:
+        return f"missing ({type(e).__name__}: {e})"
 
 
 def _ydl_opts(clients=None, **extra) -> dict:
     runtimes = {}
-    for rt in ("deno", "node", "bun", "qjs"):
+    for rt in JS_RUNTIMES:
         p = _find_tool(rt)
         if p:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
             "retries": 5, "fragment_retries": 5, "noprogress": True}
     # Frozen apps carry ffmpeg outside PATH (imageio also uses a versioned filename).
-    # yt-dlp must use the same executable as alignment and video conversion.
+    # yt-dlp must use the same executable as alignment and video conversion. Note that with
+    # ffmpeg found yt-dlp merges the two streams fetch() asks for; fetch() splits them again.
     from .align import ffmpeg_path
     ff = ffmpeg_path()
     if ff:
@@ -308,12 +364,17 @@ class YouTube:
         self.pref_p = pref_p
         self._streams: dict[str, tuple[float, dict]] = {}
         self._infos: dict[str, tuple[float, dict]] = {}
+        self._searches: dict[str, tuple[float, list]] = {}
         self._lock = threading.Lock()
 
     # -------------------------------------------------------------- search
     def search(self, song: Song, n: int = 8) -> list[dict]:
         from yt_dlp import YoutubeDL
         q = f"{clean_title(song.artist)} - {clean_title(song.name)} official music video"
+        with self._lock:                     # one search per song per session (retries, other charts)
+            hit = self._searches.get(norm_key(q))
+            if hit and hit[0] > time.time():
+                return [dict(c) for c in hit[1]]
         with GATE.slot(), YoutubeDL(_ydl_opts(extract_flat="in_playlist")) as ydl:
             info = ydl.extract_info(f"ytsearch{n}:{q}", download=False)
         out = []
@@ -324,6 +385,8 @@ class YouTube:
                         "channel": e.get("channel") or e.get("uploader"),
                         "score": round(score_candidate(e, song), 2)})
         out.sort(key=lambda c: -c["score"])
+        with self._lock:
+            self._searches[norm_key(q)] = (time.time() + 3000, [dict(c) for c in out])
         return out
 
     def find_album_audio(self, artist: str, track: str, duration: float) -> dict | None:
@@ -429,6 +492,7 @@ class YouTube:
             if degraded(info.get("formats") or []):
                 with self._lock:           # don't keep the cut-down answer cached
                     self._infos.pop(video_id, None)
+                GATE.throttled()
                 raise YouTubeLimited("YouTube only offered a reduced format list")
             raise NoHDVideo(f"no format at {MIN_P}p or better")
         hooks = []
@@ -535,6 +599,11 @@ class YouTube:
                     apath = d.get("filepath")
             if not vpath:
                 raise RuntimeError("the video stream wasn't downloaded")
+            if with_audio and not apath and got.get("acodec") not in (None, "none"):
+                # ffmpeg was found, so yt-dlp merged the streams into one file. Split it again with a
+                # stream copy: the video must stay video-only, and the audio is needed for lining up.
+                # Asking YouTube for the audio a second time is what used to trigger rate limiting.
+                vpath, apath = _split_merged(vpath)
             got_res = res_class(got.get("width"), got.get("height"))
             if got_res and got_res < MIN_P:
                 for x in (vpath, apath):
@@ -547,6 +616,7 @@ class YouTube:
             fmt.update({k: got.get(k) for k in ("format_id", "vcodec", "width", "height", "ext") if got.get(k)})
             fmt["res_class"] = got_res or fmt.get("res_class")
             return vpath, fmt, apath
+        GATE.throttled()          # every player client answered with a cut-down list: pause all lookups
         raise YouTubeLimited("YouTube only offered a reduced format list") from last_limited
 
     def download_audio(self, video_id: str, dest_noext: str) -> str:
@@ -563,3 +633,27 @@ class YouTube:
             except Exception as e:  # sporadic 403s: try another format
                 last = e
         raise last  # type: ignore[misc]
+
+
+def _split_merged(path: str) -> tuple[str, str | None]:
+    """(video-only file, audio file) from a merged download, by stream copy; (path, None) if it fails."""
+    from .align import ffmpeg_path
+    from .process import run
+    ff = ffmpeg_path()
+    src = Path(path)
+    if not ff:
+        return path, None
+    vout, aout = src.with_name(src.stem + ".v" + src.suffix), src.with_suffix(".audio.mka")
+    try:
+        for out, flag in ((vout, "-an"), (aout, "-vn")):
+            r = run([ff, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), flag, "-c", "copy", str(out)],
+                    capture_output=True, timeout=180)
+            if r.returncode != 0 or not out.exists():
+                raise RuntimeError((r.stderr or b"").decode(errors="replace")[-200:] or f"exit {r.returncode}")
+    except Exception as e:
+        log.info("could not split the merged download: %s", e)
+        vout.unlink(missing_ok=True)
+        aout.unlink(missing_ok=True)
+        return path, None
+    src.unlink(missing_ok=True)
+    return str(vout), str(aout)

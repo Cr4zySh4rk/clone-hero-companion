@@ -47,7 +47,9 @@ def activate_cached():
         return
     best = None
     for d in _root().iterdir():
-        if d.is_dir() and (d / "yt_dlp" / "__init__.py").exists():
+        # a download without its matching yt-dlp-ejs (older app versions) would run the
+        # new yt-dlp against the bundled solver scripts, which yt-dlp rejects on a version mismatch
+        if d.is_dir() and (d / "yt_dlp" / "__init__.py").exists() and (d / "yt_dlp_ejs").is_dir():
             if best is None or _ver(d.name) > _ver(best.name):
                 best = d
     if best and _ver(best.name) > _ver(bundled_version()):
@@ -64,7 +66,8 @@ def check_for_update():
         with urlopen(urllib.request.Request(PYPI, headers={"User-Agent": "CloneHeroCompanion"}), timeout=20) as r:
             data = json.loads(r.read().decode())
         latest = data["info"]["version"]
-        have = max([bundled_version()] + [d.name for d in _root().iterdir() if d.is_dir()], key=_ver)
+        have = max([bundled_version()] + [d.name for d in _root().iterdir()
+                                          if d.is_dir() and (d / "yt_dlp_ejs").is_dir()], key=_ver)
         if _ver(latest) <= _ver(have):
             return
         wheel = next(u for u in data["urls"] if u["filename"].endswith("py3-none-any.whl"))
@@ -81,6 +84,7 @@ def check_for_update():
         with zipfile.ZipFile(whl) as z:
             z.extractall(tmp)
         whl.unlink()
+        _fetch_ejs(data["info"].get("requires_dist") or [], tmp)
         dst = _root() / latest
         shutil.rmtree(dst, ignore_errors=True)
         tmp.rename(dst)
@@ -90,6 +94,29 @@ def check_for_update():
         log.info("Downloaded yt-dlp %s; it will be used from the next start", latest)
     except Exception as e:
         log.debug("yt-dlp update check failed: %s", e)
+
+
+def _fetch_ejs(requires: list[str], into: Path):
+    """The challenge-solver scripts yt-dlp pins (yt-dlp-ejs==X). Raises if they cannot be fetched, so a
+    yt-dlp without its matching scripts is never activated."""
+    import re
+    pin = next((m.group(1) for r in requires if "extra ==" not in r or "'default'" in r
+                for m in [re.match(r"yt-dlp-ejs\s*==\s*([\w.]+)", r)] if m), None)
+    if not pin:
+        raise RuntimeError("new yt-dlp does not pin yt-dlp-ejs")
+    with urlopen(urllib.request.Request(f"https://pypi.org/pypi/yt-dlp-ejs/{pin}/json",
+                                        headers={"User-Agent": "CloneHeroCompanion"}), timeout=20) as r:
+        meta = json.loads(r.read().decode())
+    wheel = next(u for u in meta["urls"] if u["filename"].endswith(".whl"))
+    with urlopen(urllib.request.Request(wheel["url"], headers={"User-Agent": "CloneHeroCompanion"}), timeout=120) as r:
+        blob = r.read()
+    if hashlib.sha256(blob).hexdigest() != wheel["digests"]["sha256"]:
+        raise RuntimeError("yt-dlp-ejs failed its checksum")
+    whl = into / "e.whl"
+    whl.write_bytes(blob)
+    with zipfile.ZipFile(whl) as z:
+        z.extractall(into)
+    whl.unlink()
 
 
 def start_background_check():

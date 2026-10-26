@@ -360,7 +360,9 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         game = find_game(c.data_dir, c.settings().get("game_path"))
         return _json(h, {"settings": c.settings(), "dataDir": str(c.data_dir),
                          "songDirs": [str(r) for r in c.library.roots], "game": str(game) if game else None,
-                         "version": __version__, "ytdlp": _ytdlp_version(), "ffmpeg": bool(ffmpeg_path()),
+                         "version": __version__, "ytdlp": _ytdlp_version(),
+                         "jsRuntime": (youtube.js_runtime() or ("", ""))[0] or None, "jsHelp": youtube.JS_HELP,
+                         "ejs": youtube.ejs_status(), "ffmpeg": bool(ffmpeg_path()),
                          "minP": youtube.MIN_P}) or True
     if path == "/api/settings" and method == "POST":
         s = body.get("settings") or {}
