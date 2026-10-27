@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections import Counter
 import time
 import urllib.error
 import urllib.parse
@@ -176,6 +177,38 @@ class Client:
                 "topArtists": d.get("topArtists") or [], "topInstruments": d.get("topInstruments") or [],
                 "recent": [self.slim(r) for r in (d.get("latestSubmissions") or [])][:10],
                 "url": user_url(d["accountId"]) if d.get("accountId") is not None else None}
+
+    def account_scores(self, account_id: int, max_calls: int = 60) -> list[dict]:
+        """Raw score rows the public API exposes for one account.
+
+        The API has no endpoint that lists an account's scores (that one needs the owner's login),
+        so this gathers what is public: the profile's latest submissions, plus the account's own
+        best row on every most-played song, for each instrument/difficulty seen in the latest ones.
+        Rows are unique by scoreId. Requests are spaced and cached by get()."""
+        d = self.get(f"account/{int(account_id)}/profile") or {}
+        rows: dict = {}
+        latest = [r for r in (d.get("latestSubmissions") or []) if isinstance(r, dict)]
+        for r in latest:
+            if r.get("scoreId") is not None:
+                rows[r["scoreId"]] = r
+        combos = [c for c, _ in Counter((r.get("instrument"), r.get("difficulty")) for r in latest).most_common(3)
+                  if c[0] in INSTRUMENTS and c[1] in DIFFICULTIES]
+        calls = 0
+        for song in (d.get("mostPlayed") or []):
+            for inst, diff in combos:
+                if calls >= max_calls or not song.get("songHash"):
+                    break
+                calls += 1
+                try:
+                    res = self.get("scores", {"songHash": song["songHash"], "instrument": inst, "difficulty": diff,
+                                              "topScores": 1, "sort": "score", "accountId": int(account_id)}) or {}
+                except LeaderboardError:
+                    continue
+                for blk in ("near", "top"):
+                    for r in ((res.get(blk) or {}).get("scoreData") or []):
+                        if r.get("accountId") == int(account_id) and r.get("scoreId") is not None:
+                            rows[r["scoreId"]] = r
+        return list(rows.values())
 
     def find_user(self, username: str) -> dict | None:
         want = username.strip().casefold()

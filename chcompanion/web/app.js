@@ -1012,10 +1012,12 @@ async function loadProfile() {
   body.innerHTML = `<h2>Profile</h2>${head}
     <div class="p-filter">${sel("pInst", f.instruments, prof.inst, "All instruments")}${sel("pDiff", f.difficulties, prof.diff, "All difficulties")}
       <span class="hint">${d.sources.local} plays recorded here${d.sources.cloud ? `, ${d.sources.cloud} from your cloud` : ""}. Clone Hero's scorestats.json is read after every song.</span></div>
+    <p class="hint" id="pSrc" title="Full combos and 5-star counts are distinct charts (song + instrument + difficulty) you have ever full-comboed or 5-starred, the way CH Leaderboards counts them, not plays. CH Leaderboards scores are fetched from the public API (its latest scores and your best on your most-played songs), kept on this computer only and never uploaded to your cloud.">From ${nf(d.sources.local + d.sources.cloud)} plays recorded by the app${d.ch.accountId || d.sources.leaderboard ? ` + ${nf(d.sources.leaderboard)} CH Leaderboards scores${d.sources.leaderboardRefreshing ? " (loading…)" : ""}` : ""}. Full combos and 5 stars count distinct charts.</p>
     <div class="tiles">
       <div class="tile"><b>${nf(T.plays)}</b><span>Total plays</span></div><div class="tile"><b>${T.hours}</b><span>Hours played</span></div>
-      <div class="tile"><b>${nf(T.songs)}</b><span>Different songs</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>Average accuracy</span></div>
+      <div class="tile"><b>${nf(T.songs)}</b><span>Songs played</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>Average accuracy</span></div>
       <div class="tile"><b>${nf(T.fcs)}</b><span>Full combos</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>5 stars or gold</span></div>
+      <div class="tile"><b>${nf(T.totalScore)}</b><span>Total score</span></div>
       <div class="tile"><b>${T.streak}</b><span>Day streak</span></div><div class="tile"><b>${T.longestStreak}</b><span>Longest streak (days)</span></div></div>
     <section><h3>Activity, last 26 weeks</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${x.d}: ${x.n} play${x.n === 1 ? "" : "s"}"></i>`).join("")}</div></section>
     <div class="p-cols"><section><h3>By weekday</h3>${bars(d.weekday, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}</section>
@@ -1068,6 +1070,7 @@ async function loadProfile() {
     };
     $("#pCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pVerify").click(); });
   }
+  if (d.sources.leaderboardRefreshing) setTimeout(() => { if ($("#pSrc")) loadProfile(); }, 4000);
   $("#pInst").onchange = (e) => { prof.inst = e.target.value; loadProfile(); };
   $("#pDiff").onchange = (e) => { prof.diff = e.target.value; loadProfile(); };
   loadChAccount();
@@ -1089,6 +1092,7 @@ async function loadChAccount() {
       <div class="tile"><b>${nf(p.stats.songsPlayed)}</b><span>Songs played</span></div>
       <div class="tile"><b>${nf(S.totalFcs)}</b><span>Full combos${R.totalFcs ? " · #" + nf(R.totalFcs) : ""}</span></div>
       <div class="tile"><b>${nf(S.notesHit)}</b><span>Notes hit</span></div></div>
+      <p class="hint">From CH Leaderboards (leaderboards mode only)</p>
       <p><a href="${esc(p.url)}" target="_blank" rel="noopener">Open ${esc(p.username)} on CH Leaderboards</a></p>
       ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(cap(r.difficulty))} ${esc(r.instrument)}${r.fc ? " · FC" : ""}</small></div></li>`).join("")}</ul>` : ""}`;
     bind();

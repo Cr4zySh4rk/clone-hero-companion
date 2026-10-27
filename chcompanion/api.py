@@ -333,6 +333,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     # ---------------------------------------------------------------- play statistics
     if path == "/api/stats" and method == "GET":
         from . import playstats
+        _refresh_lb_plays(c)
         plays = c.playlog.all()
         res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
         idx, keyidx = lm.hash_to_id(), lm.key_to_id()
@@ -341,7 +342,9 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 sid = idx.get((it.get("checksum") or "").upper()) or keyidx.get(
                     norm_key(f"{it.get('artist', '')} - {it.get('name', '')}"))
                 it["songId"] = sid
-        res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud())}
+        n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
+        res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
+                          "leaderboardRefreshing": c.playlog.lb_refreshing}
         res["cloud"] = {"signedIn": c.cloud.signed_in}
         res["ch"] = {"username": c.settings().get("ch_username") or "", "accountId": c.settings().get("ch_account_id") or 0}
         return _json(h, res) or True
@@ -714,6 +717,37 @@ def _install_cloud_favs(c, body: dict) -> dict:
                                   priority=PRIO_USER))
                 queued += 1
     return {"queued": queued, "notFound": missing, "failed": failed, "alreadyHave": have}
+
+
+def _refresh_lb_plays(c):
+    """Import the linked CH Leaderboards account's public scores as source 'leaderboard' plays, in the
+    background, at most every 10 minutes. They stay local: never uploaded to the cloud plays table."""
+    from . import playstats
+    aid = int(c.settings().get("ch_account_id") or 0)
+    pl = c.playlog
+    if not aid:
+        if pl.leaderboard():
+            pl.clear_leaderboard()
+        return
+    age = pl.lb_age()
+    if pl.lb_refreshing or (age is not None and age < playstats.LB_REFRESH_S):
+        return
+    pl.lb_refreshing = True
+
+    def run():
+        try:
+            rows = c.lb.account_scores(aid)
+            plays = [p for p in (playstats.lb_row_to_play(r) for r in rows) if p]
+            pl.set_leaderboard(plays)
+        except Exception:
+            log.warning("CH Leaderboards import failed", exc_info=True)
+            if age is None:
+                pl.set_leaderboard([])       # stamp the attempt so a failure isn't retried on every view
+            else:
+                pl.lb_path.touch()
+        finally:
+            pl.lb_refreshing = False
+    threading.Thread(target=run, daemon=True, name="lb-import").start()
 
 
 def _lb_default(c, lm, sid, artist, name, charter, instrument, difficulty):

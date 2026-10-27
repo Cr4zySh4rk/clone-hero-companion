@@ -399,6 +399,7 @@ class Companion:
             if not user:
                 raise leaderboard.LeaderboardError(f"No CH Leaderboards player named “{username}”")
             self.update_settings({"ch_username": user["username"], "ch_account_id": int(user["accountId"])})
+        self.playlog.clear_leaderboard()      # another account (or none): imported scores must be re-fetched
         if self.cloud.signed_in:
             try:
                 self.cloud.set_ch_username(user["username"] if user else None)
