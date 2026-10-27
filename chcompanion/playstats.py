@@ -347,8 +347,10 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
     most = sorted(cards, key=lambda c: (-c["plays"], c["last"] or ""), reverse=False)[:10]
     best = sorted([c for c in cards if c["bestAccuracy"] is not None and (c["plays"] >= 2 or c["notes"] >= 200)],
                   key=lambda c: (-c["bestAccuracy"], -c["plays"]))[:10]
-    needs = sorted([c for c in cards if c["avgAccuracy"] is not None and c["plays"] >= 2],
-                   key=lambda c: (c["avgAccuracy"], -c["plays"]))[:10]
+    # Needs practice: every song played at least once, ranked by your personal best (lowest first).
+    # Personal best accuracy, not raw score, so long and short songs compare fairly.
+    needs = sorted([c for c in cards if c["bestAccuracy"] is not None],
+                   key=lambda c: (c["bestAccuracy"], c["bestScore"], -c["plays"]))[:10]
     recent = [{"playedAt": p.get("played_at"), "artist": p.get("artist"), "name": p.get("name"),
                "checksum": p.get("checksum"), "charter": p.get("charter"), "score": p.get("score") or 0,
                "stars": p.get("stars") or 0, "accuracy": _acc(p), "difficulty": p.get("difficulty"),

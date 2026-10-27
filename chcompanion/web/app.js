@@ -1032,7 +1032,7 @@ async function loadProfile() {
   const tags = (it) => `${esc(cap(it.difficulty))} ${esc(it.instrument)}${it.fc ? " · FC" : ""}`;
   fill("#lMost", d.mostPlayed, (it) => `${it.plays}×<small>${pct(it.avgAccuracy)}</small>`, "Play a few songs and they show up here.");
   fill("#lBest", d.best, (it) => `${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, "Needs songs played twice, or with 200+ notes.");
-  fill("#lNeeds", d.needsPractice, (it) => `${pct(it.avgAccuracy)}<small>${it.plays}×</small>`, "Songs you've played at least twice show up here.");
+  fill("#lNeeds", d.needsPractice, (it) => `best ${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, "Songs you've played show up here, lowest personal best first.");
   fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, "No scores yet.");
   fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, "Nothing played yet. Finish a song in Clone Hero and it appears here.");
   if (cs.signedIn) {
