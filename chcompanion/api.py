@@ -11,6 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import ytupdate
 from . import __version__, youtube
 from .jobs import Job, PRIO_BATCH, PRIO_USER
 from .libmgr import find_game, launch_game, reveal, song_id
@@ -103,6 +104,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     if path == "/api/jobs" and method == "GET":
         snap = c.jobs.snapshot()
         snap["youtube"] = youtube.GATE.status()
+        snap["ytdlp"] = ytupdate.active_info()
         snap["now"] = {"status": c.clock.status, "song": c.clock.song}
         return _json(h, snap) or True
     if path == "/api/jobs" and method == "POST":
@@ -366,12 +368,16 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                          "version": __version__, "ytdlp": _ytdlp_version(),
                          "jsRuntime": _js_label(), "jsHelp": youtube.JS_HELP,
                          "ejs": youtube.ejs_status(), "ffmpeg": bool(ffmpeg_path()),
-                         "minP": youtube.MIN_P}) or True
+                         "minP": youtube.MIN_P, "youtube": youtube.GATE.status(),
+                         "ytdlpInfo": ytupdate.active_info()}) or True
     if path == "/api/settings" and method == "POST":
         s = body.get("settings") or {}
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
-        return _json(h, {"settings": c.update_settings(s)}) or True
+        return _json(h, {"settings": c.update_settings(s), "youtube": youtube.GATE.status()}) or True
+    if path == "/api/ytdlp/check" and method == "POST":
+        ytupdate.check_now_async()
+        return _json(h, ytupdate.active_info()) or True
     if path == "/api/setup" and method == "GET":
         from . import paths as P
         s = c.settings()

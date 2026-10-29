@@ -120,6 +120,25 @@ def _load(args) -> tuple:
     return data_dir, lib
 
 
+def youtube_activity_line(st: dict) -> str:
+    """'YouTube activity: ...' for doctor and Settings."""
+    ll = st.get("lastLimit")
+    if ll:
+        import time as _t
+        ago = max(0, int((_t.time() - ll["at"]) // 60))
+        last = (f"last limit {ago} min ago: {ll.get('signalLabel') or ll.get('signal')}"
+                f"{' on ' + ll['videoId'] if ll.get('videoId') else ''}"
+                f" ({ll.get('requests10')} requests in the 10 min before, {ll.get('requests60')} in 60)"
+                f" - {ll.get('message') or ''}")
+    else:
+        last = "no limit seen"
+    ck = st.get("cookies") or {}
+    sign = (f"sign-in from {ck['mode']}" if ck.get("active") else "no sign-in") + \
+           (f" ({ck['error']})" if ck.get("error") else "")
+    return (f"YouTube activity: {st.get('requests60', 0)} lookups in the last hour "
+            f"(budget {st.get('budget')}), {last}; {sign}")
+
+
 def cmd_doctor(args) -> int:
     out: list[str] = []
     say = out.append
@@ -147,6 +166,11 @@ def cmd_doctor(args) -> int:
     else:
         say(f"JS runtime  : none - {youtube.JS_HELP}")
     say(f"yt-dlp-ejs  : {youtube.ejs_status()}")
+    from . import ytupdate
+    ai = ytupdate.active_info()
+    say(f"yt-dlp ver  : {ai['version']} ({ai['source']})")
+    youtube.GATE.attach(config_dir() / "youtube_activity.json")
+    say(youtube_activity_line(youtube.GATE.status()))
     from .align import ffmpeg_path
     ff = ffmpeg_path()
     say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")

@@ -61,6 +61,9 @@ class Companion:
                                busy=self._job_busy, on_change=self._job_changed)
         self.game_yt.pref_p = int(self.settings().get("pref_p", 720))
         ingame.PREFER_WEBM = self.settings().get("game_video_format") == "webm"
+        from .paths import config_dir
+        youtube.GATE.attach(config_dir() / "youtube_activity.json")
+        youtube.set_cookies(self.settings().get("yt_cookies"), self.settings().get("yt_cookies_file"))
         self.clients: list[queue.Queue] = []
         self.clients_lock = threading.Lock()
         self.song: Song | None = None
@@ -332,7 +335,7 @@ class Companion:
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "game_video_format": "auto",
-                "ch_username": "", "ch_account_id": 0}
+                "ch_username": "", "ch_account_id": 0, "yt_cookies": "none", "yt_cookies_file": ""}
 
     def repair_videos(self) -> int:
         """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
@@ -433,6 +436,9 @@ class Companion:
         self.prefetch = bool(s["prefetch"])
         self.game_lyrics = bool(s["game_lyrics"])
         self.game_yt.pref_p = int(s["pref_p"])
+        if "yt_cookies" in values or "yt_cookies_file" in values:
+            youtube.set_cookies(s.get("yt_cookies"), s.get("yt_cookies_file"))
+            threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
         ingame.PREFER_WEBM = s.get("game_video_format") == "webm"
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
         return s
@@ -532,7 +538,7 @@ class Companion:
                                    video=o.get("video", True), lyrics=o.get("lyrics", self.game_lyrics),
                                    force_video=bool(o.get("force")),
                                    replace_low_res=o.get("replace_low_res", self.settings()["replace_low_res"]),
-                                   progress=progress)
+                                   progress=progress, defer_video=True)
                 if r.get("lyrics") == "none found":
                     self.store.update_song(song.key, lyrics_none=True)
                 res = self.store.song(song.key).get("video_res")
@@ -541,7 +547,11 @@ class Companion:
                     parts.append((f"video {res}p " if res else "video ") + where)
                 if r.get("lyrics") == "added":
                     parts.append("lyrics")
-                if not r.get("video") and not r.get("lyrics") == "added":
+                if r.get("video_pending"):
+                    parts.append(self._video_pending(song, job, r["video_pending"]))
+                else:
+                    self.store.update_song(song.key, video_pending=None)
+                if not r.get("video") and not r.get("lyrics") == "added" and not r.get("video_pending"):
                     parts.append("already set up")
         except FileNotFoundError as e:
             if str(song.path) in str(e.filename or "") or not song.path.exists():
@@ -554,6 +564,19 @@ class Companion:
             except Exception as e:      # bookkeeping only; the song itself is done
                 log.warning("Could not refresh %s in the library view: %s", song.display, e)
         return "; ".join(parts) or "done"
+
+    MAX_VIDEO_RESUMES = 4
+
+    def _video_pending(self, song: Song, job: Job, signal: str) -> str:
+        """YouTube is limiting requests: the rest of the job is done; mark the video as pending and queue
+        its video step again for when the cool-down ends (a later Run also picks it up)."""
+        self.store.update_song(song.key, video_pending=True)
+        n = int(job.options.get("resumes", 0))
+        label = youtube.SIGNAL_LABELS.get(signal, signal)
+        if n < self.MAX_VIDEO_RESUMES:
+            nj = self.queue_song(song, "media", PRIO_LIBRARY, lyrics=False, resumes=n + 1)
+            nj.not_before = max(nj.not_before, youtube.GATE.paused_until + 1)
+        return f"video pending (YouTube limit: {label}); resumes automatically"
 
     def adopt_existing(self, job: Job, item: dict, loose: bool = False):
         """An install of a missing favourite is skipped because the chart is already here: star that chart

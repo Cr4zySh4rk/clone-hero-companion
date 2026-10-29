@@ -187,10 +187,10 @@ class BackoffTests(Base):
         g = youtube.RateGate(2, 0.0)
         g.throttled()
         g.throttled()               # in-flight requests failing together are one strike
-        self.assertEqual((g.strikes, g.BACKOFF), (1, [60, 120, 300]))
+        self.assertEqual((g.strikes, g.BACKOFF), (1, [120, 300, 900, 1800]))
         g.paused_until = 0
         g.throttled()
-        self.assertGreater(g.remaining(), 61)
+        self.assertGreater(g.remaining(), 299)
 
 
 class JsRuntimeTests(unittest.TestCase):

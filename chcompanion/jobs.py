@@ -196,7 +196,7 @@ class JobManager:
                 if job.cancel.is_set():
                     raise Cancelled()
                 job.step = msg
-                if not msg.startswith("waiting for YouTube"):
+                if not msg.startswith(("waiting for YouTube", "pacing YouTube")):
                     job.work_step = msg
                 self.on_change(job)
             try:
@@ -210,7 +210,7 @@ class JobManager:
                     # YouTube really is limiting us (429 / "not a bot"): the gate pauses everyone. Wait
                     # out the cool-down and retry; fail only once every cool-down has been used.
                     from . import youtube
-                    youtube.GATE.throttled()
+                    youtube.GATE.throttled(e, getattr(e, "video_id", None))
                     job.cooldowns += 1
                     if job.cooldowns <= youtube.GATE.max_waits():
                         left = max(youtube.GATE.remaining(), 1)
@@ -222,7 +222,9 @@ class JobManager:
                             self.active -= 1
                         self.on_change(job)
                         continue
-                    why = f"YouTube kept limiting requests after {job.cooldowns - 1} cool-down(s); try again later"
+                    sig = youtube.SIGNAL_LABELS.get((youtube.GATE.last_limit or {}).get("signal"), "")
+                    why = (f"YouTube kept limiting requests after {job.cooldowns - 1} cool-down(s)"
+                           f"{f' ({sig})' if sig else ''}; try again later")
                     log.warning("Job %s (%s) failed for %s: %s", job.id, job.kind, job.title, why)
                     job.status = "failed"
                     job.error = f"{job.work_step or 'searching YouTube'}: {why}"

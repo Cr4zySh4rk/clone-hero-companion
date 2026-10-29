@@ -423,10 +423,17 @@ def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
     store.update_song(bkey, failed=why, failed_at=now)
 
 
-def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False) -> Path:
+def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False,
+                   defer: bool = False) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and
-    in a codec Clone Hero plays on this OS. Raises InGameError if there is none."""
+    in a codec Clone Hero plays on this OS. Raises InGameError if there is none.
+    defer: while a YouTube cool-down runs, raise BotDetected at once instead of waiting it out."""
     from .youtube import GATE, BotDetected, NoHDVideo, VideoProblem
+
+    def gate_wait():
+        if defer and GATE.remaining() > 0:
+            raise BotDetected((GATE.last_limit or {}).get("message") or "YouTube requests are paused")
+        GATE.wait_cooldown(progress)        # a cool-down or the hourly budget: wait it out, visibly
     info = store.song(song.key)
     bkey = base_key(song)
     base = store.song(bkey)
@@ -441,7 +448,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     if chosen:
         order = [chosen]
     else:
-        GATE.wait_cooldown(progress)        # a YouTube cool-down is running: wait it out, visibly
+        gate_wait()
         if progress:
             progress("searching YouTube")
         cands = yt.search(song)
@@ -473,7 +480,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             fmt = {"res_class": video_res(p) or store.song(song.key).get("video_res"),
                    "vcodec": "avc1" if codec == "h264" else codec}
             break
-        GATE.wait_cooldown(progress)
+        gate_wait()
         try:
             if hasattr(yt, "fetch"):
                 # one lookup: the video stream, plus the audio stream when the video gets lined up
@@ -712,12 +719,15 @@ def current_video_res(song: Song, store: Store) -> int:
 
 
 def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics: bool = True,
-            force_video: bool = False, replace_low_res: bool = True, progress=None) -> dict:
-    """Put video and lyrics into the song for Clone Hero. Returns a summary dict."""
+            force_video: bool = False, replace_low_res: bool = True, progress=None,
+            defer_video: bool = False) -> dict:
+    """Put video and lyrics into the song for Clone Hero. Returns a summary dict.
+    defer_video: when YouTube is limiting requests, don't fail or wait: lyrics still go in and the result
+    carries 'video_pending' (the YouTube limit signal) so the video step can run later."""
     with _lock_for(song.key):
         if not song.path.exists():      # waited behind another chart of the song; this one may have gone meanwhile
             raise InGameError(CHART_GONE)
-        result = {"video": None, "lyrics": None}
+        result = {"video": None, "lyrics": None, "video_pending": None}
         per = store.song(song.key)
         lines: list[dict] = []
         want_lyrics = lyrics and not per.get("game_lyrics") and not song.chart_lyrics()
@@ -749,7 +759,15 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             if unplayable:
                 log.info("%s has a video Clone Hero can't play here (%s); getting a new one",
                          song.display, current_video_codec(song, store))
-            vpath = download_video(song, yt, store, progress, force=force_video or unplayable)
+            try:
+                vpath = download_video(song, yt, store, progress, force=force_video or unplayable,
+                                       defer=defer_video)
+            except Exception as e:
+                if not (defer_video and type(e).__name__ == "BotDetected"):
+                    raise
+                result["video_pending"] = getattr(e, "signal", "unknown")
+                log.info("Video for %s deferred: YouTube is limiting requests (%s)", song.display,
+                         result["video_pending"])
             per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
         write_v = off_v  # value for video_start_time

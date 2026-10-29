@@ -55,7 +55,7 @@ class Env(unittest.TestCase):
                       {"notes.chart": b"[Song]\n{\n}\n" + ch.encode()})
             return [f]
 
-        def fake_video(song, yt, store, progress=None, force=False):
+        def fake_video(song, yt, store, progress=None, force=False, defer=False):
             d = Path(tempfile.mkdtemp(prefix="chc-", dir=self.tmp.name))
             v = d / "video.webm"
             v.write_bytes(b"VIDEO-" + song.path.name.encode())

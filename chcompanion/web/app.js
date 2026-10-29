@@ -730,7 +730,9 @@ function renderJobs() {
   const w = $("#jobWorkers"); if (document.activeElement !== w) { w.value = jobsSnap.workers; $("#jobWorkersVal").textContent = jobsSnap.workers; }
   const yt = jobsSnap.youtube || {};
   $("#ytWarn").hidden = !yt.pausedFor;
-  $("#ytWarn").textContent = `YouTube is rate-limiting. YouTube requests resume in ${yt.pausedFor}s; nothing is lost.`;
+  const ll = yt.lastLimit;
+  $("#ytWarn").textContent = (yt.hint ? yt.hint + " " : "YouTube is rate-limiting. ") + `YouTube lookups resume in ${Math.ceil(yt.pausedFor / 60)} min; chart downloads, lyrics and metadata carry on, and videos are added afterwards.`;
+  $("#ytWarn").title = ll ? `Signal: ${ll.signalLabel || ll.signal}\nyt-dlp said: ${ll.message || ""}\nVideo: ${ll.videoId || "n/a"}\nLookups before it: ${ll.requests10} in 10 min, ${ll.requests60} in 60 min` : "";
   $("#jobList").innerHTML = jobsSnap.jobs.map((j) => `<div class="job"><span class="st ${j.status}">${j.status}</span>
       <span>${esc(j.title)}</span><span class="msg" title="${esc(j.error || j.result || j.step)}">${esc(j.error || j.result || j.step)}</span>
       <span>${["queued", "running", "waiting"].includes(j.status) ? `<button data-cancel="${j.id}">Cancel</button>` : ""}</span></div>`).join("") || '<p class="hint">Nothing running. Select songs in the Library and press Run.</p>';
@@ -743,6 +745,16 @@ $("#jobWorkers").addEventListener("input", (e) => { $("#jobWorkersVal").textCont
 $("#jobWorkers").addEventListener("change", async (e) => { await api("/api/settings", { settings: { workers: Number(e.target.value) } }); toast(`${e.target.value} workers`); });
 
 /* ================================================================ settings */
+function ytCookieText(y) {
+  const c = (y && y.cookies) || {};
+  if (c.error) return c.error;
+  return c.active ? `Using your ${c.mode === "file" ? "cookies.txt" : c.mode} sign-in` : "Not signed in (no cookies used)";
+}
+function ytActivityText(y) {
+  if (!y) return "";
+  const l = y.lastLimit;
+  return `${y.requests60} lookups in the last hour (budget ${y.budget}/h); ` + (l ? `last limit: ${l.signalLabel || l.signal}${l.videoId ? " on " + l.videoId : ""}, ${new Date(l.at * 1000).toLocaleTimeString()}` : "no limit seen");
+}
 async function loadSettings() {
   const d = await api("/api/settings"); const s = d.settings;
   const chk = (k, label, help) => `<div class="row2"><span>${label}</span><label class="inline"><input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}> ${help}</label></div>`;
@@ -761,6 +773,13 @@ async function loadSettings() {
       ${chk("prefetch", "Prepare while browsing", "Start on a song as soon as it's highlighted in Clone Hero's song list")}
       ${chk("game_lyrics", "Lyrics", "Write lyrics into charts that have none (gives that chart a fresh high-score list)")}
     </section>
+    <section><h3>YouTube</h3>
+      <div class="row2"><span>Use my YouTube sign-in from</span><select data-k="yt_cookies">${[["none", "None"], ["chrome", "Chrome"], ["edge", "Edge"], ["firefox", "Firefox"], ["safari", "Safari"], ["brave", "Brave"], ["file", "A cookies.txt file"]].map(([v, l]) => `<option value="${v}"${(s.yt_cookies || "none") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <small>Signed-in requests are far less likely to be bot-checked. Your cookies are read on this computer and never leave it. Use a secondary Google account: yt-dlp warns that heavy use can get an account flagged. If the browser's cookies can't be read (Chrome on Windows encrypts them, a running browser locks them, Safari needs Full Disk Access) the app carries on without sign-in and says why below.</small></div>
+      ${s.yt_cookies === "file" ? `<div class="row2"><span>cookies.txt</span><input type="text" data-k="yt_cookies_file" value="${esc(s.yt_cookies_file || "")}" placeholder="Full path to a Netscape-format cookies.txt"></div>` : ""}
+      <div class="row2"><span>Sign-in status</span><span id="ytCookieState">${esc(ytCookieText(d.youtube))}</span></div>
+      <div class="row2"><span>YouTube activity</span><span id="ytActivity">${esc(ytActivityText(d.youtube))}</span></div>
+    </section>
     <section><h3>Processing</h3>
       <div class="row2"><span>Workers</span><select data-k="workers">${[0, 1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}"${Number(s.workers) === n ? " selected" : ""}>${n ? n : "Automatic"}</option>`).join("")}</select>
         <small>Songs processed at the same time. YouTube requests are paced across all workers.</small></div>
@@ -777,14 +796,16 @@ async function loadSettings() {
     </section>
     <section><h3>About</h3>
       <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? `JavaScript runtime: ${esc(d.jsRuntime)} · ${esc(d.ejs)}` : `<b>No JavaScript runtime found.</b> ${esc(d.jsHelp)}, then restart Companion. Without one, age-restricted music videos can’t be downloaded.`}</span></div>
+      <div class="row2"><span>yt-dlp</span><span>${esc(d.ytdlpInfo.version)} (${esc(d.ytdlpInfo.source)}) <button id="ytdlpCheck">Check now</button> <span id="ytdlpMsg" class="hint">${esc(d.ytdlpInfo.message || "")}</span></span></div>
       <div class="row2"><span>Version</span><span>${esc(d.version)} · yt-dlp ${esc(d.ytdlp)} (updates itself) · ffmpeg ${d.ffmpeg ? "included" : "missing"}</span></div>
     </section>`;
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
     if (["pref_p", "workers"].includes(k)) v = Number(v);
-    try { await api("/api/settings", { settings: { [k]: v } }); toast("Saved"); } catch (e) { toast(e.message); }
+    try { const r = await api("/api/settings", { settings: { [k]: v } }); toast("Saved"); if (k === "yt_cookies") { loadSettings(); setTimeout(async () => { const e = $("#ytCookieState"); if (e) e.textContent = ytCookieText((await api("/api/settings")).youtube); }, 2500); } } catch (e) { toast(e.message); }
   }));
   $("#setChange").onclick = () => show("setup");
+  $("#ytdlpCheck").onclick = async () => { $("#ytdlpMsg").textContent = "Checking…"; await api("/api/ytdlp/check", {}); setTimeout(async () => { const i = (await api("/api/settings")).ytdlpInfo; $("#ytdlpMsg").textContent = `${i.message || "done"} (now ${i.version}, ${i.source})`; }, 4000); };
   api("/api/macperm").then((m) => {
     if (!m.applicable) return;
     const row = document.createElement("div"); row.className = "row2";

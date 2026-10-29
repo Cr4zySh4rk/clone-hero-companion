@@ -12,8 +12,11 @@ when YouTube starts asking "are you a bot".
 """
 from __future__ import annotations
 
+import json
 import logging
+import random
 import re
+import os
 import shutil
 import sys
 import threading
@@ -28,6 +31,8 @@ from .lyrics import clean_title
 log = logging.getLogger(__name__)
 
 MIN_SCORE = 4.0
+REQUEST_SLEEP_S = 1.5            # yt-dlp's own pause between requests inside one extraction
+SEARCH_RESULTS = 5
 MIN_P = 640                      # hard floor: nothing below this is downloaded or accepted
 BAD_WORDS = ["lyric", "lyrics", "cover", "reaction", "karaoke", "tutorial", "lesson",
              "guitar", "drum", "drums", "bass", "instrumental", "remix", "slowed", "reverb",
@@ -55,8 +60,32 @@ UNAVAILABLE_SIGNS = ("video unavailable", "this video is not available", "privat
 CLIENT_FALLBACKS = [None]
 
 
+SIGNAL_LABELS = {"http-429": "HTTP 429 (too many requests)",
+                 "bot-check": "bot check (\"confirm you're not a bot\")",
+                 "rate-limit-text": "rate-limit message from yt-dlp"}
+BOT_HINT = ("YouTube is asking to confirm you're not a bot. Turn on 'Use my YouTube sign-in' in Settings, "
+            "or wait ~30 min.")
+
+
+def limit_signal(e: Exception | str) -> str | None:
+    """Which of the three genuine limit signals a yt-dlp error is: http-429, bot-check, rate-limit-text."""
+    m = str(e).lower()
+    if "http error 429" in m or "too many requests" in m:
+        return "http-429"
+    if "not a bot" in m:
+        return "bot-check"
+    if any(x in m for x in ("rate-limited by youtube", "rate limited by youtube", "your ip is likely being blocked")):
+        return "rate-limit-text"
+    return None
+
+
 class BotDetected(Exception):
     """YouTube really is limiting us (HTTP 429, "not a bot", an explicit rate-limit message)."""
+
+    def __init__(self, message: str = "", video_id: str | None = None):
+        super().__init__(message)
+        self.signal = limit_signal(message) or "unknown"
+        self.video_id = video_id
 
 
 class VideoProblem(Exception):
@@ -100,8 +129,7 @@ def list_state(formats: list) -> str:
 
 def is_bot_error(e: Exception) -> bool:
     """Genuine throttling or bot detection."""
-    m = str(e).lower()
-    return any(s in m for s in LIMIT_SIGNS)
+    return limit_signal(e) is not None
 
 
 def is_age_error(e: Exception) -> bool:
@@ -143,71 +171,151 @@ def classify_error(e: Exception, state: str | None = None, nformats: int = 0) ->
 
 # ------------------------------------------------------------------ rate gate
 class RateGate:
-    """Limits concurrent YouTube API calls, spaces them out, and pauses everyone
-    after a bot/rate-limit response (60 s, 2 min, 5 min). Jobs wait for the cool-down and
-    retry; they only fail once every cool-down has been used up."""
-    BACKOFF = [60, 120, 300]
+    """Paces YouTube metadata lookups like one human client: one at a time, a random 4-9 s gap between
+    them, a soft hourly budget, and a global pause after a genuine limit (2, 5, 15, 30 min). Jobs wait
+    for the pause and retry (or defer just their video step); see ingame.prepare."""
+    BACKOFF = [120, 300, 900, 1800]
+    HOUR = 3600.0
 
-    def __init__(self, concurrent: int = 2, spacing: float = 1.0):
+    def __init__(self, concurrent: int = 1, spacing=(4.0, 9.0), budget: int = 60, rng=None):
+        self.concurrent = concurrent
         self.sem = threading.BoundedSemaphore(concurrent)
-        self.spacing = spacing
+        self.gap = (float(spacing), float(spacing)) if isinstance(spacing, (int, float)) else tuple(spacing)
+        self.budget = budget
+        self.rng = rng or random.uniform
         self.lock = threading.Lock()
         self.last = 0.0
         self.paused_until = 0.0
         self.strikes = 0
         self.cancel = threading.Event()
+        self.requests: list[float] = []       # start times of lookups in the last hour
+        self.last_limit: dict | None = None   # the latest genuine limit: signal, message, video id, counts
+        self.path: Path | None = None
 
-    @contextmanager
-    def slot(self):
+    # ------------------------------------------------------------ activity
+    def _sleep(self, secs: float):
+        if self.cancel.wait(secs):
+            raise RuntimeError("cancelled")
+
+    def _count(self, now: float, secs: float) -> int:
+        return sum(1 for t in self.requests if now - t < secs)
+
+    def record_request(self, video_id: str | None = None):
+        now = time.time()
+        with self.lock:
+            self.requests = [t for t in self.requests if now - t < self.HOUR] + [now]
+        self._save()
+
+    def attach(self, path):
+        """Keep the activity (requests, last limit) in a file so Settings, doctor and restarts see it."""
+        self.path = Path(path)
+        try:
+            d = json.loads(self.path.read_text("utf-8"))
+            now = time.time()
+            self.requests = sorted(t for t in d.get("requests", []) if now - t < self.HOUR)
+            self.last_limit = d.get("lastLimit") or None
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def _save(self):
+        if not self.path:
+            return
+        try:
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"requests": self.requests[-300:], "lastLimit": self.last_limit}), "utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    def budget_wait(self) -> int:
+        """Seconds until the hourly budget has room again (0 = go ahead)."""
+        if not self.budget:
+            return 0
+        now = time.time()
+        with self.lock:
+            live = [t for t in self.requests if now - t < self.HOUR]
+            if len(live) < self.budget:
+                return 0
+            return max(1, int(live[len(live) - self.budget] + self.HOUR - now + 0.999))
+
+    def wait_budget(self, progress=None):
+        while True:
+            left = self.budget_wait()
+            if left <= 0:
+                return
+            if progress:
+                progress(f"pacing YouTube requests ({left // 60}:{left % 60:02d})")
+            self._sleep(min(left, 1.0))
+
+    def _begin(self, video_id=None):
+        """Called once the concurrency slot is held: budget, then a random gap since the last lookup."""
+        self.wait_budget()
+        with self.lock:
+            gap = self.last + self.rng(*self.gap) - time.time()
+        if gap > 0:
+            self._sleep(gap)
+        with self.lock:
+            self.last = time.time()
+        self.record_request(video_id)
+
+    def _wait_unpaused(self):
         while True:
             wait = self.paused_until - time.time()
             if wait <= 0:
-                break
-            if self.cancel.wait(min(wait, 1.0)):
-                raise RuntimeError("cancelled")
+                return
+            self._sleep(min(wait, 1.0))
+
+    @contextmanager
+    def slot(self, video_id: str | None = None):
+        self._wait_unpaused()
         with self.sem:
-            with self.lock:
-                gap = self.last + self.spacing - time.time()
-                if gap > 0:
-                    time.sleep(gap)
-                self.last = time.time()
+            self._begin(video_id)
             try:
                 yield
                 self.strikes = max(0, self.strikes - 1) if self.strikes else 0
             except Exception as e:
                 if is_bot_error(e):
-                    self.throttled()
-                    raise BotDetected(str(e)) from e
+                    self.throttled(e, video_id)
+                    raise BotDetected(str(e), video_id) from e
                 raise
+            finally:
+                self.last = time.time()
 
-    def acquire(self):
+    def acquire(self, video_id: str | None = None):
         """Manual form of slot() for calls that release it part-way (lookup, then download)."""
-        while True:
-            wait = self.paused_until - time.time()
-            if wait <= 0:
-                break
-            if self.cancel.wait(min(wait, 1.0)):
-                raise RuntimeError("cancelled")
+        self._wait_unpaused()
         self.sem.acquire()
-        with self.lock:
-            gap = self.last + self.spacing - time.time()
-            if gap > 0:
-                time.sleep(gap)
-            self.last = time.time()
+        try:
+            self._begin(video_id)
+        except BaseException:
+            self.sem.release()
+            raise
 
     def release(self, ok: bool = True):
         if ok and self.strikes:
             self.strikes = max(0, self.strikes - 1)
+        self.last = time.time()
         self.sem.release()
 
-    def throttled(self):
+    def throttled(self, exc: Exception | None = None, video_id: str | None = None):
+        now = time.time()
         with self.lock:
-            if self.paused_until > time.time():
+            if exc is not None:
+                self.last_limit = {
+                    "at": now, "signal": limit_signal(exc) or getattr(exc, "signal", "unknown"),
+                    "message": _short(exc)[:300], "videoId": video_id or getattr(exc, "video_id", None),
+                    "requests10": self._count(now, 600), "requests60": self._count(now, 3600)}
+            if self.paused_until > now:
+                self._save()
                 return          # requests already in flight when we paused: one strike per cool-down
             wait = self.BACKOFF[min(self.strikes, len(self.BACKOFF) - 1)]
             self.strikes += 1
-            self.paused_until = max(self.paused_until, time.time() + wait)
-        log.warning("YouTube is rate-limiting; pausing YouTube requests for %ds", wait)
+            self.paused_until = max(self.paused_until, now + wait)
+            ll = self.last_limit or {}
+        self._save()
+        log.warning("YouTube is rate-limiting; pausing YouTube requests for %ds (signal %s, video %s, %s requests "
+                    "in 10 min, %s in 60 min): %s", wait, ll.get("signal"), ll.get("videoId"),
+                    ll.get("requests10"), ll.get("requests60"), ll.get("message"))
 
     def remaining(self) -> int:
         return max(0, int(self.paused_until - time.time() + 0.999))
@@ -217,35 +325,143 @@ class RateGate:
         return len(self.BACKOFF)
 
     def wait_cooldown(self, progress=None):
-        """Block while YouTube requests are paused, telling the job why."""
+        """Block while YouTube requests are paused or the hourly budget is used up, telling the job why."""
         while True:
             left = self.remaining()
             if left <= 0:
-                return
+                break
             if progress:
                 progress(f"waiting for YouTube cool-down {left // 60}:{left % 60:02d}")
-            if self.cancel.wait(min(left, 1.0)):
-                raise RuntimeError("cancelled")
+            self._sleep(min(left, 1.0))
+        self.wait_budget(progress)
 
     def status(self) -> dict:
-        return {"pausedFor": self.remaining(), "strikes": self.strikes,
-                "jsRuntime": (js_runtime() or ("", ""))[0] or None}
+        now = time.time()
+        with self.lock:
+            r10, r60 = self._count(now, 600), self._count(now, 3600)
+            ll = dict(self.last_limit) if self.last_limit else None
+        if ll:
+            ll["signalLabel"] = SIGNAL_LABELS.get(ll.get("signal"), ll.get("signal"))
+        cs = cookie_status()
+        paused = self.remaining()
+        hint = BOT_HINT if (paused and ll and ll.get("signal") == "bot-check" and not cs["active"]) else None
+        return {"pausedFor": paused, "strikes": self.strikes,
+                "jsRuntime": (js_runtime() or ("", ""))[0] or None,
+                "requests10": r10, "requests60": r60, "budget": self.budget,
+                "lastLimit": ll, "cookies": cs, "hint": hint}
 
 
 GATE = RateGate()
-DOWNLOADS = threading.BoundedSemaphore(4)   # parallel media downloads
+DOWNLOADS = threading.BoundedSemaphore(2)   # parallel media downloads (streams already resolved)
 
 
 @contextmanager
-def download_slot():
+def download_slot(video_id: str | None = None):
     with DOWNLOADS:
         try:
             yield
         except Exception as e:
             if is_bot_error(e):
-                GATE.throttled()
-                raise BotDetected(str(e)) from e
+                GATE.throttled(e, video_id)
+                raise BotDetected(str(e), video_id) from e
             raise
+
+
+# ------------------------------------------------------------------ sign-in cookies
+COOKIE_BROWSERS = ("chrome", "edge", "firefox", "safari", "brave")
+_COOKIES: dict = {"mode": "none", "file": "", "error": None, "failed": False}
+
+
+def set_cookies(mode: str = "none", file: str = "") -> None:
+    """Where yt-dlp reads the user's YouTube sign-in from: a browser name, 'file' (cookies.txt) or 'none'."""
+    mode = (mode or "none").lower()
+    if mode not in COOKIE_BROWSERS and mode != "file":
+        mode = "none"
+    _COOKIES.update(mode=mode, file=(file or "").strip(), error=None, failed=False)
+
+
+def cookie_opts() -> dict:
+    """yt-dlp options for the configured sign-in; {} when none, or after a failure (no cookies then)."""
+    mode = _COOKIES["mode"]
+    if mode == "none" or _COOKIES["failed"]:
+        return {}
+    if mode == "file":
+        f = _COOKIES["file"]
+        if not f or not os.path.isfile(f):
+            _COOKIES.update(failed=True, error=f"cookies.txt not found ({f or 'no file chosen'}). Continuing without sign-in.")
+            return {}
+        return {"cookiefile": f}
+    return {"cookiesfrombrowser": (mode,)}
+
+
+def cookie_status() -> dict:
+    mode = _COOKIES["mode"]
+    return {"mode": mode, "file": _COOKIES["file"], "error": _COOKIES["error"],
+            "active": mode != "none" and not _COOKIES["failed"]}
+
+
+def is_cookie_error(e: Exception) -> bool:
+    m = str(e).lower()
+    return not is_bot_error(e) and any(s in m for s in (
+        "cookie", "dpapi", "keyring", "keychain", "full disk access", "app-bound", "app bound"))
+
+
+def cookie_problem(e: Exception, browser: str) -> str:
+    """A plain-language reason for a failed cookie read, ending in what happens next."""
+    m = str(e).lower()
+    name = browser.capitalize()
+    if "dpapi" in m or "app-bound" in m or "app bound" in m or "decrypt" in m:
+        why = (f"{name} on Windows encrypts its cookies so that other programs can't read them (app-bound "
+               "encryption). Use Firefox, or export a cookies.txt file instead")
+    elif browser == "safari" and ("permission" in m or "operation not permitted" in m or "full disk" in m):
+        why = ("Safari's cookies need Full Disk Access: System Settings > Privacy & Security > Full Disk Access, "
+               "add this app, then restart it")
+    elif "locked" in m or "could not copy" in m or "being used by another" in m or "permission" in m:
+        why = f"{name}'s cookie database is locked while the browser is running. Close {name} and try again"
+    elif "could not find" in m or "no such file" in m or "not found" in m:
+        why = f"no {name} profile with cookies was found"
+    else:
+        why = (str(e).strip().splitlines() or [type(e).__name__])[0][:160]
+    return f"Couldn't read your {name} sign-in: {why}. Continuing without sign-in."
+
+
+def _note_cookie_failure(e: Exception) -> None:
+    opts = cookie_opts_mode()
+    msg = cookie_problem(e, opts) if opts != "file" else f"Couldn't read the cookies.txt file ({str(e)[:120]}). Continuing without sign-in."
+    _COOKIES.update(failed=True, error=msg)
+    log.warning("%s (%s)", msg, e)
+
+
+def cookie_opts_mode() -> str:
+    return _COOKIES["mode"]
+
+
+def make_ydl(opts: dict):
+    """YoutubeDL(opts); if the sign-in cookies can't be read, say so once and carry on without them."""
+    from yt_dlp import YoutubeDL
+    try:
+        return YoutubeDL(opts)
+    except Exception as e:
+        if ("cookiesfrombrowser" in opts or "cookiefile" in opts) and is_cookie_error(e):
+            _note_cookie_failure(e)
+            return YoutubeDL({k: v for k, v in opts.items() if k not in ("cookiesfrombrowser", "cookiefile")})
+        raise
+
+
+def check_cookies() -> str | None:
+    """Try reading the configured sign-in now (called when the user picks it). Returns the problem, if any."""
+    mode = _COOKIES["mode"]
+    _COOKIES["failed"], _COOKIES["error"] = False, None
+    if mode == "none":
+        return None
+    try:
+        o = cookie_opts()
+        if "cookiesfrombrowser" in o:
+            from yt_dlp.cookies import extract_cookies_from_browser
+            extract_cookies_from_browser(*o["cookiesfrombrowser"])
+    except Exception as e:
+        _note_cookie_failure(e)
+    return _COOKIES["error"]
 
 
 _TOOL_CACHE: dict = {}
@@ -401,7 +617,9 @@ def _ydl_opts(clients=None, **extra) -> dict:
         if p:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
-            "retries": 5, "fragment_retries": 5, "noprogress": True}
+            "retries": 5, "fragment_retries": 5, "noprogress": True,
+            "sleep_interval_requests": REQUEST_SLEEP_S}
+    opts.update(cookie_opts())
     # Frozen apps carry ffmpeg outside PATH (imageio also uses a versioned filename).
     # yt-dlp must use the same executable as alignment and video conversion. Note that with
     # ffmpeg found yt-dlp merges the two streams fetch() asks for; fetch() splits them again.
@@ -528,14 +746,14 @@ class YouTube:
         self._lock = threading.Lock()
 
     # -------------------------------------------------------------- search
-    def search(self, song: Song, n: int = 8) -> list[dict]:
+    def search(self, song: Song, n: int = SEARCH_RESULTS) -> list[dict]:
         from yt_dlp import YoutubeDL
         q = f"{clean_title(song.artist)} - {clean_title(song.name)} official music video"
         with self._lock:                     # one search per song per session (retries, other charts)
             hit = self._searches.get(norm_key(q))
             if hit and hit[0] > time.time():
                 return [dict(c) for c in hit[1]]
-        with GATE.slot(), YoutubeDL(_ydl_opts(extract_flat="in_playlist")) as ydl:
+        with GATE.slot(), make_ydl(_ydl_opts(extract_flat="in_playlist")) as ydl:
             info = ydl.extract_info(f"ytsearch{n}:{q}", download=False)
         out = []
         for e in (info or {}).get("entries") or []:
@@ -553,8 +771,8 @@ class YouTube:
         """A YouTube upload of the album recording (duration within 6 s), e.g. a Topic track."""
         from yt_dlp import YoutubeDL
         q = f"{clean_title(artist)} - {clean_title(track)} audio"
-        with GATE.slot(), YoutubeDL(_ydl_opts(extract_flat="in_playlist")) as ydl:
-            info = ydl.extract_info(f"ytsearch10:{q}", download=False)
+        with GATE.slot(), make_ydl(_ydl_opts(extract_flat="in_playlist")) as ydl:
+            info = ydl.extract_info(f"ytsearch{SEARCH_RESULTS}:{q}", download=False)
         best, best_key = None, None
         name = norm_key(track)
         for e in (info or {}).get("entries") or []:
@@ -589,7 +807,7 @@ class YouTube:
         info = None
         for clients in CLIENT_FALLBACKS:
             try:
-                with GATE.slot(), YoutubeDL(_ydl_opts(clients)) as ydl:
+                with GATE.slot(video_id), make_ydl(_ydl_opts(clients)) as ydl:
                     cur = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             except BotDetected:
                 raise
@@ -666,7 +884,7 @@ class YouTube:
                          progress_hooks=hooks, overwrites=True, continuedl=False,
                          concurrent_fragment_downloads=4)
         try:
-            with GATE.slot(), download_slot(), YoutubeDL(opts) as ydl:
+            with GATE.slot(video_id), download_slot(video_id), make_ydl(opts) as ydl:
                 done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
                 path = ydl.prepare_filename(done)
         except Exception as e:
@@ -731,16 +949,17 @@ class YouTube:
         opts = _ydl_opts(CLIENT_FALLBACKS[0], format=selector, outtmpl=dest_noext + ".f%(format_id)s.%(ext)s",
                          progress_hooks=hooks, overwrites=True, continuedl=False,
                          concurrent_fragment_downloads=4)
-        GATE.acquire()
+        GATE.acquire(video_id)
         ok = True
         try:
-            with YoutubeDL(opts) as ydl:
+            with make_ydl(opts) as ydl:
                 done = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
         except Exception as e:
             ok = False
             c = classify_error(e, state.get("why"), state.get("n", 0))
             if isinstance(c, BotDetected):
-                GATE.throttled()
+                c.video_id = video_id
+                GATE.throttled(c, video_id)
             if c is e:
                 raise
             raise c from e
@@ -782,7 +1001,7 @@ class YouTube:
         for fmt in ("bestaudio[ext=m4a]/bestaudio", "bestaudio[acodec=opus]/bestaudio", "worstaudio"):
             try:
                 opts = _ydl_opts(format=fmt, outtmpl=dest_noext + ".%(ext)s", overwrites=True)
-                with GATE.slot(), download_slot(), YoutubeDL(opts) as ydl:
+                with GATE.slot(video_id), download_slot(video_id), make_ydl(opts) as ydl:
                     info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
                     return ydl.prepare_filename(info)
             except BotDetected:
