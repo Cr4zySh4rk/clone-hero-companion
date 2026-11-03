@@ -28,6 +28,7 @@ from .midi import TempoMap, build_track, chunk_track_name, encode_varlen, parse_
 from .paths import cache_dir, config_dir
 from .sng import open_sng, write_sng
 from .store import Store
+from .i18n import _, join
 from .youtube import MIN_P as MIN_HD, MIN_SCORE, YouTube
 
 log = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ def midi_with_lyrics(original: bytes, lines: list[dict], delay_s: float, offset_
         i = names.index("PART VOCALS")
         existing = parse_midi(header + chunks[i], keep_tracks={"PART VOCALS"}).tracks[0]
         if any(not t.strip().startswith("[") for _tick, _ty, t in existing.texts):
-            raise InGameError("chart already has lyrics")
+            raise InGameError(_("ingame.has_lyrics"))
         del chunks[i]  # a vocals track without any lyrics: replace it
     marker = MARKER.encode()
     events = [(0, -1, b"\xff\x01" + encode_varlen(len(marker)) + marker)]
@@ -91,7 +92,7 @@ def chart_with_lyrics(text: str, lines: list[dict], delay_s: float, offset_s: fl
     sections = lyr.parse_chart_sections(text)
     _res, chart_off, tm = lyr.chart_timing(sections)
     if any("lyric " in l for l in sections.get("Events", [])):
-        raise InGameError("chart already has lyrics")
+        raise InGameError(_("ingame.has_lyrics"))
     new = []
     for line in lines:
         if not line["syls"]:
@@ -140,7 +141,7 @@ def pad_video_start(src: Path, seconds: float) -> Path:
     (instead of relying on a negative video_start_time)."""
     ff = _ffmpeg()
     if not ff:
-        raise InGameError("ffmpeg not available")
+        raise InGameError(_("ingame.no_ffmpeg"))
     webm = src.suffix.lower() == ".webm"
     dst = src.with_name("padded" + (".webm" if webm else ".mp4"))
     vf = ["-vf", f"tpad=start_duration={seconds:.3f}:color=black"]
@@ -156,12 +157,12 @@ def pad_video_start(src: Path, seconds: float) -> Path:
 def _to_vp8(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
-        raise InGameError("ffmpeg is needed to convert the video (Clone Hero on Linux only plays VP8 .webm)")
+        raise InGameError(_("ingame.ffmpeg_needed_linux"))
     r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
                         "-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime",
                         "-cpu-used", "8", str(dst)], capture_output=True, text=True)
     if r.returncode != 0:
-        raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+        raise InGameError(_("ingame.ffmpeg_failed", detail=r.stderr.strip()[-300:]))
 
 
 def _probe(p: Path) -> tuple[tuple[int, int], int]:
@@ -189,7 +190,7 @@ def looks_static(p: Path) -> bool:
 def _to_h264(src: Path, dst: Path) -> None:
     ff = _ffmpeg()
     if not ff:
-        raise InGameError("ffmpeg not available to convert the video")
+        raise InGameError(_("ingame.no_ffmpeg_convert"))
     _encode_h264(ff, src, dst, [])
 
 
@@ -204,7 +205,7 @@ def _encode(ff: str, src: Path, dst: Path, args: list[str]) -> None:
                            capture_output=True, text=True)
     if r.returncode != 0:
         dst.unlink(missing_ok=True)
-        raise InGameError("ffmpeg failed: " + r.stderr.strip()[-300:])
+        raise InGameError(_("ingame.ffmpeg_failed", detail=r.stderr.strip()[-300:]))
 
 
 def _encode_h264(ff: str, src: Path, dst: Path, pre: list[str]) -> None:
@@ -240,11 +241,11 @@ def _remux_mp4(src: Path, dst: Path) -> None:
     """Lossless rewrite into a standard, fast-start MP4 (video stream copied as-is)."""
     ff = _ffmpeg()
     if not ff:
-        raise InGameError("ffmpeg not available")
+        raise InGameError(_("ingame.no_ffmpeg"))
     r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", "-c:v", "copy",
                         "-movflags", "+faststart", "-f", "mp4", str(dst)], capture_output=True, text=True)
     if r.returncode != 0:
-        raise InGameError("ffmpeg remux failed: " + r.stderr.strip()[-300:])
+        raise InGameError(_("ingame.ffmpeg_remux_failed", detail=r.stderr.strip()[-300:]))
 
 
 def repair_fragmented_videos(songs, progress=None) -> int:
@@ -404,7 +405,7 @@ def fetch_preview_video(song: Song, yt: YouTube, store: Store, progress=None) ->
 def video_res(p: Path) -> int:
     """Resolution class (e.g. 720) of a video file, 0 if unknown."""
     from .youtube import res_class
-    (w, h), _ = _probe(p)
+    (w, h), _dur = _probe(p)
     return res_class(w, h)
 
 
@@ -442,28 +443,27 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     if not chosen and not known and not force:
         failed_at = max(float(info.get("video_failed_at") or 0), float(base.get("failed_at") or 0))
         if (info.get("video_failed") or base.get("failed")) and time.time() - failed_at < FAIL_MEMORY_S:
-            why = base.get("failed") or info.get("video_failed_reason") or "checked earlier"
-            raise InGameError(f"no HD music video found ({why}; checked earlier, use "
-                              "'Replace videos' to search again)")
+            why = base.get("failed") or info.get("video_failed_reason") or _("ingame.reason_earlier")
+            raise InGameError(_("ingame.no_hd_cached", why=why))
     if chosen:
         order = [chosen]
     else:
         gate_wait()
         if progress:
-            progress("searching YouTube")
+            progress(_("yt.searching"))
         cands = yt.search(song)
         store.update_song(song.key, candidates=cands[:8])
         order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:4]
         if known:                      # what this song (or another chart of it) got before
             order = [known] + [x for x in order if x != known][:3]
         if not order:
-            _remember_failure(store, song, bkey, "no matching music video on YouTube")
-            raise InGameError("no matching music video found on YouTube")
+            _remember_failure(store, song, bkey, _("ingame.reason_nomatch"))
+            raise InGameError(_("ingame.no_match"))
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
 
     def prog(done, total):
         if progress and total:
-            progress(f"downloading video {done * 100 // total}%")
+            progress(_("ingame.downloading_video", pct=done * 100 // total))
     path, vid, fmt, reasons = None, None, None, []
     transient_seen = False
     from_cache = False
@@ -489,7 +489,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
                 p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
         except NoHDVideo:
             log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
-            reasons.append("below 640p")
+            reasons.append(_("ingame.reason_low", p=MIN_HD))
             continue
         except BotDetected:
             # YouTube really is limiting us: every other candidate would be refused too. Stop, let the
@@ -501,30 +501,30 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             # This video can't be had (age-restricted, unavailable, no video streams offered). That is
             # not YouTube limiting us: say what it is, try the next candidate, no cool-down.
             log.info("Skipping %s for %s: %s (%s)", cand, song.display, e.label, e.detail)
-            reasons.append(f"{e.label}: {e.detail}" if e.detail else e.label)
+            reasons.append(_("ingame.reason_label", label=e.label, detail=e.detail) if e.detail else e.label)
             transient_seen = True
             continue
         except Exception as e:
             log.info("Skipping %s for %s: download failed (%s)", cand, song.display, str(e)[:120])
-            reasons.append(f"download failed: {str(e).strip()[:120] or type(e).__name__}")
+            reasons.append(_("ingame.reason_failed", detail=str(e).strip()[:120] or type(e).__name__))
             transient_seen = True
             continue
         p = Path(p)
         if not chosen and looks_static(p):
             log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
-            reasons.append("still image")
+            reasons.append(_("ingame.reason_still"))
             p.unlink(missing_ok=True)
             continue
         path, vid, fmt = p, cand, f
         break
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        why = "; ".join(dict.fromkeys(reasons)) or "no usable video"
+        why = join(dict.fromkeys(reasons)) if reasons else _("ingame.reason_none")
         if reasons and not transient_seen:
             # every candidate was really checked and rejected for its resolution: remember it for all
             # charts of the song (errors like "age-restricted" or "download failed" are not remembered)
             _remember_failure(store, song, bkey, why)
-        raise InGameError(f"no HD music video found ({why})")
+        raise InGameError(_("ingame.no_hd", why=why))
     store.update_song(bkey, video_id=vid, failed=None, failed_at=None)
     store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None,
                       video_failed_at=None, video_failed_reason=None)
@@ -532,7 +532,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     if not per_manual_offset(store, song) and not already_aligned:
         try:
             if progress:
-                progress("lining the video up with the song")
+                progress(_("ingame.aligning_video"))
             off, conf = auto_offset(song, yt, vid, tmpdir,
                                     audio=Path(fetched_audio) if fetched_audio and Path(fetched_audio).exists() else None)
             if conf >= ALIGN_MIN_Z:
@@ -551,14 +551,14 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
     if target.startswith("linux") or PREFER_WEBM:
         if not (path.suffix.lower() == ".webm" and codec.startswith("vp8")):
             if progress:
-                progress("converting video for Clone Hero (VP8)")
+                progress(_("ingame.converting_vp8"))
             out = tmpdir / "video_vp8.webm"
             _to_vp8(path, out)
             path.unlink(missing_ok=True)
             return out.rename(tmpdir / "video.webm")
     elif not (codec.startswith("avc1") or codec.startswith("h264")):
         if progress:
-            progress("converting video for Clone Hero (H.264)")
+            progress(_("ingame.converting_h264"))
         out = tmpdir / "video_h264.mp4"
         _to_h264(path, out)
         path.unlink(missing_ok=True)
@@ -667,8 +667,8 @@ def _codec(p: Path) -> str:
         return ""
 
 
-CHART_GONE = ("the chart file is no longer there (it may have been moved to the Trash or renamed), "
-              "nothing was changed")
+def chart_gone():
+    return _("job.chart_gone")
 
 
 # --------------------------------------------------------------- apply to song
@@ -726,21 +726,21 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
     carries 'video_pending' (the YouTube limit signal) so the video step can run later."""
     with _lock_for(song.key):
         if not song.path.exists():      # waited behind another chart of the song; this one may have gone meanwhile
-            raise InGameError(CHART_GONE)
+            raise InGameError(chart_gone())
         result = {"video": None, "lyrics": None, "video_pending": None}
         per = store.song(song.key)
         lines: list[dict] = []
         want_lyrics = lyrics and not per.get("game_lyrics") and not song.chart_lyrics()
         if want_lyrics:
             if progress:
-                progress("finding lyrics")
+                progress(_("ingame.finding_lyrics"))
             entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
             lines = entry["lines"] if entry else []
             if not lines:
                 result["lyrics"] = "none found"
             elif "lyrics_offset" not in per or per.get("lyrics_offset_auto"):
                 if progress:
-                    progress("lining the lyrics up with the song")
+                    progress(_("ingame.aligning_lyrics"))
                 shift = auto_lyrics_offset(song, entry, yt)
                 if shift is not None:
                     store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
@@ -777,7 +777,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         elif vpath and off_v <= -0.05:
             try:
                 if progress:
-                    progress("adjusting the video start")
+                    progress(_("ingame.adjusting_start"))
                 vpath = pad_video_start(vpath, -off_v)
                 write_v = 0.0
             except Exception as e:
@@ -814,7 +814,7 @@ def _convert_existing_to_webm(song: Song, progress=None) -> Path | None:
     out = tmpdir / "video.webm"
     try:
         if progress:
-            progress("converting the video to WebM for Clone Hero")
+            progress(_("ingame.converting_webm"))
         _to_vp8(src, out)
         return out
     except Exception as e:
@@ -842,7 +842,7 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
         except OSError:
             got = -1
         if got != want:
-            raise InGameError(f"the video could not be saved in {song.path} (wrote {got} of {want} bytes)")
+            raise InGameError(_("ingame.video_not_saved", path=song.path, got=got, want=want))
         result["video"] = dst.name
         if abs(off_v) >= 0.05 or "video_start_time" in song.meta:
             _set_ini(song, "video_start_time", int(round(off_v * 1000)))
@@ -906,7 +906,7 @@ def _apply_sng(song: Song, vpath: Path | None, lines, off_l, off_v, result):
             name = "video" + vpath.suffix.lower()
             entry = next((e for n, e in chk.files.items() if n.lower() == name), None)
             if entry is None or entry.size != vpath.stat().st_size:
-                raise InGameError(f"the video could not be packed into {song.path.name}")
+                raise InGameError(_("ingame.video_not_packed", name=song.path.name))
 
 
 def _set_ini(song: Song, key: str, value) -> None:
@@ -954,7 +954,7 @@ def resync(song: Song, yt: YouTube, store: Store, progress=None) -> dict:
                     result["video"] = pass_result
             else:
                 if progress:
-                    progress("updating the video start time")
+                    progress(_("ingame.updating_start"))
                 ms = int(round(off_v * 1000))
                 if song.is_sng:
                     src = open_sng(str(song.path))
@@ -969,7 +969,7 @@ def resync(song: Song, yt: YouTube, store: Store, progress=None) -> dict:
                 result["video"] = f"start {off_v:+.2f}s"
         if per.get("game_lyrics"):
             if progress:
-                progress("moving the lyrics")
+                progress(_("ingame.moving_lyrics"))
             entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
             if entry and entry["lines"]:
                 off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)

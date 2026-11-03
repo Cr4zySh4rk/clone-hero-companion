@@ -42,6 +42,7 @@ Charts with a vocals part already show lyrics. For the rest, time-synced lyrics 
 - Disable songs (moved out of the game's way), Move to Trash, rename folders by template, export chart packs (.zip)
 - **Per-song sync editor** with live video and audio preview, plus a video picker that only offers HD candidates
 - Built-in player to listen to any chart's audio
+- **Languages:** English, Русский, 简体中文, 한국어, 日本語, Português (Brasil), Español, Français and Deutsch. Follows your system language by default; change it any time in Settings, no restart needed. Missing translations fall back to English (translator guide: `chcompanion/web/i18n/GLOSSARY.md`)
 
 <p align="center"><img src="docs/screenshots/sync-panel.jpg" width="360" alt="Sync editor in the song panel, previewing the music video"><br>
 <sub>The sync editor: preview the music video against the song and nudge the video or lyrics until they line up, then save it to the game.</sub></p>

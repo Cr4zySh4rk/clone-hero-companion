@@ -6,6 +6,11 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtLen = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : "");
 const MIN_P = 640;
+const tr = (k, v) => I18N.t(k, v);
+const nf = (n) => I18N.nf(n);
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+const dn = (d) => (I18N.has("diff." + d) ? tr("diff." + d) : cap(d));      // difficulty / instrument names from the data
+const inn = (i) => (I18N.has("inst." + i) ? tr("inst." + i) : i);
 
 async function api(path, body, method) {
   const opt = body !== undefined ? { method: method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
@@ -20,13 +25,13 @@ function toast(msg, ms = 2600, onclick = null) {
   t.onclick = onclick; t.style.cursor = onclick ? "pointer" : ""; t.style.pointerEvents = onclick ? "auto" : "";
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), ms);
 }
-function ask({ title, text = "", input = null, select = null, ok = "OK", danger = false }) {
+function ask({ title, text = "", input = null, select = null, ok = null, danger = false }) {
   return new Promise((resolve) => {
     const dlg = $("#dlg"), f = $("#dlgForm");
     f.innerHTML = `<h2>${esc(title)}</h2>${text ? `<p class="hint" style="white-space:pre-line;max-height:45vh;overflow:auto">${esc(text)}</p>` : ""}
       ${select ? `<select id="dlgSel">${select.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>` : ""}
       ${input !== null ? `<input type="text" id="dlgIn" value="${esc(input)}" placeholder="${esc(title)}">` : ""}
-      <div class="btns"><button value="cancel" class="ghost">Cancel</button><button value="ok" class="${danger ? "danger" : "primary"}">${esc(ok)}</button></div>`;
+      <div class="btns"><button value="cancel" class="ghost">${esc(tr("common.cancel"))}</button><button value="ok" class="${danger ? "danger" : "primary"}">${esc(ok || tr("common.ok"))}</button></div>`;
     dlg.onclose = () => {
       if (dlg.returnValue !== "ok") return resolve(null);
       resolve({ input: $("#dlgIn")?.value ?? null, select: $("#dlgSel")?.value ?? null });
@@ -72,7 +77,7 @@ $("#nav").addEventListener("click", (e) => {
   if (b.dataset.view === "library" && st.filter !== viewFilter("library")) setFilter(viewFilter("library"));
   show(b.dataset.view);
 });
-$("#launchGame").onclick = async () => { try { await api("/api/game/launch", {}); toast("Starting Clone Hero…"); } catch (e) { toast(e.message, 4000); } };
+$("#launchGame").onclick = async () => { try { await api("/api/game/launch", {}); toast(tr("toast.starting_game")); } catch (e) { toast(e.message, 4000); } };
 
 /* ================================================================ library */
 const lib = { songs: [], byId: new Map(), version: -1 };
@@ -90,10 +95,10 @@ async function loadLibrary() {
   for (const id of [...st.sel]) if (!lib.byId.has(id)) st.sel.delete(id);
   const groups = [...new Set(d.songs.map((s) => s.group).filter(Boolean))].sort();
   const gsel = $("#libGroup"), cur = gsel.value;
-  gsel.innerHTML = `<option value="">All folders</option>` + groups.map((g) => `<option${g === cur ? " selected" : ""}>${esc(g)}</option>`).join("");
+  gsel.innerHTML = `<option value="">${esc(tr("lib.all_folders"))}</option>` + groups.map((g) => `<option${g === cur ? " selected" : ""}>${esc(g)}</option>`).join("");
   $("#navLibCount").textContent = d.songs.filter((s) => !s.disabled).length || "";
   updateFavCount();
-  $("#sideStatus").textContent = d.enriching ? `Checking songs… ${d.enrich[0]}/${d.enrich[1]}` : "";
+  $("#sideStatus").textContent = d.enriching ? tr("lib.checking", { done: d.enrich[0], total: d.enrich[1] }) : "";
   applyFilters();
   if (st.filter === "fav" && currentView === "library") loadCloud();     // recovered favourites appear in "not on this machine"
   if (activeId && lib.byId.has(activeId) && currentView === "library") refreshDetail();
@@ -102,7 +107,7 @@ async function pollLibrary() {
   try {
     const v = await api("/api/library/version");
     if (v.version !== lib.version) await loadLibrary();
-    else $("#sideStatus").textContent = v.enriching ? `Checking songs… ${v.enrich[0]}/${v.enrich[1]}` : "";
+    else $("#sideStatus").textContent = v.enriching ? tr("lib.checking", { done: v.enrich[0], total: v.enrich[1] }) : "";
   } catch (e) { /* app closing */ }
   setTimeout(pollLibrary, 2500);
 }
@@ -152,8 +157,8 @@ function applyFilters() {
   $$("#libHead .sortable").forEach((h) => { h.classList.toggle("asc", h.dataset.k === k && d > 0); h.classList.toggle("desc", h.dataset.k === k && d < 0); });
   const empty = $("#libEmpty");
   empty.hidden = rows.length > 0;
-  empty.textContent = st.filter === "fav" && !lib.songs.some((s) => s.fav) ? "No favourites yet. Click the ☆ on any song, select songs and choose “Add to favourites”, or press F."
-    : lib.songs.length ? "No songs match this view." : "No songs found yet. Check the Clone Hero folder in Settings.";
+  empty.textContent = st.filter === "fav" && !lib.songs.some((s) => s.fav) ? tr("lib.empty.nofav")
+    : lib.songs.length ? tr("lib.empty.nomatch") : tr("lib.empty.nosongs");
   renderTable(true);
   updateSelbar();
 }
@@ -186,10 +191,10 @@ window.addEventListener("resize", () => renderTable(false));
 
 function pills(s) {
   const v = videoState(s);
-  const vid = v === "ok" ? `<span class="pill ok">${s.video ? s.video + "p" : "video"}</span>`
-    : v === "low" ? `<span class="pill low" title="Below 640p — Run with “Replace videos” to upgrade">${s.video}p</span>`
-    : v === "failed" ? `<span class="pill" title="No HD music video found">none found</span>` : `<span class="pill">—</span>`;
-  const ly = s.lyrics === "chart" ? `<span class="pill ok">chart</span>` : s.lyrics === "added" ? `<span class="pill ok">added</span>`
+  const vid = v === "ok" ? `<span class="pill ok">${s.video ? s.video + "p" : esc(tr("pill.video"))}</span>`
+    : v === "low" ? `<span class="pill low" title="${esc(tr("pill.low_tip", { p: MIN_P }))}">${s.video}p</span>`
+    : v === "failed" ? `<span class="pill" title="${esc(tr("pill.none_found_tip"))}">${esc(tr("pill.none_found"))}</span>` : `<span class="pill">—</span>`;
+  const ly = s.lyrics === "chart" ? `<span class="pill ok">${esc(tr("pill.lyrics_chart"))}</span>` : s.lyrics === "added" ? `<span class="pill ok">${esc(tr("pill.lyrics_added"))}</span>`
     : s.lyrics === "none" ? `<span class="pill">—</span>` : `<span class="pill">…</span>`;
   return [vid, ly];
 }
@@ -199,18 +204,19 @@ function levelsHtml(lv) {
   const inst = $("#chartInst").value;
   const have = new Set(inst ? (lv[inst] || []) : Object.values(lv).flat());
   const want = $("#chartDiff").value;
-  const L = [["easy", "E"], ["medium", "M"], ["hard", "H"], ["expert", "X"]];
-  return `<div class="lv" title="Difficulty levels${inst ? " for " + inst : ""}: ${L.filter(([k]) => have.has(k)).map(([k]) => k).join(", ") || "none"}">`
+  const L = [["easy", tr("diff.letter.easy")], ["medium", tr("diff.letter.medium")], ["hard", tr("diff.letter.hard")], ["expert", tr("diff.letter.expert")]];
+  const list = L.filter(([k]) => have.has(k)).map(([k]) => dn(k)).join(", ") || tr("common.none");
+  return `<div class="lv" title="${esc(inst ? tr("chart.levels_tip_inst", { inst: inn(inst), list }) : tr("chart.levels_tip", { list }))}">`
     + L.map(([k, l]) => `<i class="${have.has(k) ? "on" : ""}${k === want ? " want" : ""}">${l}</i>`).join("") + "</div>";
 }
 function instHtml(d) {
   const map = [["guitar", "G"], ["bass", "B"], ["rhythm", "R"], ["drums", "D"], ["keys", "K"], ["vocals", "V"]];
-  return `<div class="inst">${map.filter(([k]) => k in d).map(([k, l]) => `<i class="${l}" title="${k} ${d[k]}">${l}</i>`).join("")}</div>`;
+  return `<div class="inst">${map.filter(([k]) => k in d).map(([k, l]) => `<i class="${l}" title="${esc(inn(k))} ${esc(d[k])}">${esc(tr("inst.letter." + k))}</i>`).join("")}</div>`;
 }
 // A song with several charts shows which chart each row is; the favourite copy is marked with a star.
 function chartTag(s) {
   if (!(s.copies > 1 || st.filter === "fav")) return "";
-  const who = s.charter || "unknown charter";
+  const who = s.charter || tr("lib.unknown_charter");
   return ` · <em class="chart-tag${s.fav ? " on" : ""}">${s.fav ? "★ " : ""}${esc(who)}</em>`;
 }
 function rowEl(s) {
@@ -224,7 +230,7 @@ function rowEl(s) {
     <div class="cell h1">${esc(s.album)}</div><div class="cell h1">${esc(s.year)}</div>
     <div class="cell">${fmtLen(s.length)}</div><div class="cell h1">${esc(s.charter)}</div>
     <div>${instHtml(s.diffs)}</div><div>${vid}</div><div>${ly}</div>
-    <div class="fav${s.fav ? " on" : ""}" title="${s.fav ? "Favourite chart" : "Favourite this chart"}${s.copies > 1 && s.charter ? " (" + esc(s.charter) + ")" : ""}">${s.fav ? "★" : "☆"}</div>`;
+    <div class="fav${s.fav ? " on" : ""}" title="${esc(s.fav ? tr("lib.fav_chart") : tr("lib.fav_this"))}${s.copies > 1 && s.charter ? " (" + esc(s.charter) + ")" : ""}">${s.fav ? "★" : "☆"}</div>`;
   return el;
 }
 spacer.addEventListener("click", async (e) => {
@@ -264,32 +270,32 @@ $("#libGroup").addEventListener("change", (e) => { st.group = e.target.value; ap
 function updateSelbar() {
   const n = st.sel.size;
   $("#selbar").classList.toggle("on", n > 0);
-  $("#selCount").textContent = `${n} selected`;
+  $("#selCount").textContent = tr("common.selected", { count: n });
   $("#selAll").checked = n > 0 && rows.length > 0 && rows.every((s) => st.sel.has(s.id));
   const anyDisabled = [...st.sel].some((id) => lib.byId.get(id)?.disabled);
-  $("#disableBtn").textContent = anyDisabled ? "Enable" : "Disable";
+  $("#disableBtn").textContent = anyDisabled ? tr("lib.act.enable") : tr("lib.act.disable");
   $("#disableBtn").dataset.act = anyDisabled ? "enable" : "disable";
   const allFav = n > 0 && [...st.sel].every((id) => lib.byId.get(id)?.fav);
-  $("#favBtn").textContent = allFav ? "☆ Remove from favourites" : "★ Add to favourites";
+  $("#favBtn").textContent = allFav ? tr("lib.act.fav_remove") : tr("lib.act.fav_add");
 }
 
 /* run batch */
 $("#runBtn").addEventListener("click", (e) => {
   const o = $("#runOpts");
-  if (!o.classList.contains("on")) { o.classList.add("on"); e.target.textContent = `Start ${st.sel.size}`; return; }
-  startRun(); o.classList.remove("on"); e.target.textContent = "Run";
+  if (!o.classList.contains("on")) { o.classList.add("on"); e.target.textContent = tr("lib.start", { count: st.sel.size }); return; }
+  startRun(); o.classList.remove("on"); e.target.textContent = tr("lib.run");
 });
 document.addEventListener("click", (e) => {
-  if (!e.target.closest("#runOpts") && !e.target.closest("#runBtn")) { $("#runOpts").classList.remove("on"); $("#runBtn").textContent = "Run"; }
+  if (!e.target.closest("#runOpts") && !e.target.closest("#runBtn")) { $("#runOpts").classList.remove("on"); $("#runBtn").textContent = tr("lib.run"); }
 });
 async function startRun(ids = [...st.sel]) {
   const video = $("#optVideo").checked, lyrics = $("#optLyrics").checked, meta = $("#optMeta").checked, force = $("#optForce").checked;
-  if (!video && !lyrics && !meta) return toast("Pick at least one thing to get");
+  if (!video && !lyrics && !meta) return toast(tr("toast.pick_one"));
   const kind = (video || lyrics) && meta ? "full" : meta ? "metadata" : "media";
   const fav = st.filter === "fav" && cloud.favs.length;
   const r = await api("/api/jobs", { ids, kind, options: { video, lyrics, force }, installMissing: !!fav });
-  if (r.installing?.queued) toast(`Installing ${r.installing.queued} missing favourite${r.installing.queued === 1 ? "" : "s"}, then running…${r.installing.notFound.length ? ` · ${r.installing.notFound.length} not found on Chorus Encore or RhythmVerse` : ""}`, 5000);
-  else toast(`Queued ${r.queued} song${r.queued === 1 ? "" : "s"} — see Jobs${r.installing?.notFound.length ? ` · ${r.installing.notFound.length} favourites not found on Chorus Encore or RhythmVerse` : ""}`);
+  if (r.installing?.queued) toast(tr("toast.installing_missing", { count: r.installing.queued }) + (r.installing.notFound.length ? " · " + tr("toast.not_found_online", { count: r.installing.notFound.length }) : ""), 5000);
+  else toast(tr("toast.queued", { count: r.queued }) + (r.installing?.notFound.length ? " · " + tr("toast.fav_not_found_online", { count: r.installing.notFound.length }) : ""));
   if (r.installing) loadCloud();
   pollJobs(true);
 }
@@ -300,20 +306,20 @@ async function trashSongs(ids, keepSel) {
   for (;;) {
     s = await api("/api/songs/op", { id: op });
     if (s.status !== "running") break;
-    toast(`Moving to the Trash… ${s.done}/${s.total}`, 4000);
+    toast(tr("toast.trashing", { done: s.done, total: s.total }), 4000);
     await new Promise((r) => setTimeout(r, 700));
   }
-  if (s.status === "error") throw new Error(s.error || "Could not move the songs to the Trash");
+  if (s.status === "error") throw new Error(s.error || tr("toast.trash_failed"));
   await loadLibrary();
   const bad = s.failed || [];
   bad.forEach((f) => keepSel.add(f.id));
-  if (!bad.length) return toast(`Moved ${s.deleted} chart${s.deleted === 1 ? "" : "s"} to the Trash`);
-  toast(`Moved ${s.deleted} chart${s.deleted === 1 ? "" : "s"} to the Trash · ${bad.length} couldn't be moved (details)`, 30000, () => showTrashFailures(bad));
+  if (!bad.length) return toast(tr("toast.moved", { count: s.deleted }));
+  toast(tr("toast.moved", { count: s.deleted }) + " · " + tr("toast.cant_move", { count: bad.length }), 30000, () => showTrashFailures(bad));
   showTrashFailures(bad);
 }
 async function showTrashFailures(bad) {
-  const list = bad.slice(0, 200).map((f) => `• ${f.name}: ${f.reason}`).join("\n") + (bad.length > 200 ? `\n… and ${bad.length - 200} more` : "");
-  const r = await ask({ title: `${bad.length} chart${bad.length === 1 ? "" : "s"} couldn't be moved to the Trash`, text: list, ok: "Retry", danger: true });
+  const list = bad.slice(0, 200).map((f) => `• ${f.name}: ${f.reason}`).join("\n") + (bad.length > 200 ? "\n" + tr("toast.and_more", { count: bad.length - 200 }) : "");
+  const r = await ask({ title: tr("dlg.cant_trash", { count: bad.length }), text: list, ok: tr("dlg.retry"), danger: true });
   if (!r) return;
   const keep = new Set(); await trashSongs(bad.map((f) => f.id), keep); st.sel.clear(); keep.forEach((i) => st.sel.add(i)); renderTable(false); updateSelbar();
 }
@@ -325,24 +331,24 @@ $("#selbar").addEventListener("click", async (e) => {
     if (act === "favorite") return setFav(ids, !ids.every((i) => lib.byId.get(i)?.fav));
     if (act === "setlist") return addToSetlist(ids);
     if (act === "pack") {
-      const r = await ask({ title: "Export chart pack", text: `${ids.length} songs into one .zip (saved in the “Chart Packs” folder).`, input: "My Chart Pack", ok: "Export" });
-      if (!r) return; toast("Packing…"); const d = await api("/api/songs/action", { ids, action: "pack", name: r.input }); return toast("Saved " + d.path, 5000);
+      const r = await ask({ title: tr("dlg.pack_title"), text: tr("dlg.pack_text", { count: ids.length }), input: tr("dlg.pack_default"), ok: tr("dlg.export") });
+      if (!r) return; toast(tr("toast.packing")); const d = await api("/api/songs/action", { ids, action: "pack", name: r.input }); return toast(tr("toast.saved_path", { path: d.path }), 5000);
     }
     if (act === "rename") {
-      const r = await ask({ title: "Rename song folders", text: "Use {artist}, {name}, {charter}, {album}, {year}.", input: "{artist} - {name}", ok: "Rename" });
-      if (!r) return; const d = await api("/api/songs/action", { ids, action: "rename", template: r.input }); return toast(`Renamed ${d.count}`);
+      const r = await ask({ title: tr("dlg.rename_title"), text: tr("dlg.rename_text"), input: "{artist} - {name}", ok: tr("dlg.rename") });
+      if (!r) return; const d = await api("/api/songs/action", { ids, action: "rename", template: r.input }); return toast(tr("toast.renamed", { count: d.count }));
     }
     if (act === "restore") {
-      if (!await ask({ title: "Undo changes?", text: `Removes the videos and lyrics this app added to ${ids.length} songs and restores their original files.`, ok: "Undo changes", danger: true })) return;
-      const d = await api("/api/songs/action", { ids, action: "restore" }); return toast(`Restored ${d.count} songs`);
+      if (!await ask({ title: tr("dlg.restore_title"), text: tr("dlg.restore_text", { count: ids.length }), ok: tr("lib.act.restore"), danger: true })) return;
+      const d = await api("/api/songs/action", { ids, action: "restore" }); return toast(tr("toast.restored", { count: d.count }));
     }
     if (act === "disable" || act === "enable") {
       const d = await api("/api/songs/action", { ids, action: act });
-      toast(act === "disable" ? `Disabled ${d.count} — moved to “Disabled Songs”, so Clone Hero skips them` : `Enabled ${d.count}`);
+      toast(act === "disable" ? tr("toast.disabled", { count: d.count }) : tr("toast.enabled", { count: d.count }));
       return;
     }
     if (act === "delete") {
-      if (!await ask({ title: `Move ${ids.length} song${ids.length === 1 ? "" : "s"} to the Trash?`, text: "You can restore them from the Trash.", ok: "Move to Trash", danger: true })) return;
+      if (!await ask({ title: tr("dlg.trash_title", { count: ids.length }), text: tr("dlg.trash_text"), ok: tr("lib.act.delete"), danger: true })) return;
       const keep = new Set(); await trashSongs(ids, keep); st.sel.clear(); keep.forEach((i) => st.sel.add(i)); renderTable(false); updateSelbar(); loadCloud();
     }
   } catch (err) { toast(err.message, 4500); }
@@ -358,11 +364,11 @@ function favTotals() {
   return { total: n, onDisk: n, notHere: 0 };
 }
 function updateFavCount() {
-  const t = favTotals();
-  $("#navFavCount").textContent = t.total || "";
+  const ft = favTotals();
+  $("#navFavCount").textContent = ft.total || "";
   const sum = $("#favSummary");
   sum.hidden = !(st.filter === "fav" && currentView === "library");
-  sum.textContent = `${nf(t.total)} favourite${t.total === 1 ? "" : "s"}${t.notHere ? ` · ${nf(t.notHere)} not on this machine` : ""}`;
+  sum.textContent = tr("fav.summary", { count: ft.total }) + (ft.notHere ? " · " + tr("fav.not_here", { count: ft.notHere }) : "");
 }
 async function setFav(ids, value) {
   ids = ids.filter((i) => lib.byId.has(i));
@@ -372,13 +378,13 @@ async function setFav(ids, value) {
   lib.songs.forEach((x) => { if (want.has(x.id)) x.fav = value; });
   updateFavCount(); renderTable(true); updateSelbar(); loadCloud();
   if (detail && ids.includes(detail.id)) { detail.fav = value; paintDetailFav(); }
-  if (!value && ids.length > 1) toast(`Removed ${ids.length} charts from favourites. Press F again to undo.`, 6000);
-  else toast(value ? `Added ${ids.length === 1 ? "to" : ids.length + " charts to"} favourites ★` : `Removed ${ids.length === 1 ? "from" : ids.length + " charts from"} favourites`);
+  if (!value && ids.length > 1) toast(tr("toast.fav_removed_many", { count: ids.length }), 6000);
+  else toast(value ? (ids.length === 1 ? tr("toast.fav_added") : tr("toast.fav_added_many", { count: ids.length })) : tr("toast.fav_removed"));
 }
 function paintDetailFav() {
   const b = $("#dFav"); if (!b || !detail) return;
   const on = lib.byId.get(detail.id)?.fav;
-  b.textContent = on ? "★ Favourite" : "☆ Add to favourites"; b.classList.toggle("fav-on", !!on);
+  b.textContent = on ? tr("detail.fav_on") : tr("lib.act.fav_add"); b.classList.toggle("fav-on", !!on);
 }
 
 /* ================================================================ detail */
@@ -404,43 +410,43 @@ async function refreshDetail() {
     <div class="d-art"${d.art ? ` style="background-image:url('/media/art/${d.id}?v=${lib.version}')"` : ""}></div>
     <div class="d-head"><h3>${esc(d.name)}</h3><p>${esc(d.artist)}</p></div>
     <div class="d-sec">
-      <div class="d-row">${vid}${ly}${d.sng ? '<span class="pill">.sng</span>' : ""}${d.disabled ? '<span class="pill low">disabled</span>' : ""}</div>
-      <div class="kv"><span>Release</span><span>${esc(meta) || "—"}</span><span>Charter</span><span>${esc(d.charter) || "—"}</span>
-        <span>Length</span><span>${fmtLen(d.length) || "—"}</span><span>Folder</span><span title="${esc(d.path)}">${esc(d.rel)}</span></div>
+      <div class="d-row">${vid}${ly}${d.sng ? '<span class="pill">.sng</span>' : ""}${d.disabled ? `<span class="pill low">${esc(tr("pill.disabled"))}</span>` : ""}</div>
+      <div class="kv"><span>${esc(tr("detail.release"))}</span><span>${esc(meta) || "—"}</span><span>${esc(tr("detail.charter"))}</span><span>${esc(d.charter) || "—"}</span>
+        <span>${esc(tr("detail.length"))}</span><span>${fmtLen(d.length) || "—"}</span><span>${esc(tr("detail.folder"))}</span><span title="${esc(d.path)}">${esc(d.rel)}</span></div>
       <div class="status-line" id="dStatus">${esc(d.status || "")}</div>
       <div class="d-row">
         <button id="dFav" class="favbtn"></button>
-        <button class="primary" id="dRun">Get video, lyrics &amp; metadata</button>
-        <button id="dMeta">Metadata only</button>
-        <button id="dPlay">Play song</button>
-        <button id="dReveal">Show in folder</button>
+        <button class="primary" id="dRun">${esc(tr("detail.run"))}</button>
+        <button id="dMeta">${esc(tr("detail.meta_only"))}</button>
+        <button id="dPlay">${esc(tr("detail.play"))}</button>
+        <button id="dReveal">${esc(tr("detail.reveal"))}</button>
       </div>
-      <div class="d-row"><span class="hint">Rating</span>${[1, 2, 3, 4, 5].map((n) => `<span class="fav${(d.rating || 0) >= n ? " on" : ""}" data-r="${n}">★</span>`).join("")}</div>
+      <div class="d-row"><span class="hint">${esc(tr("detail.rating"))}</span>${[1, 2, 3, 4, 5].map((n) => `<span class="fav${(d.rating || 0) >= n ? " on" : ""}" data-r="${n}">★</span>`).join("")}</div>
     </div>
     <div class="d-sec">
-      <h4>Background video and sync</h4>
-      <div class="preview"><video id="dVideo" muted playsinline preload="metadata"${d.hasVideo ? ` src="/media/video/${d.id}?v=${lib.version}"` : ""}></video>${d.hasVideo ? "" : '<div class="none">No video yet</div>'}</div>
+      <h4>${esc(tr("detail.sync_title"))}</h4>
+      <div class="preview"><video id="dVideo" muted playsinline preload="metadata"${d.hasVideo ? ` src="/media/video/${d.id}?v=${lib.version}"` : ""}></video>${d.hasVideo ? "" : `<div class="none">${esc(tr("detail.no_video"))}</div>`}</div>
       <audio id="dAudio" preload="none"></audio>
-      <div class="slider"><span>Position</span><input type="range" id="dPos" min="0" max="${Math.round(d.length || 300)}" step="1" value="0"><b id="dPosV">0:00</b></div>
-      <div class="slider"><span>Video</span><input type="range" id="dVOff" min="-15" max="90" step="0.05" value="${vOff}"><b id="dVOffV">${vOff.toFixed(2)}s</b></div>
-      <div class="slider"><span>Lyrics</span><input type="range" id="dLOff" min="-10" max="10" step="0.05" value="${lOff}"><b id="dLOffV">${lOff.toFixed(2)}s</b></div>
-      <div class="d-row"><button id="dPrev">Preview</button><button class="primary" id="dApply">Save sync to game</button></div>
-      <p class="hint">Video: seconds into the music video at the song's first second. Positive skips an intro.</p>
+      <div class="slider"><span>${esc(tr("detail.position"))}</span><input type="range" id="dPos" min="0" max="${Math.round(d.length || 300)}" step="1" value="0"><b id="dPosV">0:00</b></div>
+      <div class="slider"><span>${esc(tr("detail.video"))}</span><input type="range" id="dVOff" min="-15" max="90" step="0.05" value="${vOff}"><b id="dVOffV">${vOff.toFixed(2)}s</b></div>
+      <div class="slider"><span>${esc(tr("detail.lyrics"))}</span><input type="range" id="dLOff" min="-10" max="10" step="0.05" value="${lOff}"><b id="dLOffV">${lOff.toFixed(2)}s</b></div>
+      <div class="d-row"><button id="dPrev">${esc(tr("detail.preview"))}</button><button class="primary" id="dApply">${esc(tr("detail.apply"))}</button></div>
+      <p class="hint">${esc(tr("detail.sync_hint"))}</p>
     </div>
     <div class="d-sec">
-      <h4>Pick a different video (HD only)</h4>
-      <div class="d-row"><input type="url" id="dUrl" placeholder="Paste a YouTube link" style="flex:1"><button id="dUse">Use</button></div>
-      <button id="dFind">Show YouTube matches</button>
+      <h4>${esc(tr("detail.pick_title"))}</h4>
+      <div class="d-row"><input type="url" id="dUrl" placeholder="${esc(tr("detail.paste_ph"))}" style="flex:1"><button id="dUse">${esc(tr("common.use"))}</button></div>
+      <button id="dFind">${esc(tr("detail.find"))}</button>
       <div class="cands" id="dCands"></div>
     </div>
     <div class="d-sec">
-      <h4>Global top scores</h4>
-      <div id="dLb"><p class="hint">Loading…</p></div>
+      <h4>${esc(tr("detail.top_title"))}</h4>
+      <div id="dLb"><p class="hint">${esc(tr("common.loading"))}</p></div>
     </div>
     <div class="d-sec">
       <div class="d-row">
-        <button id="dSkip">${d.skip ? "Allow auto-download" : "Never auto-download for this song"}</button>
-        <button id="dUndo" class="danger">Undo changes</button>
+        <button id="dSkip">${esc(d.skip ? tr("detail.skip_on") : tr("detail.skip_off"))}</button>
+        <button id="dUndo" class="danger">${esc(tr("detail.undo"))}</button>
       </div>
     </div>`;
   bindDetail(d);
@@ -454,8 +460,8 @@ function bindDetail(d) {
   $("#dMeta").onclick = () => startRunOne(d.id, "metadata");
   $("#dPlay").onclick = () => playSong(d.id);
   $("#dReveal").onclick = () => api("/api/songs/action", { ids: [d.id], action: "reveal" });
-  $("#dUndo").onclick = async () => { await api("/api/songs/action", { ids: [d.id], action: "restore" }); toast("Restored the original files"); };
-  $("#dSkip").onclick = async () => { await api("/api/songs/action", { ids: [d.id], action: "skip", value: !d.skip }); d.skip = !d.skip; $("#dSkip").textContent = d.skip ? "Allow auto-download" : "Never auto-download for this song"; };
+  $("#dUndo").onclick = async () => { await api("/api/songs/action", { ids: [d.id], action: "restore" }); toast(tr("toast.restored_files")); };
+  $("#dSkip").onclick = async () => { await api("/api/songs/action", { ids: [d.id], action: "skip", value: !d.skip }); d.skip = !d.skip; $("#dSkip").textContent = d.skip ? tr("detail.skip_on") : tr("detail.skip_off"); };
   $$("#detailBody .fav[data-r]").forEach((el) => el.onclick = async () => {
     const r = Number(el.dataset.r) === d.rating ? 0 : Number(el.dataset.r);
     await api("/api/songs/action", { ids: [d.id], action: "rate", value: r }); d.rating = r;
@@ -469,31 +475,31 @@ function bindDetail(d) {
   $("#dPrev").onclick = () => previewing ? stopPreview() : startPreview(Number(pos.value));
   $("#dApply").onclick = async () => {
     await api(`/api/song/${d.id}/offsets`, { video: Number(vOff.value), lyrics: Number(lOff.value), apply: true });
-    toast("Saved. The song is rewritten with this sync as soon as it isn't playing.", 4000);
+    toast(tr("toast.sync_saved"), 4000);
   };
   $("#dUse").onclick = async () => {
     const v = $("#dUrl").value.trim(); if (!v) return;
-    try { const r = await api(`/api/song/${d.id}/use-video`, { video: v }); toast(`Using that video (${r.res}p) — downloading`); pollJobs(true); }
+    try { const r = await api(`/api/song/${d.id}/use-video`, { video: v }); toast(tr("toast.using_video", { res: r.res })); pollJobs(true); }
     catch (e) { toast(e.message, 4500); }
   };
   $("#dFind").onclick = async (e) => {
-    e.target.disabled = true; e.target.textContent = "Searching YouTube…";
+    e.target.disabled = true; e.target.textContent = tr("detail.searching");
     try {
       const r = await api(`/api/song/${d.id}/candidates`, {});
       $("#dCands").innerHTML = r.candidates.map((c) => `<div class="cand${c.id === d.videoId ? " current" : ""}">
           <a href="https://youtu.be/${c.id}" target="_blank" title="${esc(c.title)}">${esc(c.title)}</a>
-          <span class="pill ${c.res >= MIN_P ? "ok" : "low"}">${c.res ? c.res + "p" : "no HD"}</span>
-          <button data-v="${c.id}" ${c.res >= MIN_P ? "" : "disabled"}>Use</button></div>`).join("") || '<p class="hint">Nothing found.</p>';
+          <span class="pill ${c.res >= MIN_P ? "ok" : "low"}">${c.res ? c.res + "p" : esc(tr("pill.no_hd"))}</span>
+          <button data-v="${c.id}" ${c.res >= MIN_P ? "" : "disabled"}>${esc(tr("common.use"))}</button></div>`).join("") || `<p class="hint">${esc(tr("detail.nothing_found"))}</p>`;
       $$("#dCands button").forEach((b) => b.onclick = async () => {
-        try { await api(`/api/song/${d.id}/use-video`, { video: b.dataset.v }); toast("Downloading that video"); pollJobs(true); } catch (err) { toast(err.message, 4500); }
+        try { await api(`/api/song/${d.id}/use-video`, { video: b.dataset.v }); toast(tr("toast.downloading_video")); pollJobs(true); } catch (err) { toast(err.message, 4500); }
       });
     } catch (err) { toast(err.message, 4500); }
-    e.target.disabled = false; e.target.textContent = "Show YouTube matches";
+    e.target.disabled = false; e.target.textContent = tr("detail.find");
   };
 }
 async function startRunOne(id, kind) {
   await api("/api/jobs", { ids: [id], kind, options: { video: true, lyrics: true, force: kind !== "metadata" && !!detail?.hasVideo && videoState(detail) === "low" } });
-  toast("Queued — progress shows here and in Jobs"); pollJobs(true);
+  toast(tr("toast.queued_one")); pollJobs(true);
 }
 
 /* preview: audio from the chart, video offset applied live */
@@ -502,14 +508,14 @@ function startPreview(t) {
   const a = $("#dAudio"); if (!a || !detail) return;
   previewing = true; previewStart = t;
   a.src = `/media/audio/${detail.id}?t=${t}`; a.play().catch(() => {});
-  $("#dPrev").textContent = "Stop";
+  $("#dPrev").textContent = tr("detail.stop");
   const v = $("#dVideo"); if (v && v.src) { syncPreview(true); v.play().catch(() => {}); }
   clearInterval(startPreview.iv); startPreview.iv = setInterval(() => syncPreview(false), 250);
 }
 function stopPreview() {
   previewing = false; clearInterval(startPreview.iv);
   const a = $("#dAudio"), v = $("#dVideo"); if (a) { a.pause(); a.removeAttribute("src"); } if (v) v.pause();
-  if ($("#dPrev")) $("#dPrev").textContent = "Preview";
+  if ($("#dPrev")) $("#dPrev").textContent = tr("detail.preview");
 }
 function syncPreview(hard) {
   const a = $("#dAudio"), v = $("#dVideo"); if (!a || !v || !detail) return;
@@ -527,16 +533,15 @@ function syncPreview(hard) {
 function playSong(id) {
   const s = lib.byId.get(id); if (!s) return;
   const a = $("#plAudio"); a.src = `/media/audio/${id}?t=0`; a.play().catch(() => {});
-  $("#player").hidden = false; $("#plTitle").textContent = `${s.artist} — ${s.name}`; $("#plToggle").textContent = "Pause";
+  $("#player").hidden = false; $("#plTitle").textContent = `${s.artist} — ${s.name}`; $("#plToggle").textContent = tr("player.pause");
 }
-$("#plToggle").onclick = () => { const a = $("#plAudio"); if (a.paused) { a.play(); $("#plToggle").textContent = "Pause"; } else { a.pause(); $("#plToggle").textContent = "Play"; } };
+$("#plToggle").onclick = () => { const a = $("#plAudio"); if (a.paused) { a.play(); $("#plToggle").textContent = tr("player.pause"); } else { a.pause(); $("#plToggle").textContent = tr("player.play"); } };
 
 /* ================================================================ now playing window */
 async function openNowWindow(fullscreen) {
   try {
     const r = await api("/api/window", { page: "now", fullscreen });
-    toast(r.kind === "window" ? "Opened. Drag it to your second screen (fullscreen: ⌃⌘F on Mac, F11 on Windows)."
-      : "Opened in a separate window", 5000);
+    toast(r.kind === "window" ? tr("toast.now_window") : tr("toast.now_window_plain"), 5000);
     $("#nowFrame").src = "about:blank";   // don't run two copies of the video
   } catch (e) { toast(e.message, 4000); }
 }
@@ -547,53 +552,53 @@ $("#nowFull").onclick = () => openNowWindow(true);
 let setlists = [], slActive = null;
 async function loadSetlists() {
   try { setlists = (await api("/api/setlists")).setlists; } catch (e) { return toast(e.message); }
-  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}</span><span>${s.songs.length}</span></li>`).join("") || '<li class="hint">No setlists yet</li>';
+  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}</span><span>${s.songs.length}</span></li>`).join("") || `<li class="hint">${esc(tr("setlists.none"))}</li>`;
   renderSetlist();
 }
 function renderSetlist() {
   const sl = setlists.find((s) => s.name === slActive);
-  if (!sl) { $("#slBody").innerHTML = '<p class="hint">Pick a setlist.</p>'; return; }
-  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2><button class="danger" id="slDel">Delete setlist</button></div>` +
+  if (!sl) { $("#slBody").innerHTML = `<p class="hint">${esc(tr("setlists.pick"))}</p>`; return; }
+  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2><button class="danger" id="slDel">${esc(tr("setlists.delete"))}</button></div>` +
     sl.songs.map((x, i) => {
       const s = x.id && lib.byId.get(x.id);
       return `<div class="line"><span class="hint">${i + 1}</span><div class="art"${s && s.art ? ` style="background-image:url('/media/art/${s.id}')"` : ""}></div>
-        <div><b>${s ? esc(s.name) : "Song not in library"}</b><span>${s ? esc(s.artist) : x.hash}</span></div>
-        <span class="pill">${x.speed}%</span>${s ? `<button data-rm="${s.id}">Remove</button>` : "<span></span>"}</div>`;
+        <div><b>${s ? esc(s.name) : esc(tr("setlists.not_in_library"))}</b><span>${s ? esc(s.artist) : x.hash}</span></div>
+        <span class="pill">${x.speed}%</span>${s ? `<button data-rm="${s.id}">${esc(tr("setlists.remove"))}</button>` : "<span></span>"}</div>`;
     }).join("");
   $("#slDel").onclick = async () => {
-    if (!await ask({ title: `Delete “${sl.name}”?`, ok: "Delete", danger: true })) return;
+    if (!await ask({ title: tr("setlists.delete_title", { name: sl.name }), ok: tr("setlists.delete_ok"), danger: true })) return;
     await api("/api/setlists", { action: "delete", name: sl.name }); slActive = null; loadSetlists();
   };
   $$("#slBody [data-rm]").forEach((b) => b.onclick = async () => { await api("/api/setlists", { action: "remove", name: sl.name, ids: [b.dataset.rm] }); loadSetlists(); });
 }
 $("#slList").addEventListener("click", (e) => { const li = e.target.closest("li[data-n]"); if (li) { slActive = li.dataset.n; loadSetlists(); } });
 $("#slNew").onclick = async () => {
-  const r = await ask({ title: "New setlist", input: "", ok: "Create" }); if (!r || !r.input) return;
+  const r = await ask({ title: tr("setlists.new_title"), input: "", ok: tr("setlists.create") }); if (!r || !r.input) return;
   try { await api("/api/setlists", { action: "create", name: r.input }); slActive = r.input; loadSetlists(); } catch (e) { toast(e.message); }
 };
 async function addToSetlist(ids) {
   try { setlists = (await api("/api/setlists")).setlists; } catch (e) { /* ignore */ }
-  const r = await ask({ title: `Add ${ids.length} song${ids.length === 1 ? "" : "s"} to a setlist`, text: "Pick one, or type a new name.",
-    select: [{ value: "", label: "New setlist…" }, ...setlists.map((s) => ({ value: s.name, label: s.name }))], input: "", ok: "Add" });
+  const r = await ask({ title: tr("setlists.add_title", { count: ids.length }), text: tr("setlists.add_text"),
+    select: [{ value: "", label: tr("setlists.new_option") }, ...setlists.map((s) => ({ value: s.name, label: s.name }))], input: "", ok: tr("setlists.add") });
   if (!r) return;
-  const name = r.input?.trim() || r.select; if (!name) return toast("Give the setlist a name");
+  const name = r.input?.trim() || r.select; if (!name) return toast(tr("setlists.need_name"));
   const d = await api("/api/setlists", { action: "add", name, ids });
-  toast(`Added ${d.added} to “${name}”. Clone Hero shows setlist changes after a restart.`, 4500);
+  toast(tr("setlists.added", { count: d.added, name }), 4500);
 }
 
 /* ================================================================ duplicates */
 async function loadDupes() {
-  $("#dupList").innerHTML = '<p class="hint">Looking for duplicates…</p>';
+  $("#dupList").innerHTML = `<p class="hint">${esc(tr("dupes.looking"))}</p>`;
   const d = await api("/api/duplicates");
   $("#dupList").innerHTML = d.groups.map((g) => `<div class="dupe"><h3>${esc(g[0].artist)} — ${esc(g[0].name)}</h3>` + g.map((s) => {
     const [vid, ly] = pills(s);
-    return `<div class="copy"><span title="${esc(s.path)}">${esc(s.rel)}<br><small>${esc(s.charter || "unknown charter")}${s.sng ? " · .sng" : ""}</small></span>${vid}${ly}${instHtml(s.diffs)}
-      <span><button data-keep="${s.id}">Keep only this</button></span></div>`;
-  }).join("") + "</div>").join("") || '<p class="hint">No duplicates in your library.</p>';
+    return `<div class="copy"><span title="${esc(s.path)}">${esc(s.rel)}<br><small>${esc(s.charter || tr("lib.unknown_charter"))}${s.sng ? " · .sng" : ""}</small></span>${vid}${ly}${instHtml(s.diffs)}
+      <span><button data-keep="${s.id}">${esc(tr("dupes.keep"))}</button></span></div>`;
+  }).join("") + "</div>").join("") || `<p class="hint">${esc(tr("dupes.none"))}</p>`;
   $$("#dupList [data-keep]").forEach((b) => b.onclick = async () => {
     const group = d.groups.find((g) => g.some((s) => s.id === b.dataset.keep));
     const others = group.filter((s) => s.id !== b.dataset.keep).map((s) => s.id);
-    if (!await ask({ title: `Move ${others.length} other cop${others.length === 1 ? "y" : "ies"} to the Trash?`, ok: "Move to Trash", danger: true })) return;
+    if (!await ask({ title: tr("dupes.trash_title", { count: others.length }), ok: tr("lib.act.delete"), danger: true })) return;
     await trashSongs(others, new Set()); loadDupes();
   });
 }
@@ -606,7 +611,7 @@ async function searchCharts(page) {
   const params = new URLSearchParams({ db: charts.db, q: $("#chartSearch").value, page, per: 48,
     instrument: $("#chartInst").value, difficulty: $("#chartDiff").value, sort: $("#chartSort").value,
     dir: $("#chartSort").value === "newest" ? "desc" : "asc" });
-  $("#chartResults").innerHTML = '<p class="hint">Searching…</p>';
+  $("#chartResults").innerHTML = `<p class="hint">${esc(tr("charts.searching"))}</p>`;
   try {
     const d = await api("/api/search?" + params);
     charts.items = d.songs; charts.total = d.total;
@@ -617,13 +622,13 @@ function renderCharts() {
   $("#chartResults").innerHTML = charts.items.map((c, i) => `<div class="card${charts.sel.has(c.id) ? " sel" : ""}${c.owned ? " owned" : ""}" data-i="${i}">
       <input type="checkbox" class="chk"${charts.sel.has(c.id) ? " checked" : ""}>
       <div class="art"${c.artUrl ? ` style="background-image:url('${esc(c.artUrl)}')"` : ""}></div>
-      ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="Listen before downloading">▶ Preview</button>' : ""}
+      ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="${esc(tr("charts.preview_tip"))}">${esc(tr("charts.preview"))}</button>' : ""}
       <div class="body"><b>${esc(c.name)}</b><span>${esc(c.artist)}</span><span>${esc(c.charter)}${c.length ? " · " + fmtLen(c.length) : ""}</span>
-      <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? '<span class="pill ok">video</span>' : ""}${c.needsConversion ? '<span class="pill low">Rock Band format</span>' : ""}${!c.downloadUrl && !c.needsConversion ? '<span class="pill">manual download</span>' : ""}</div>
-      ${c.owned ? `<span class="inlib">✓ Already in your library${!c.ownedSameChart && c.ownedCharters && c.ownedCharters.length ? ` <em>(yours: charted by ${esc(c.ownedCharters.join(", "))})</em>` : ""}</span>` : ""}</div></div>`).join("")
-    || '<p class="hint">No charts found.</p>';
+      <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? `<span class="pill ok">${esc(tr("charts.has_video"))}</span>` : ""}${c.needsConversion ? `<span class="pill low">${esc(tr("charts.rb_format"))}</span>` : ""}${!c.downloadUrl && !c.needsConversion ? `<span class="pill">${esc(tr("charts.manual"))}</span>` : ""}</div>
+      ${c.owned ? `<span class="inlib">${esc(tr("charts.in_library"))}${!c.ownedSameChart && c.ownedCharters && c.ownedCharters.length ? ` <em>${esc(tr("charts.yours", { charters: c.ownedCharters.join(", ") }))}</em>` : ""}</span>` : ""}</div></div>`).join("")
+    || `<p class="hint">${esc(tr("charts.none"))}</p>`;
   const pages = Math.max(1, Math.ceil(charts.total / 48));
-  $("#chartPager").innerHTML = `<button ${charts.page <= 1 ? "disabled" : ""} id="pgPrev">Previous</button> Page ${charts.page} of ${pages} · ${charts.total} charts <button ${charts.page >= pages ? "disabled" : ""} id="pgNext">Next</button>`;
+  $("#chartPager").innerHTML = `<button ${charts.page <= 1 ? "disabled" : ""} id="pgPrev">${esc(tr("charts.prev"))}</button> <span class="pginfo">${esc(tr("charts.page_info", { page: charts.page, pages, count: charts.total }))}</span> <button ${charts.page >= pages ? "disabled" : ""} id="pgNext">${esc(tr("charts.next"))}</button>`;
   $("#pgPrev").onclick = () => searchCharts(charts.page - 1); $("#pgNext").onclick = () => searchCharts(charts.page + 1);
   updateChartSel();
 }
@@ -634,20 +639,20 @@ $("#chartResults").addEventListener("click", (e) => {
     const a = $("#plAudio");
     a.src = `/media/chart-preview?url=${encodeURIComponent(c.downloadUrl)}&t=${c.previewStart ?? Math.round((c.length || 120) * 0.35)}`;
     a.play().catch(() => {});
-    $("#player").hidden = false; $("#plTitle").textContent = `Preview: ${c.artist} — ${c.name}`; $("#plToggle").textContent = "Pause";
-    return toast("Loading preview…", 1500);
+    $("#player").hidden = false; $("#plTitle").textContent = tr("player.preview", { artist: c.artist, name: c.name }); $("#plToggle").textContent = tr("player.pause");
+    return toast(tr("toast.loading_preview"), 1500);
   }
-  if (!c.downloadUrl) { if (c.pageUrl) window.open(c.pageUrl, "_blank"); return toast(c.needsConversion ? "Rock Band charts need conversion, which isn't supported here" : "This one has to be downloaded from its page", 3500); }
+  if (!c.downloadUrl) { if (c.pageUrl) window.open(c.pageUrl, "_blank"); return toast(c.needsConversion ? tr("toast.rb_unsupported") : tr("toast.manual_page"), 3500); }
   charts.sel.has(c.id) ? charts.sel.delete(c.id) : charts.sel.set(c.id, c);
   card.classList.toggle("sel"); card.querySelector(".chk").checked = charts.sel.has(c.id); updateChartSel();
 });
-function updateChartSel() { $("#chartSel").classList.toggle("on", charts.sel.size > 0); $("#chartSelCount").textContent = `${charts.sel.size} selected`; }
+function updateChartSel() { $("#chartSel").classList.toggle("on", charts.sel.size > 0); $("#chartSelCount").textContent = tr("common.selected", { count: charts.sel.size }); }
 $("#chartDl").onclick = async () => {
   const all = [...charts.sel.values()];
   const items = all.filter((c) => !c.ownedSameChart), have = all.length - items.length;
-  if (!items.length) { toast(have === 1 ? "That chart is already in your library" : `All ${have} charts are already in your library`, 4000); return; }
+  if (!items.length) { toast(have === 1 ? tr("toast.already_one") : tr("toast.already_all", { count: have }), 4000); return; }
   const r = await api("/api/download", { items, process: $("#chartProcess").checked });
-  toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${have ? ` (${have} already in your library, skipped)` : ""} — see Jobs`, 4500);
+  toast(tr("toast.downloading", { count: r.queued }) + (have ? " " + tr("toast.skipped_have", { count: have }) : "") + " — " + tr("toast.see_jobs"), 4500);
   charts.sel.clear(); renderCharts(); pollJobs(true);
 };
 $("#chartClear").onclick = () => { charts.sel.clear(); renderCharts(); };
@@ -656,31 +661,32 @@ $("#chartSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") se
 ["#chartInst", "#chartDiff", "#chartSort"].forEach((s) => $(s).addEventListener("change", () => searchCharts(1)));
 
 /* ================================================================ spotify */
-let spTracks = [];
+let spTracks = [], spData = null;
 $("#spGo").onclick = async () => {
   const url = $("#spUrl").value.trim(); if (!url) return;
-  $("#spResults").innerHTML = '<p class="hint">Reading the playlist and matching charts…</p>';
+  $("#spResults").innerHTML = `<p class="hint">${esc(tr("spotify.reading"))}</p>`;
   try {
     const d = await api("/api/spotify", { url });
+    spData = d;
     spTracks = d.tracks.map((t) => ({ ...t, pick: !!(t.match && !t.owned && t.match.downloadUrl) }));
     renderSpotify(d);
   } catch (e) { $("#spResults").innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
 };
 function renderSpotify(d) {
   const found = spTracks.filter((t) => t.match).length, owned = spTracks.filter((t) => t.owned).length;
-  $("#spResults").innerHTML = `<p class="hint"><b>${esc(d.name)}</b> — ${spTracks.length} tracks: ${owned} in your library, ${found} found on Chorus Encore${d.truncated ? " (Spotify shows the first 100 tracks)" : ""}.</p>` +
+  $("#spResults").innerHTML = `<p class="hint"><b>${esc(d.name)}</b> — ${esc(tr("spotify.summary", { count: spTracks.length, owned, found }))}${d.truncated ? " " + esc(tr("spotify.truncated")) : ""}.</p>` +
     spTracks.map((t, i) => `<div class="line"><input type="checkbox" data-i="${i}" ${t.pick ? "checked" : ""} ${t.match && !t.owned ? "" : "disabled"}>
       <div class="art"${t.match && t.match.artUrl ? ` style="background-image:url('${esc(t.match.artUrl)}')"` : ""}></div>
       <div><b>${esc(t.title)}</b><span>${esc(t.artists)}</span></div>
-      <span>${t.owned ? '<span class="pill ok">In library</span>' : t.match ? `<span class="pill mid">${esc(t.match.charter || "chart found")}</span>` : '<span class="pill">no chart</span>'}</span><span></span></div>`).join("");
+      <span>${t.owned ? `<span class="pill ok">${esc(tr("spotify.in_library"))}</span>` : t.match ? `<span class="pill mid">${esc(t.match.charter || tr("spotify.chart_found"))}</span>` : `<span class="pill">${esc(tr("spotify.no_chart"))}</span>`}</span><span></span></div>`).join("");
   $$("#spResults input[data-i]").forEach((c) => c.onchange = () => { spTracks[c.dataset.i].pick = c.checked; updSp(); });
   updSp();
 }
-function updSp() { const n = spTracks.filter((t) => t.pick).length; $("#spSel").classList.toggle("on", n > 0); $("#spSelCount").textContent = `${n} to download`; }
+function updSp() { const n = spTracks.filter((t) => t.pick).length; $("#spSel").classList.toggle("on", n > 0); $("#spSelCount").textContent = tr("spotify.to_download", { count: n }); }
 $("#spDl").onclick = async () => {
   const items = spTracks.filter((t) => t.pick).map((t) => t.match);
   const r = await api("/api/download", { items, process: $("#spProcess").checked });
-  toast(`Downloading ${r.queued} charts — see Jobs`); pollJobs(true);
+  toast(tr("toast.downloading", { count: r.queued }) + " — " + tr("toast.see_jobs")); pollJobs(true);
 };
 
 /* ================================================================ jobs */
@@ -700,7 +706,7 @@ async function pollJobs(once) {
     renderDock(); if (currentView === "jobs") renderJobs();
     if (activeId && detail) {
       const j = jobsSnap.jobs.find((x) => x.songId === activeId);
-      if (j) { const s = j.status === "done" ? j.result : j.status === "failed" ? "Failed: " + j.error : (j.step || j.status); if (detail.status !== s) { detail.status = s; updateDetailStatus(); } }
+      if (j) { const s = j.status === "done" ? j.result : j.status === "failed" ? tr("job.failed", { error: j.error }) : (j.step || tr("job.status." + j.status)); if (detail.status !== s) { detail.status = s; updateDetailStatus(); } }
     }
     $("#navNow").classList.toggle("on", jobsSnap.now && ["playing", "paused"].includes(jobsSnap.now.status));
   } catch (e) { /* ignore */ }
@@ -714,138 +720,138 @@ function renderDock() {
   const running = jobsSnap.jobs.filter((j) => j.status === "running").slice(0, 2);
   const pct = total ? Math.round(100 * (total - active) / total) : 0;
   $("#dockJobs").innerHTML = active ? `<div class="meter"><i style="width:${pct}%"></i></div>
-     <span>${total - active}/${total} done${c.failed ? ` · ${c.failed} failed` : ""}</span>
+     <span>${esc(tr("jobs.dock_done", { done: total - active, total }))}${c.failed ? ` · ${esc(tr("jobs.n_failed", { count: c.failed }))}` : ""}</span>
      <span>${running.map((j) => `${esc(j.title)}: ${esc(j.step)}`).join(" · ")}</span>
-     ${jobsSnap.youtube?.pausedFor ? `<span class="pill low">YouTube pause ${jobsSnap.youtube.pausedFor}s</span>` : ""}`
-    : (total ? `<span>All jobs finished${c.failed ? ` (${c.failed} failed)` : ""}</span>`
-        + (jobsSnap.jobs.some((j) => j.status === "done" && /^video /.test(j.result || "") || / video \d+p /.test(j.result || ""))
-          ? `<span class="hint">New videos added: in Clone Hero, run <b>Settings → Scan Songs</b> (or restart the game) so it picks them up.</span>` : "")
-      : "<span>Ready</span>");
+     ${jobsSnap.youtube?.pausedFor ? `<span class="pill low">${esc(tr("jobs.yt_pause", { secs: jobsSnap.youtube.pausedFor }))}</span>` : ""}`
+    : (total ? `<span>${esc(c.failed ? tr("jobs.all_finished_failed", { count: c.failed }) : tr("jobs.all_finished"))}</span>`
+        + (jobsSnap.jobs.some((j) => j.status === "done" && j.videoAdded)
+          ? `<span class="hint">${tr("jobs.scan_hint")}</span>` : "")
+      : `<span>${esc(tr("jobs.ready"))}</span>`);
 }
 function renderJobs() {
   if (!jobsSnap) return;
   const c = jobsSnap.counts || {};
-  $("#jobCounts").textContent = ["running", "queued", "waiting", "done", "failed"].filter((k) => c[k]).map((k) => `${c[k]} ${k}`).join(" · ") +
-    (jobsSnap.avgSeconds ? ` · ~${jobsSnap.avgSeconds}s per song` : "");
+  $("#jobCounts").textContent = ["running", "queued", "waiting", "done", "failed"].filter((k) => c[k]).map((k) => `${nf(c[k])} ${tr("job.status." + k)}`).join(" · ") +
+    (jobsSnap.avgSeconds ? " · " + tr("jobs.avg", { secs: jobsSnap.avgSeconds }) : "");
   const w = $("#jobWorkers"); if (document.activeElement !== w) { w.value = jobsSnap.workers; $("#jobWorkersVal").textContent = jobsSnap.workers; }
   const yt = jobsSnap.youtube || {};
   $("#ytWarn").hidden = !yt.pausedFor;
   const ll = yt.lastLimit;
-  $("#ytWarn").textContent = (yt.hint ? yt.hint + " " : "YouTube is rate-limiting. ") + `YouTube lookups resume in ${Math.ceil(yt.pausedFor / 60)} min; chart downloads, lyrics and metadata carry on, and videos are added afterwards.`;
-  $("#ytWarn").title = ll ? `Signal: ${ll.signalLabel || ll.signal}\nyt-dlp said: ${ll.message || ""}\nVideo: ${ll.videoId || "n/a"}\nLookups before it: ${ll.requests10} in 10 min, ${ll.requests60} in 60 min` : "";
-  $("#jobList").innerHTML = jobsSnap.jobs.map((j) => `<div class="job"><span class="st ${j.status}">${j.status}</span>
+  $("#ytWarn").textContent = (yt.hint ? yt.hint + " " : tr("jobs.yt_limiting") + " ") + tr("jobs.yt_resume", { min: Math.ceil(yt.pausedFor / 60) });
+  $("#ytWarn").title = ll ? tr("jobs.yt_tip", { signal: ll.signalLabel || ll.signal, said: ll.message || "", video: ll.videoId || tr("common.na"), r10: ll.requests10, r60: ll.requests60 }) : "";
+  $("#jobList").innerHTML = jobsSnap.jobs.map((j) => `<div class="job"><span class="st ${j.status}">${esc(tr("job.status." + j.status))}</span>
       <span>${esc(j.title)}</span><span class="msg" title="${esc(j.error || j.result || j.step)}">${esc(j.error || j.result || j.step)}</span>
-      <span>${["queued", "running", "waiting"].includes(j.status) ? `<button data-cancel="${j.id}">Cancel</button>` : ""}</span></div>`).join("") || '<p class="hint">Nothing running. Select songs in the Library and press Run.</p>';
+      <span>${["queued", "running", "waiting"].includes(j.status) ? `<button data-cancel="${j.id}">${esc(tr("jobs.cancel"))}</button>` : ""}</span></div>`).join("") || `<p class="hint">${esc(tr("jobs.empty"))}</p>`;
 }
 $("#jobList").addEventListener("click", async (e) => { const b = e.target.closest("[data-cancel]"); if (b) { await api("/api/jobs/cancel", { id: b.dataset.cancel }); pollJobs(true); } });
 $("#jobRetry").onclick = async () => { await api("/api/jobs/retry", {}); pollJobs(true); };
 $("#jobClear").onclick = async () => { await api("/api/jobs/clear", {}); pollJobs(true); };
 $("#jobCancel").onclick = async () => { await api("/api/jobs/cancel", {}); pollJobs(true); };
 $("#jobWorkers").addEventListener("input", (e) => { $("#jobWorkersVal").textContent = e.target.value; });
-$("#jobWorkers").addEventListener("change", async (e) => { await api("/api/settings", { settings: { workers: Number(e.target.value) } }); toast(`${e.target.value} workers`); });
+$("#jobWorkers").addEventListener("change", async (e) => { await api("/api/settings", { settings: { workers: Number(e.target.value) } }); toast(tr("toast.workers", { count: Number(e.target.value) })); });
 
 /* ================================================================ settings */
 function ytCookieText(y) {
   const c = (y && y.cookies) || {};
   if (c.error) return c.error;
-  return c.active ? `Using your ${c.mode === "file" ? "cookies.txt" : c.mode} sign-in` : "Not signed in (no cookies used)";
+  return c.active ? tr("settings.cookie_using", { source: c.mode === "file" ? "cookies.txt" : cap(c.mode) }) : tr("settings.cookie_none");
 }
 function ytActivityText(y) {
   if (!y) return "";
   const l = y.lastLimit;
-  return `${y.requests60} lookups in the last hour (budget ${y.budget}/h); ` + (l ? `last limit: ${l.signalLabel || l.signal}${l.videoId ? " on " + l.videoId : ""}, ${new Date(l.at * 1000).toLocaleTimeString()}` : "no limit seen");
+  const when = l ? I18N.time(l.at * 1000) : "";
+  const limit = l ? (l.videoId ? tr("settings.yt_last_limit_video", { label: l.signalLabel || l.signal, video: l.videoId, time: when }) : tr("settings.yt_last_limit", { label: l.signalLabel || l.signal, time: when })) : tr("settings.yt_no_limit");
+  return tr("settings.yt_activity", { count: y.requests60, budget: y.budget, limit });
 }
 async function loadSettings() {
   const d = await api("/api/settings"); const s = d.settings;
-  const chk = (k, label, help) => `<div class="row2"><span>${label}</span><label class="inline"><input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}> ${help}</label></div>`;
+  const chk = (k, label, help) => `<div class="row2"><span>${esc(label)}</span><label class="inline"><input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}> <span>${esc(help)}</span></label></div>`;
+  const langOpts = [["auto", tr("settings.language_auto")], ...Object.entries(I18N.LANGS)];
   $("#settingsForm").innerHTML = `
-    <section><h3>Videos</h3>
-      <div class="row2"><span>Preferred quality</span><select data-k="pref_p"><option value="720"${s.pref_p == 720 ? " selected" : ""}>720p</option><option value="1080"${s.pref_p == 1080 ? " selected" : ""}>1080p</option></select>
-        <small>Videos below ${d.minP}p are never downloaded or accepted. Widescreen videos count by their YouTube quality (1280×526 is 720p).</small></div>
-      ${chk("replace_low_res", "Low-resolution videos", "Replace existing videos below 640p when a song is processed")}
-      <div class="row2"><span>Video format for Clone Hero</span><select data-k="game_video_format">
-          <option value="auto"${s.game_video_format !== "webm" ? " selected" : ""}>Automatic (MP4 on Windows and macOS, WebM on Linux)</option>
-          <option value="webm"${s.game_video_format === "webm" ? " selected" : ""}>WebM VP8, plays everywhere (slower to prepare)</option></select>
-        <small>If Clone Hero doesn't show some videos, choose WebM and run the songs again: videos added earlier are converted on the computer, nothing is downloaded again.</small></div>
+    <section><h3>${esc(tr("settings.language"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.language"))}</span><select data-lang-select>${langOpts.map(([v, l]) => `<option value="${v}"${(s.language || "auto") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
     </section>
-    <section><h3>In the game</h3>
-      ${chk("in_game", "Add videos and lyrics", "Put videos and lyrics into your songs so Clone Hero shows them")}
-      ${chk("prefetch", "Prepare while browsing", "Start on a song as soon as it's highlighted in Clone Hero's song list")}
-      ${chk("game_lyrics", "Lyrics", "Write lyrics into charts that have none (gives that chart a fresh high-score list)")}
+    <section><h3>${esc(tr("settings.videos"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.pref_quality"))}</span><select data-k="pref_p"><option value="720"${s.pref_p == 720 ? " selected" : ""}>720p</option><option value="1080"${s.pref_p == 1080 ? " selected" : ""}>1080p</option></select>
+        <small>${esc(tr("settings.min_note", { p: d.minP }))}</small></div>
+      ${chk("replace_low_res", tr("settings.low_res"), tr("settings.low_res_help"))}
+      <div class="row2"><span>${esc(tr("settings.video_format"))}</span><select data-k="game_video_format">
+          <option value="auto"${s.game_video_format !== "webm" ? " selected" : ""}>${esc(tr("settings.format_auto"))}</option>
+          <option value="webm"${s.game_video_format === "webm" ? " selected" : ""}>${esc(tr("settings.format_webm"))}</option></select>
+        <small>${esc(tr("settings.format_note"))}</small></div>
     </section>
-    <section><h3>YouTube</h3>
-      <div class="row2"><span>Use my YouTube sign-in from</span><select data-k="yt_cookies">${[["none", "None"], ["chrome", "Chrome"], ["edge", "Edge"], ["firefox", "Firefox"], ["safari", "Safari"], ["brave", "Brave"], ["file", "A cookies.txt file"]].map(([v, l]) => `<option value="${v}"${(s.yt_cookies || "none") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-        <small>Signed-in requests are far less likely to be bot-checked. Your cookies are read on this computer and never leave it. Use a secondary Google account: yt-dlp warns that heavy use can get an account flagged. If the browser's cookies can't be read (Chrome on Windows encrypts them, a running browser locks them, Safari needs Full Disk Access) the app carries on without sign-in and says why below.</small></div>
-      ${s.yt_cookies === "file" ? `<div class="row2"><span>cookies.txt</span><input type="text" data-k="yt_cookies_file" value="${esc(s.yt_cookies_file || "")}" placeholder="Full path to a Netscape-format cookies.txt"></div>` : ""}
-      <div class="row2"><span>Sign-in status</span><span id="ytCookieState">${esc(ytCookieText(d.youtube))}</span></div>
-      <div class="row2"><span>YouTube activity</span><span id="ytActivity">${esc(ytActivityText(d.youtube))}</span></div>
+    <section><h3>${esc(tr("settings.in_game"))}</h3>
+      ${chk("in_game", tr("settings.add_media"), tr("settings.add_media_help"))}
+      ${chk("prefetch", tr("settings.prefetch"), tr("settings.prefetch_help"))}
+      ${chk("game_lyrics", tr("settings.game_lyrics"), tr("settings.game_lyrics_help"))}
     </section>
-    <section><h3>Processing</h3>
-      <div class="row2"><span>Workers</span><select data-k="workers">${[0, 1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}"${Number(s.workers) === n ? " selected" : ""}>${n ? n : "Automatic"}</option>`).join("")}</select>
-        <small>Songs processed at the same time. YouTube requests are paced across all workers.</small></div>
-      ${chk("metadata_overwrite", "Metadata", "Overwrite album, year and genre that are already filled in")}
-      ${chk("fav_setlist", "Favourites in the game", "Keep a “Favourites” setlist in Clone Hero with your favourite songs (Clone Hero loads setlists at start-up)")}
-      ${chk("auto_process_downloads", "New charts", "Add video, lyrics and metadata to charts right after downloading")}
-      <div class="row2"><span>Download into</span><input type="text" data-k="download_subdir" value="${esc(s.download_subdir)}" placeholder="Songs folder (or a sub-folder name, e.g. Downloads)"></div>
+    <section><h3>${esc(tr("settings.youtube"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.cookies_from"))}</span><select data-k="yt_cookies">${[["none", tr("settings.cookies_none")], ["chrome", "Chrome"], ["edge", "Edge"], ["firefox", "Firefox"], ["safari", "Safari"], ["brave", "Brave"], ["file", tr("settings.cookies_file_opt")]].map(([v, l]) => `<option value="${v}"${(s.yt_cookies || "none") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        <small>${esc(tr("settings.cookies_note"))}</small></div>
+      ${s.yt_cookies === "file" ? `<div class="row2"><span>cookies.txt</span><input type="text" data-k="yt_cookies_file" value="${esc(s.yt_cookies_file || "")}" placeholder="${esc(tr("settings.cookies_file_ph"))}"></div>` : ""}
+      <div class="row2"><span>${esc(tr("settings.signin_status"))}</span><span id="ytCookieState">${esc(ytCookieText(d.youtube))}</span></div>
+      <div class="row2"><span>${esc(tr("settings.yt_activity_label"))}</span><span id="ytActivity">${esc(ytActivityText(d.youtube))}</span></div>
     </section>
-    <section><h3>Folders</h3>
-      <div class="row2"><span>Clone Hero</span><span>${esc(d.game || "Not found")}</span></div>
-      <div class="row2"><span>Data folder</span><span>${esc(d.dataDir)}</span></div>
-      <div class="row2"><span>Song folders</span><span>${d.songDirs.map(esc).join("<br>") || "None"}</span></div>
-      <div class="row2"><span></span><span><button id="setChange" class="primary">Change game &amp; folders…</button> <button id="setOpen">Open data folder</button> <button id="setRescan">Rescan library</button></span></div>
+    <section><h3>${esc(tr("settings.processing"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.workers"))}</span><select data-k="workers">${[0, 1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}"${Number(s.workers) === n ? " selected" : ""}>${n ? n : esc(tr("settings.auto"))}</option>`).join("")}</select>
+        <small>${esc(tr("settings.workers_note"))}</small></div>
+      ${chk("metadata_overwrite", tr("settings.metadata"), tr("settings.metadata_help"))}
+      ${chk("fav_setlist", tr("settings.fav_setlist"), tr("settings.fav_setlist_help"))}
+      ${chk("auto_process_downloads", tr("settings.new_charts"), tr("settings.new_charts_help"))}
+      <div class="row2"><span>${esc(tr("settings.download_into"))}</span><input type="text" data-k="download_subdir" value="${esc(s.download_subdir)}" placeholder="${esc(tr("settings.download_ph"))}"></div>
     </section>
-    <section><h3>About</h3>
-      <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? `JavaScript runtime: ${esc(d.jsRuntime)} · ${esc(d.ejs)}` : `<b>No JavaScript runtime found.</b> ${esc(d.jsHelp)}, then restart Companion. Without one, age-restricted music videos can’t be downloaded.`}</span></div>
-      <div class="row2"><span>yt-dlp</span><span>${esc(d.ytdlpInfo.version)} (${esc(d.ytdlpInfo.source)}) <button id="ytdlpCheck">Check now</button> <span id="ytdlpMsg" class="hint">${esc(d.ytdlpInfo.message || "")}</span></span></div>
-      <div class="row2"><span>Version</span><span>${esc(d.version)} · yt-dlp ${esc(d.ytdlp)} (updates itself) · ffmpeg ${d.ffmpeg ? "included" : "missing"}</span></div>
+    <section><h3>${esc(tr("settings.folders"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.clone_hero"))}</span><span>${esc(d.game || tr("settings.not_found"))}</span></div>
+      <div class="row2"><span>${esc(tr("settings.data_folder"))}</span><span>${esc(d.dataDir)}</span></div>
+      <div class="row2"><span>${esc(tr("settings.song_folders"))}</span><span>${d.songDirs.map(esc).join("<br>") || esc(tr("common.none"))}</span></div>
+      <div class="row2"><span></span><span class="btnrow"><button id="setChange" class="primary">${esc(tr("settings.change_folders"))}</button> <button id="setOpen">${esc(tr("settings.open_data"))}</button> <button id="setRescan">${esc(tr("settings.rescan"))}</button></span></div>
+    </section>
+    <section><h3>${esc(tr("settings.about"))}</h3>
+      <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? esc(tr("settings.js_runtime", { name: d.jsRuntime, ejs: d.ejs })) : tr("settings.js_missing", { help: esc(d.jsHelp) })}</span></div>
+      <div class="row2"><span>yt-dlp</span><span>${esc(d.ytdlpInfo.version)} (${esc(tr("about." + d.ytdlpInfo.source))}) <button id="ytdlpCheck">${esc(tr("settings.check_now"))}</button> <span id="ytdlpMsg" class="hint">${esc(d.ytdlpInfo.message || "")}</span></span></div>
+      <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
+  bindLangSelects();
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
     if (["pref_p", "workers"].includes(k)) v = Number(v);
-    try { const r = await api("/api/settings", { settings: { [k]: v } }); toast("Saved"); if (k === "yt_cookies") { loadSettings(); setTimeout(async () => { const e = $("#ytCookieState"); if (e) e.textContent = ytCookieText((await api("/api/settings")).youtube); }, 2500); } } catch (e) { toast(e.message); }
+    try { const r = await api("/api/settings", { settings: { [k]: v } }); toast(tr("settings.saved")); if (k === "yt_cookies") { loadSettings(); setTimeout(async () => { const e = $("#ytCookieState"); if (e) e.textContent = ytCookieText((await api("/api/settings")).youtube); }, 2500); } } catch (e) { toast(e.message); }
   }));
   $("#setChange").onclick = () => show("setup");
-  $("#ytdlpCheck").onclick = async () => { $("#ytdlpMsg").textContent = "Checking…"; await api("/api/ytdlp/check", {}); setTimeout(async () => { const i = (await api("/api/settings")).ytdlpInfo; $("#ytdlpMsg").textContent = `${i.message || "done"} (now ${i.version}, ${i.source})`; }, 4000); };
+  $("#ytdlpCheck").onclick = async () => { $("#ytdlpMsg").textContent = tr("settings.checking"); await api("/api/ytdlp/check", {}); setTimeout(async () => { const i = (await api("/api/settings")).ytdlpInfo; $("#ytdlpMsg").textContent = tr("settings.ytdlp_result", { message: i.message || tr("common.done"), version: i.version, source: tr("about." + i.source) }); }, 4000); };
   api("/api/macperm").then((m) => {
     if (!m.applicable) return;
     const row = document.createElement("div"); row.className = "row2";
-    row.innerHTML = `<span>Full Disk Access</span><span>${m.fda ? "✓ On" : `Off: macOS asks folder by folder. <button id="setFda">Grant Full Disk Access…</button>`}</span>`;
+    row.innerHTML = `<span>${esc(tr("settings.fda"))}</span><span>${m.fda ? esc(tr("settings.fda_on")) : `${esc(tr("settings.fda_off"))} <button id="setFda">${esc(tr("settings.fda_grant"))}</button>`}</span>`;
     $("#setChange").closest(".row2").before(row);
     const btn = $("#setFda"); if (btn) btn.onclick = () => show("setup");
   }).catch(() => {});
   $("#setOpen").onclick = () => api("/api/open", {});
-  $("#setRescan").onclick = async () => { await api("/api/library/rescan", {}); toast("Rescanning…"); };
+  $("#setRescan").onclick = async () => { await api("/api/library/rescan", {}); toast(tr("toast.rescanning")); };
 }
 
 /* ================================================================ setup (game & folders) */
-const setup = { songs: [], detected: null };
-const PLAT_HINT = {
-  darwin: { game: "Usually /Applications/Clone Hero.app, but it can be anywhere.",
-            data: "Usually the “Clone Hero” folder in your home folder (~/Clone Hero) or in Documents." },
-  win32: { game: "The folder you unzipped Clone Hero into, e.g. C:\\Games\\Clone Hero\\Clone Hero.exe.",
-           data: "Usually Documents\\Clone Hero (it can be inside OneDrive\\Documents)." },
-  linux: { game: "The clonehero program in the folder you extracted Clone Hero into.",
-           data: "Usually ~/.clonehero (or the folder next to the game for portable installs)." },
-};
+const setup = { songs: [], detected: null, platform: "linux" };
+const PLAT_KEY = { darwin: "mac", win32: "win", linux: "linux" };
 async function checkPath(kind, path, statusSel) {
   const el = $(statusSel);
   if (!path) { el.textContent = ""; el.className = "status"; return null; }
   const d = await api("/api/setup/check", { kind, path });
   let msg;
-  if (kind === "game") msg = d.ok ? "✓ Clone Hero found" : "✗ This is not the Clone Hero game";
-  else if (kind === "data") msg = d.ok ? `✓ ${d.settingsIni ? "settings.ini" : ""}${d.settingsIni && d.logs ? " and " : ""}${d.logs ? "Logs" : ""} found`
-    : d.exists ? "✗ No settings.ini or Logs here. Start Clone Hero once, or pick the folder it writes to." : "✗ Folder not found";
+  if (kind === "game") msg = d.ok ? tr("setup.game_ok") : tr("setup.game_bad");
+  else if (kind === "data") msg = d.ok ? tr(d.settingsIni && d.logs ? "setup.data_found_both" : d.settingsIni ? "setup.data_found_ini" : "setup.data_found_logs")
+    : d.exists ? tr("setup.data_empty") : tr("setup.data_missing");
   if (d.writable === false) msg = "✗ " + d.writeError;
-  else if (d.writable === true) msg += " · write access OK";
+  else if (d.writable === true) msg += tr("setup.write_ok");
   el.textContent = msg; el.className = "status " + (d.ok && d.writable !== false ? "ok" : "bad");
   return d;
 }
 function renderSongDirs() {
   $("#suSongs").innerHTML = setup.songs.length ? setup.songs.map((s, i) => `<li data-i="${i}"><span class="p">${esc(s.path)}</span>
-    <span class="status ${s.ok && s.writable !== false ? (s.songs ? "ok" : "") : "bad"}">${s.writable === false ? esc(s.writeError) : s.ok ? `${s.songs}${s.songs >= 5000 ? "+" : ""} songs${s.writable ? " · write access OK" : ""}` : "not found"}</span>
-    <button class="ghost" data-rm="${i}" title="Remove">×</button></li>`).join("") : `<li class="hint">No song folders yet.</li>`;
+    <span class="status ${s.ok && s.writable !== false ? (s.songs ? "ok" : "") : "bad"}">${s.writable === false ? esc(s.writeError) : s.ok ? esc(tr("setup.songs_found", { count: s.songs, n: nf(s.songs) + (s.songs >= 5000 ? "+" : "") }) + (s.writable ? tr("setup.write_ok") : "")) : esc(tr("setup.not_found"))}</span>
+    <button class="ghost" data-rm="${i}" title="${esc(tr("setup.remove"))}">×</button></li>`).join("") : `<li class="hint">${esc(tr("setup.no_dirs"))}</li>`;
   const det = (setup.detected?.songDirs || []).filter((p) => !setup.songs.some((s) => s.path === p));
-  $("#suSongsFound").innerHTML = det.length ? `<span class="hint">Found:</span>` + det.map((p) => `<button data-addsong="${esc(p)}">+ ${esc(p)}</button>`).join("") : "";
+  $("#suSongsFound").innerHTML = det.length ? `<span class="hint">${esc(tr("setup.found"))}</span>` + det.map((p) => `<button data-addsong="${esc(p)}">+ ${esc(p)}</button>`).join("") : "";
 }
 async function addSongDir(p) {
   p = (p || "").trim();
@@ -854,13 +860,13 @@ async function addSongDir(p) {
   setup.songs.push(d); renderSongDirs();
 }
 function foundChips(sel, list, target) {
-  $(sel).innerHTML = list.length > 0 ? `<span class="hint">Found:</span>` + list.map((p) => `<button data-use="${esc(p)}" data-target="${target}">${esc(p)}</button>`).join("") : `<span class="hint">Nothing found automatically. Use Browse.</span>`;
+  $(sel).innerHTML = list.length > 0 ? `<span class="hint">${esc(tr("setup.found"))}</span>` + list.map((p) => `<button data-use="${esc(p)}" data-target="${target}">${esc(p)}</button>`).join("") : `<span class="hint">${esc(tr("setup.none_found"))}</span>`;
 }
 async function loadFda() {
   let m; try { m = await api("/api/macperm"); } catch (e) { return; }
   $("#fdaCard").hidden = !m.applicable;
   if (!m.applicable) return;
-  $("#fdaStatus").textContent = m.fda ? "✓ Full Disk Access is on" : "Not granted yet: macOS will ask about protected folders one by one.";
+  $("#fdaStatus").textContent = m.fda ? tr("setup.fda_on") : tr("setup.fda_off");
   $("#fdaStatus").className = "status " + (m.fda ? "ok" : "");
   $("#fdaOpen").hidden = !!m.fda;
   if (m.fda) { $("#fdaSteps").hidden = true; $("#fdaRestart").hidden = true; }
@@ -868,18 +874,19 @@ async function loadFda() {
 $("#fdaOpen").onclick = async () => {
   await api("/api/macperm/open", {});
   $("#fdaSteps").hidden = false; $("#fdaRestart").hidden = false;
-  toast("System Settings opened at Full Disk Access", 4000);
+  toast(tr("toast.fda_opened"), 4000);
 };
 $("#fdaRestart").onclick = async () => {
   const r = await api("/api/restart", {});
-  toast(r.ok ? "Restarting…" : "Quit and open the app again to finish", 5000);
+  toast(r.ok ? tr("toast.restarting") : tr("toast.restart_manual"), 5000);
 };
 async function loadSetup() {
   loadFda();
   const d = await api("/api/setup");
   setup.detected = d.detected;
-  const h = PLAT_HINT[d.detected.platform] || PLAT_HINT.linux;
-  $("#suGameHint").textContent = h.game; $("#suDataHint").textContent = h.data;
+  const pk = PLAT_KEY[d.detected.platform] || "linux";
+  setup.platform = pk;
+  $("#suGameHint").textContent = tr(`setup.hint.${pk}.game`); $("#suDataHint").textContent = tr(`setup.hint.${pk}.data`);
   $("#suGame").value = d.current.game || ""; $("#suData").value = d.current.dataDir || "";
   foundChips("#suGameFound", d.detected.games, "suGame");
   foundChips("#suDataFound", d.detected.dataDirs, "suData");
@@ -895,7 +902,7 @@ $("#setupForm").addEventListener("click", async (e) => {
   if (b.dataset.browse) {
     const input = $("#" + b.dataset.target);
     const r = await api("/api/browse", { kind: b.dataset.browse, start: input.value });
-    if (r.path === null) { toast("Paste the path into the box (no file picker in this window)", 4000); input.focus(); return; }
+    if (r.path === null) { toast(tr("toast.paste_path"), 4000); input.focus(); return; }
     if (!r.path) return;
     input.value = r.path; input.dispatchEvent(new Event("change"));
     if (b.dataset.target === "suSongAdd") { await addSongDir(r.path); input.value = ""; }
@@ -908,11 +915,11 @@ $("#setupForm").addEventListener("click", async (e) => {
   } else if (b.id === "suSongAddBtn") {
     await addSongDir($("#suSongAdd").value); $("#suSongAdd").value = "";
   } else if (b.id === "suSave") {
-    const st2 = $("#suSaveStatus"); st2.textContent = "Saving…"; st2.className = "status";
+    const st2 = $("#suSaveStatus"); st2.textContent = tr("setup.saving"); st2.className = "status";
     try {
       const r = await api("/api/setup", { game: $("#suGame").value, dataDir: $("#suData").value,
                                           songDirs: setup.songs.filter((s) => s.ok).map((s) => s.path), createData: true });
-      st2.textContent = `✓ Saved. Reading ${r.songDirs.length} song folder${r.songDirs.length === 1 ? "" : "s"}…`; st2.className = "status ok";
+      st2.textContent = tr("setup.saved", { count: r.songDirs.length }); st2.className = "status ok";
       $("#navSetup").classList.remove("on");
       lib.version = -1; setTimeout(() => { loadLibrary(); setFilter("all"); show("library"); }, 1500);
     } catch (err) { st2.textContent = "✗ " + err.message; st2.className = "status bad"; }
@@ -933,10 +940,8 @@ $("#suSongAdd").addEventListener("keydown", async (e) => { if (e.key === "Enter"
 
 /* ================================================================ cloud account, favourites in the cloud */
 const cloud = { status: null, favs: [], counts: null };
-const nf = (n) => Number(n || 0).toLocaleString();
-const pct = (a) => (a == null ? "—" : (a * 100).toFixed(1) + "%");
-const ago = (t) => { if (!t) return "never"; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
-const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+const pct = (a) => (a == null ? "—" : new Intl.NumberFormat(I18N.lang, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(a));
+const ago = (ts) => I18N.ago(ts);
 async function loadCloud() {
   const gen = ++cloudGen;
   let status, favs, counts = null;
@@ -953,18 +958,18 @@ function renderCloudFavs() {
   box.hidden = !(st.filter === "fav" && currentView === "library" && items.length);
   if (box.hidden) return;
   const missing = items.filter((i) => i.notFound).length;
-  box.innerHTML = `<header><b>${cloud.status.signedIn ? "In your cloud, not on this machine" : "Favourites not on this machine"} (${items.length})</b>
-      <label class="inline"><input type="checkbox" id="cfProcess" checked> then add video, lyrics and metadata</label>
-      <button class="primary" id="cfAll">Install all</button></header>
+  box.innerHTML = `<header><b>${esc(cloud.status.signedIn ? tr("cloud.in_cloud") : tr("cloud.not_here"))} (${items.length})</b>
+      <label class="inline"><input type="checkbox" id="cfProcess" checked> <span>${esc(tr("charts.then_process"))}</span></label>
+      <button class="primary" id="cfAll">${esc(tr("cloud.install_all"))}</button></header>
     <div class="cfgrid">${items.map((i) => `<div class="cf"><div><b>${esc(i.name)}</b><span>${esc(i.artist)}${i.artist && i.charter ? " · " : ""}${i.charter ? esc(i.charter) : ""}</span>
-        ${i.notFound ? "<em>not found on Chorus Encore or RhythmVerse</em>" : ""}${i.unknown ? "<em>no details were saved for this favourite, so it cannot be looked up</em>" : ""}</div>
-        <div class="cfbtns"><button data-k="${esc(i.key)}"${i.unknown ? " disabled" : ""}>Install</button>${i.unknown ? `<button class="rm" data-rm="${esc(i.key)}">Remove</button>` : ""}</div></div>`).join("")}</div>
-    ${missing ? `<span class="hint">${missing} could not be found on Chorus Encore or RhythmVerse.</span>` : ""}`;
+        ${i.notFound ? `<em>${esc(tr("cloud.not_found_online"))}</em>` : ""}${i.unknown ? `<em>${esc(tr("cloud.no_details"))}</em>` : ""}</div>
+        <div class="cfbtns"><button data-k="${esc(i.key)}"${i.unknown ? " disabled" : ""}>${esc(tr("cloud.install"))}</button>${i.unknown ? `<button class="rm" data-rm="${esc(i.key)}">${esc(tr("cloud.remove"))}</button>` : ""}</div></div>`).join("")}</div>
+    ${missing ? `<span class="hint">${esc(tr("cloud.missing_note", { count: missing }))}</span>` : ""}`;
   const go = async (keys, btn) => {
     btn.disabled = true;
     try {
       const r = await api("/api/cloud/favorites/install", { keys, process: $("#cfProcess").checked });
-      toast(`Downloading ${r.queued} chart${r.queued === 1 ? "" : "s"}${r.notFound.length ? ` · ${r.notFound.length} not found on Chorus Encore or RhythmVerse` : ""}${r.failed ? ` · ${r.failed} could not be looked up (offline?)` : ""}`, 5000);
+      toast(tr("toast.downloading", { count: r.queued }) + (r.notFound.length ? " · " + tr("toast.not_found_online", { count: r.notFound.length }) : "") + (r.failed ? " · " + tr("cloud.lookup_failed", { count: r.failed }) : ""), 5000);
       pollJobs(true); await loadCloud();
     } catch (e) { toast(e.message, 4500); }
     btn.disabled = false;
@@ -973,7 +978,7 @@ function renderCloudFavs() {
   $$("#cloudFavs .cf button[data-k]").forEach((b) => b.onclick = () => go([b.dataset.k], b));
   $$("#cloudFavs .cf button[data-rm]").forEach((b) => b.onclick = async () => {
     b.disabled = true;
-    try { await api("/api/cloud/favorites/remove", { keys: [b.dataset.rm] }); toast("Removed from favourites"); await loadCloud(); lib.version = -1; }
+    try { await api("/api/cloud/favorites/remove", { keys: [b.dataset.rm] }); toast(tr("toast.removed_fav")); await loadCloud(); lib.version = -1; }
     catch (e) { toast(e.message, 4500); b.disabled = false; }
   });
 }
@@ -982,15 +987,15 @@ function watchLogin() {
   clearInterval(cloudPoll); let n = 0;
   cloudPoll = setInterval(async () => {
     const s = await loadCloud();
-    if (s.signedIn || ++n > 90) { clearInterval(cloudPoll); if (s.signedIn) { toast("Signed in"); if (currentView === "profile") loadProfile(); lib.version = -1; } }
+    if (s.signedIn || ++n > 90) { clearInterval(cloudPoll); if (s.signedIn) { toast(tr("toast.signed_in")); if (currentView === "profile") loadProfile(); lib.version = -1; } }
   }, 2000);
 }
 async function signIn() {
-  try { await api("/api/cloud/login", {}); toast("Finish signing in with Google in your browser…", 5000); watchLogin(); } catch (e) { toast(e.message, 4500); }
+  try { await api("/api/cloud/login", {}); toast(tr("toast.finish_google"), 5000); watchLogin(); } catch (e) { toast(e.message, 4500); }
 }
-async function signOut() { await api("/api/cloud/logout", {}); await loadCloud(); toast("Signed out. Your data stays on this computer."); if (currentView === "profile") loadProfile(); }
+async function signOut() { await api("/api/cloud/logout", {}); await loadCloud(); toast(tr("toast.signed_out")); if (currentView === "profile") loadProfile(); }
 async function syncNow() {
-  await api("/api/cloud/sync", {}); toast("Syncing…");
+  await api("/api/cloud/sync", {}); toast(tr("toast.syncing"));
   setTimeout(async () => { await loadCloud(); if (currentView === "profile") loadProfile(); lib.version = -1; }, 3500);
 }
 
@@ -1004,7 +1009,7 @@ function openSong(it) {
     openDetail(it.songId);
   } else {
     show("library"); setFilter("all"); st.q = it.name || ""; $("#libSearch").value = st.q; applyFilters();
-    toast("That song isn't in this library", 3000);
+    toast(tr("toast.not_in_library"), 3000);
   }
 }
 function songList(items, right, empty) {
@@ -1020,49 +1025,49 @@ async function loadProfile() {
   const bars = (arr, labels) => { const m = Math.max(1, ...arr); return `<div class="bars">${arr.map((v, i) => `<div title="${labels[i]}: ${v}"><i style="height:${Math.round((v / m) * 52)}px"></i>${labels[i]}</div>`).join("")}</div>`; };
   const head = cs.signedIn
     ? `<div class="p-head"><div class="ava"${cs.avatar ? ` style="background-image:url('${esc(cs.avatar)}')"` : ""}>${cs.avatar ? "" : esc((cs.name || cs.email || "?")[0].toUpperCase())}</div>
-        <div class="who"><b>${esc(cs.name || cs.email)}</b><span>${esc(cs.email || "")} · <a href="#" id="pRename">edit name</a></span>
-        <span>Favourites and plays sync across your machines · last sync ${esc(ago(cs.lastSync))}${cs.pending ? ` · ${cs.pending} waiting to upload` : ""}${cs.error ? " · offline, will retry" : ""}</span></div>
-        <div class="actions"><button id="pSync">Sync now</button><button id="pOut">Sign out</button></div></div>`
-    : `<div class="p-head cta"><div class="ava">♪</div><div class="who"><b>Sign in</b><span>Sign in with Google to sync favourites and stats across machines. Everything keeps working without it; your plays are recorded on this computer either way.</span>
-        <div class="actions" style="margin-top:8px"><button class="primary" id="pIn">Continue with Google</button></div>
-        <span style="margin-top:8px">or sign in with email</span>
-        <div class="d-row"><input type="email" id="pEmail" placeholder="you@example.com" autocomplete="email"><button id="pSend">Send code</button></div>
-        <div class="d-row" id="pCodeRow" hidden><input type="text" id="pCode" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"><button class="primary" id="pVerify">Verify</button></div>
+        <div class="who"><b>${esc(cs.name || cs.email)}</b><span>${esc(cs.email || "")} · <a href="#" id="pRename">${esc(tr("profile.edit_name"))}</a></span>
+        <span>${esc(tr("profile.sync_line", { ago: ago(cs.lastSync) }))}${cs.pending ? ` · ${esc(tr("profile.pending", { count: cs.pending }))}` : ""}${cs.error ? ` · ${esc(tr("profile.offline"))}` : ""}</span></div>
+        <div class="actions"><button id="pSync">${esc(tr("profile.sync_now"))}</button><button id="pOut">${esc(tr("profile.sign_out"))}</button></div></div>`
+    : `<div class="p-head cta"><div class="ava">♪</div><div class="who"><b>${esc(tr("profile.sign_in"))}</b><span>${esc(tr("profile.sign_in_text"))}</span>
+        <div class="actions" style="margin-top:8px"><button class="primary" id="pIn">${esc(tr("profile.google"))}</button></div>
+        <span style="margin-top:8px">${esc(tr("profile.or_email"))}</span>
+        <div class="d-row"><input type="email" id="pEmail" placeholder="${esc(tr("profile.email_ph"))}" autocomplete="email"><button id="pSend">${esc(tr("profile.send_code"))}</button></div>
+        <div class="d-row" id="pCodeRow" hidden><input type="text" id="pCode" inputmode="numeric" maxlength="6" placeholder="${esc(tr("profile.code_ph"))}" autocomplete="one-time-code"><button class="primary" id="pVerify">${esc(tr("profile.verify"))}</button></div>
         <span id="pMsg" class="hint"></span></div></div>`;
-  const sel = (id, vals, cur, any) => `<select id="${id}"><option value="">${any}</option>${vals.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(cap(v))}</option>`).join("")}</select>`;
-  body.innerHTML = `<h2>Profile</h2>${head}
-    <div class="p-filter">${sel("pInst", f.instruments, prof.inst, "All instruments")}${sel("pDiff", f.difficulties, prof.diff, "All difficulties")}
-      <span class="hint">${d.sources.local} plays recorded here${d.sources.cloud ? `, ${d.sources.cloud} from your cloud` : ""}. Clone Hero's scorestats.json is read after every song.</span></div>
-    <p class="hint" id="pSrc" title="Full combos and 5-star counts are distinct charts (song + instrument + difficulty) you have ever full-comboed or 5-starred, the way CH Leaderboards counts them, not plays. CH Leaderboards scores are fetched from the public API (its latest scores and your best on your most-played songs), kept on this computer only and never uploaded to your cloud.">From ${nf(d.sources.local + d.sources.cloud)} plays recorded by the app${d.ch.accountId || d.sources.leaderboard ? ` + ${nf(d.sources.leaderboard)} CH Leaderboards scores${d.sources.leaderboardRefreshing ? " (loading…)" : ""}` : ""}. Full combos and 5 stars count distinct charts.</p>
+  const sel = (id, vals, cur, any, label) => `<select id="${id}"><option value="">${esc(any)}</option>${vals.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label(v))}</option>`).join("")}</select>`;
+  body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}
+    <div class="p-filter">${sel("pInst", f.instruments, prof.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, prof.diff, tr("profile.all_difficulties"), dn)}
+      <span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span></div>
+    <p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end"))}</p>
     <div class="tiles">
-      <div class="tile"><b>${nf(T.plays)}</b><span>Total plays</span></div><div class="tile"><b>${T.hours}</b><span>Hours played</span></div>
-      <div class="tile"><b>${nf(T.songs)}</b><span>Songs played</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>Average accuracy</span></div>
-      <div class="tile"><b>${nf(T.fcs)}</b><span>Full combos</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>5 stars or gold</span></div>
-      <div class="tile"><b>${nf(T.totalScore)}</b><span>Total score</span></div>
-      <div class="tile"><b>${T.streak}</b><span>Day streak</span></div><div class="tile"><b>${T.longestStreak}</b><span>Longest streak (days)</span></div></div>
-    <section><h3>Activity, last 26 weeks</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${x.d}: ${x.n} play${x.n === 1 ? "" : "s"}"></i>`).join("")}</div></section>
-    <div class="p-cols"><section><h3>By weekday</h3>${bars(d.weekday, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}</section>
-      <section><h3>By hour</h3>${bars(d.hour, d.hour.map((_, h) => (h % 3 === 0 ? String(h) : "")))}</section></div>
-    <div class="p-cols"><section><h3>Most played</h3><div id="lMost"></div></section><section><h3>Best songs</h3><div id="lBest"></div></section>
-      <section><h3>Needs practice</h3><div id="lNeeds"></div></section><section><h3>Personal bests</h3><div id="lPb"></div></section></div>
-    <section><h3>Recent plays</h3><div id="lRecent"></div></section>
-    <section id="chAcct"><h3>CH Leaderboards account</h3><div id="chBody"><p class="hint">Loading…</p></div></section>`;
+      <div class="tile"><b>${nf(T.plays)}</b><span>${esc(tr("profile.tile.plays"))}</span></div><div class="tile"><b>${T.hours}</b><span>${esc(tr("profile.tile.hours"))}</span></div>
+      <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("profile.tile.songs"))}</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>${esc(tr("profile.tile.accuracy"))}</span></div>
+      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>${esc(tr("profile.tile.stars"))}</span></div>
+      <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}</span></div>
+      <div class="tile"><b>${T.streak}</b><span>${esc(tr("profile.tile.streak"))}</span></div><div class="tile"><b>${T.longestStreak}</b><span>${esc(tr("profile.tile.longest"))}</span></div></div>
+    <section><h3>${esc(tr("profile.activity"))}</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${esc(tr("profile.heat_tip", { date: x.d, count: x.n }))}"></i>`).join("")}</div></section>
+    <div class="p-cols"><section><h3>${esc(tr("profile.by_weekday"))}</h3>${bars(d.weekday, I18N.weekdays())}</section>
+      <section><h3>${esc(tr("profile.by_hour"))}</h3>${bars(d.hour, d.hour.map((_, h) => (h % 3 === 0 ? String(h) : "")))}</section></div>
+    <div class="p-cols"><section><h3>${esc(tr("profile.most_played"))}</h3><div id="lMost"></div></section><section><h3>${esc(tr("profile.best"))}</h3><div id="lBest"></div></section>
+      <section><h3>${esc(tr("profile.needs"))}</h3><div id="lNeeds"></div></section><section><h3>${esc(tr("profile.pbs"))}</h3><div id="lPb"></div></section></div>
+    <section><h3>${esc(tr("profile.recent"))}</h3><div id="lRecent"></div></section>
+    <section id="chAcct"><h3>${esc(tr("profile.ch_account"))}</h3><div id="chBody"><p class="hint">${esc(tr("common.loading"))}</p></div></section>`;
   const fill = (id, items, right, empty) => {
     const el = $(id); el.innerHTML = songList(items, right, empty);
     $$("li", el).forEach((li) => li.onclick = () => openSong(items[Number(li.dataset.i)]));
   };
-  const when = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
-  const tags = (it) => `${esc(cap(it.difficulty))} ${esc(it.instrument)}${it.fc ? " · FC" : ""}`;
-  fill("#lMost", d.mostPlayed, (it) => `${it.plays}×<small>${pct(it.avgAccuracy)}</small>`, "Play a few songs and they show up here.");
-  fill("#lBest", d.best, (it) => `${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, "Needs songs played twice, or with 200+ notes.");
-  fill("#lNeeds", d.needsPractice, (it) => `best ${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, "Songs you've played show up here, lowest personal best first.");
-  fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, "No scores yet.");
-  fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, "Nothing played yet. Finish a song in Clone Hero and it appears here.");
+  const when = (ts) => I18N.date(ts);
+  const tags = (it) => `${esc(dn(it.difficulty))} ${esc(inn(it.instrument))}${it.fc ? " · " + esc(tr("profile.fc")) : ""}`;
+  fill("#lMost", d.mostPlayed, (it) => `${it.plays}×<small>${pct(it.avgAccuracy)}</small>`, tr("profile.empty.most"));
+  fill("#lBest", d.best, (it) => `${pct(it.bestAccuracy)}<small>${it.plays}×</small>`, tr("profile.empty.best"));
+  fill("#lNeeds", d.needsPractice, (it) => `${esc(tr("profile.best_pct", { pct: pct(it.bestAccuracy) }))}<small>${it.plays}×</small>`, tr("profile.empty.needs"));
+  fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, tr("profile.empty.pbs"));
+  fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, tr("profile.empty.recent"));
   if (cs.signedIn) {
     $("#pOut").onclick = signOut; $("#pSync").onclick = syncNow;
     $("#pRename").onclick = async (e) => {
       e.preventDefault();
-      const r = await ask({ title: "Display name", input: cs.name || "", ok: "Save" }); if (!r || !r.input.trim()) return;
+      const r = await ask({ title: tr("profile.name_title"), input: cs.name || "", ok: tr("common.save") }); if (!r || !r.input.trim()) return;
       try { await api("/api/cloud/name", { name: r.input }); loadProfile(); } catch (err) { toast(err.message, 4500); }
     };
   } else {
@@ -1074,7 +1079,7 @@ async function loadProfile() {
       tick = setInterval(() => {
         const left = 60 - Math.floor((Date.now() - lastSend) / 1000), b = $("#pSend");
         if (!b) return clearInterval(tick);
-        b.disabled = left > 0; b.textContent = left > 0 ? `Resend in ${left}s` : "Resend code";
+        b.disabled = left > 0; b.textContent = left > 0 ? tr("profile.resend", { secs: left }) : tr("profile.resend_code");
         if (left <= 0) clearInterval(tick);
       }, 500);
     };
@@ -1082,11 +1087,11 @@ async function loadProfile() {
       const email = $("#pEmail").value.trim();
       try {
         $("#pSend").disabled = true; await api("/api/cloud/email/send", { email });
-        lastSend = Date.now(); cool(); $("#pCodeRow").hidden = false; $("#pCode").focus(); msg(`Code sent to ${email}, check spam.`);
+        lastSend = Date.now(); cool(); $("#pCodeRow").hidden = false; $("#pCode").focus(); msg(tr("profile.code_sent", { email }));
       } catch (err) { $("#pSend").disabled = false; msg(err.message); }
     };
     $("#pVerify").onclick = async () => {
-      try { await api("/api/cloud/email/verify", { email: $("#pEmail").value.trim(), code: $("#pCode").value }); toast("Signed in"); lib.version = -1; loadProfile(); }
+      try { await api("/api/cloud/email/verify", { email: $("#pEmail").value.trim(), code: $("#pCode").value }); toast(tr("toast.signed_in")); lib.version = -1; loadProfile(); }
       catch (err) { msg(err.message); }
     };
     $("#pCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pVerify").click(); });
@@ -1098,10 +1103,10 @@ async function loadProfile() {
 }
 async function loadChAccount() {
   const box = $("#chBody"); if (!box) return;
-  const form = (v) => `<div class="d-row"><input type="text" id="chUser" placeholder="Your CH Leaderboards username" value="${esc(v || "")}"><button id="chLink" class="primary">${v ? "Change" : "Link"}</button>${v ? '<button id="chUnlink">Unlink</button>' : ""}</div>
-    <p class="lbnote">Scores can't be submitted from here: the game submits replays itself when it is in leaderboards mode. Linking only lets this app show your public rank and scores.</p>`;
+  const form = (v) => `<div class="d-row"><input type="text" id="chUser" placeholder="${esc(tr("profile.ch_user_ph"))}" value="${esc(v || "")}"><button id="chLink" class="primary">${esc(v ? tr("profile.change") : tr("profile.link"))}</button>${v ? `<button id="chUnlink">${esc(tr("profile.unlink"))}</button>` : ""}</div>
+    <p class="lbnote">${esc(tr("profile.ch_note"))}</p>`;
   const bind = () => {
-    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast("Linked"); loadChAccount(); } catch (e) { toast(e.message, 4500); } };
+    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast(tr("toast.linked")); loadChAccount(); } catch (e) { toast(e.message, 4500); } };
     const u = $("#chUnlink"); if (u) u.onclick = async () => { await api("/api/lb/link", { username: "" }); loadChAccount(); };
   };
   try {
@@ -1109,59 +1114,59 @@ async function loadChAccount() {
     if (!p.linked) { box.innerHTML = form(""); return bind(); }
     const S = p.stats || {}, R = p.ranks || {};
     box.innerHTML = form(p.username) + `<div class="tiles">
-      <div class="tile"><b>${nf(S.totalScore)}</b><span>Total score${R.totalScore ? " · #" + nf(R.totalScore) : ""}</span></div>
-      <div class="tile"><b>${nf(p.stats.songsPlayed)}</b><span>Songs played</span></div>
-      <div class="tile"><b>${nf(S.totalFcs)}</b><span>Full combos${R.totalFcs ? " · #" + nf(R.totalFcs) : ""}</span></div>
-      <div class="tile"><b>${nf(S.notesHit)}</b><span>Notes hit</span></div></div>
-      <p class="hint">From CH Leaderboards (leaderboards mode only)</p>
-      <p><a href="${esc(p.url)}" target="_blank" rel="noopener">Open ${esc(p.username)} on CH Leaderboards</a></p>
-      ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(cap(r.difficulty))} ${esc(r.instrument)}${r.fc ? " · FC" : ""}</small></div></li>`).join("")}</ul>` : ""}`;
+      <div class="tile"><b>${nf(S.totalScore)}</b><span>${esc(tr("profile.ch_total_score"))}${R.totalScore ? " · #" + nf(R.totalScore) : ""}</span></div>
+      <div class="tile"><b>${nf(p.stats.songsPlayed)}</b><span>${esc(tr("profile.ch_songs"))}</span></div>
+      <div class="tile"><b>${nf(S.totalFcs)}</b><span>${esc(tr("profile.ch_fcs"))}${R.totalFcs ? " · #" + nf(R.totalFcs) : ""}</span></div>
+      <div class="tile"><b>${nf(S.notesHit)}</b><span>${esc(tr("profile.ch_notes"))}</span></div></div>
+      <p class="hint">${esc(tr("profile.ch_from"))}</p>
+      <p><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(tr("profile.ch_open", { name: p.username }))}</a></p>
+      ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul>` : ""}`;
     bind();
-  } catch (e) { box.innerHTML = `<p class="hint">CH Leaderboards isn't reachable right now (${esc(e.message)}).</p>` + form($("#chUser")?.value || ""); bind(); }
+  } catch (e) { box.innerHTML = `<p class="hint">${esc(tr("profile.ch_unreachable", { detail: e.message }))}</p>` + form($("#chUser")?.value || ""); bind(); }
 }
 
 /* ================================================================ global top scores (song detail) */
 async function loadDetailLb(d, inst, diff) {
   const box = $("#dLb"); if (!box) return;
-  box.innerHTML = '<p class="hint">Loading…</p>';
+  box.innerHTML = `<p class="hint">${esc(tr("common.loading"))}</p>`;
   try {
     const p = new URLSearchParams({ id: d.id }); if (inst) p.set("instrument", inst); if (diff) p.set("difficulty", diff);
     const r = await api("/api/lb/song?" + p);
     if (!$("#dLb") || activeId !== d.id) return;
     const insts = ["guitar", "bass", "rhythm", "drums", "keys", "guitarghl", "bassghl"];
-    const sel = `<div class="d-row"><select id="dLbInst">${insts.map((i) => `<option value="${i}"${i === r.instrument ? " selected" : ""}>${i}</option>`).join("")}</select>
-      <select id="dLbDiff">${["expert", "hard", "medium", "easy"].map((i) => `<option value="${i}"${i === r.difficulty ? " selected" : ""}>${cap(i)}</option>`).join("")}</select></div>`;
+    const sel = `<div class="d-row"><select id="dLbInst">${insts.map((i) => `<option value="${i}"${i === r.instrument ? " selected" : ""}>${esc(inn(i))}</option>`).join("")}</select>
+      <select id="dLbDiff">${["expert", "hard", "medium", "easy"].map((i) => `<option value="${i}"${i === r.difficulty ? " selected" : ""}>${esc(dn(i))}</option>`).join("")}</select></div>`;
     const rows_ = r.found ? (r.scores.length ? r.scores.map((x) => `<div class="r${r.you && x.accountId === r.you.accountId ? " me" : ""}"><span>${x.placement}</span><span>${esc(x.username)}</span><span>${nf(x.score)}</span></div>`).join("")
-      : '<p class="hint">No scores for this instrument and difficulty yet. Leaderboards mostly cover guitar for now.</p>') : '<p class="hint">This song isn\'t on CH Leaderboards.</p>';
-    const you = r.ch ? (r.you ? `<div class="r me"><span>#${r.you.placement}</span><span>you (${esc(r.ch)})</span><span>${nf(r.you.score)}</span></div>` : `<p class="hint">${esc(r.ch)}: no score here yet.</p>`) : '<p class="hint">Link your CH Leaderboards username in Profile to see your rank here.</p>';
-    box.innerHTML = sel + `<div class="dlb">${rows_}${r.found ? you : ""}${r.found ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on CH Leaderboards</a>` : ""}</div>`;
+      : `<p class="hint">${esc(tr("lb.top_none"))}</p>`) : `<p class="hint">${esc(tr("lb.not_on_lb"))}</p>`;
+    const you = r.ch ? (r.you ? `<div class="r me"><span>#${r.you.placement}</span><span>${esc(tr("lb.you", { name: r.ch }))}</span><span>${nf(r.you.score)}</span></div>` : `<p class="hint">${esc(tr("lb.no_score", { name: r.ch }))}</p>`) : `<p class="hint">${esc(tr("lb.link_hint"))}</p>`;
+    box.innerHTML = sel + `<div class="dlb">${rows_}${r.found ? you : ""}${r.found ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(tr("lb.open_on"))}</a>` : ""}</div>`;
     const re = () => loadDetailLb(d, $("#dLbInst").value, $("#dLbDiff").value);
     $("#dLbInst").onchange = re; $("#dLbDiff").onchange = re;
-  } catch (e) { if ($("#dLb")) $("#dLb").innerHTML = `<p class="hint">CH Leaderboards isn't reachable right now.</p>`; }
+  } catch (e) { if ($("#dLb")) $("#dLb").innerHTML = `<p class="hint">${esc(tr("lb.unreachable_now"))}</p>`; }
 }
 
 /* ================================================================ CH leaderboards view */
 const lbv = { metric: "totalScore", tab: "trending", group: "fiveFret" };
 async function loadLeaderboards() {
   const body = $("#lbBody");
-  body.innerHTML = '<h2>Leaderboards</h2><p class="hint">Loading from CH Leaderboards…</p>';
+  body.innerHTML = `<h2>${esc(tr("lb.title"))}</h2><p class="hint">${esc(tr("lb.loading"))}</p>`;
   let d;
   try { d = await api(`/api/lb/overview?metric=${lbv.metric}&tab=${lbv.tab}&group=${lbv.group}`); }
-  catch (e) { body.innerHTML = `<h2>Leaderboards</h2><p class="hint">CH Leaderboards isn't reachable right now (${esc(e.message)}). Everything else keeps working.</p>`; return; }
+  catch (e) { body.innerHTML = `<h2>${esc(tr("lb.title"))}</h2><p class="hint">${esc(tr("lb.unreachable_rest", { detail: e.message }))}</p>`; return; }
   const T = d.totals || {};
-  const o = (vals, cur) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
+  const o = (vals, cur) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
   const metricFmt = lbv.metric === "hoursPlayed" ? (v) => nf(Math.round(v)) : nf;
-  body.innerHTML = `<h2>Leaderboards</h2>
-    <p class="lbnote">Read-only view of <a href="${esc(d.site)}" target="_blank" rel="noopener">CH Leaderboards</a>. Scores can't be submitted from this app: the game submits replays itself when it is in leaderboards mode.</p>
-    <div class="tiles"><div class="tile"><b>${nf(T.users)}</b><span>Players</span></div><div class="tile"><b>${nf(T.submissions)}</b><span>Scores submitted</span></div>
-      <div class="tile"><b>${nf(T.songs)}</b><span>Songs</span></div><div class="tile"><b>${nf(T.fcs)}</b><span>Full combos</span></div>
-      <div class="tile"><b>${nf(T.hoursPlayed)}</b><span>Hours played</span></div><div class="tile"><b>${nf(T.notesHit)}</b><span>Notes hit</span></div></div>
-    <div class="p-cols"><section><h3>Top players</h3><div class="d-row"><select id="lbMetric">${o([["totalScore", "Total score"], ["submissions", "Scores submitted"], ["totalFcs", "Full combos"], ["totalPfcs", "Perfect combos"], ["hoursPlayed", "Hours played"], ["starsEarned", "Stars earned"], ["notesHit", "Notes hit"]], lbv.metric)}</select></div>
+  body.innerHTML = `<h2>${esc(tr("lb.title"))}</h2>
+    <p class="lbnote">${tr("lb.readonly", { url: esc(d.site) })}</p>
+    <div class="tiles"><div class="tile"><b>${nf(T.users)}</b><span>${esc(tr("lb.tile.players"))}</span></div><div class="tile"><b>${nf(T.submissions)}</b><span>${esc(tr("lb.tile.submitted"))}</span></div>
+      <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("lb.tile.songs"))}</span></div><div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("lb.tile.fcs"))}</span></div>
+      <div class="tile"><b>${nf(T.hoursPlayed)}</b><span>${esc(tr("lb.tile.hours"))}</span></div><div class="tile"><b>${nf(T.notesHit)}</b><span>${esc(tr("lb.tile.notes"))}</span></div></div>
+    <div class="p-cols"><section><h3>${esc(tr("lb.top_players"))}</h3><div class="d-row"><select id="lbMetric">${o(["totalScore", "submissions", "totalFcs", "totalPfcs", "hoursPlayed", "starsEarned", "notesHit"].map((k) => [k, tr("lb.metric." + k)]), lbv.metric)}</select></div>
         <ul class="plist">${d.players.map((p, i) => `<li data-u="${esc(p.url)}"><div class="t">${i + 1}. ${esc(p.username)}</div><div class="v">${metricFmt(p.value)}</div></li>`).join("")}</ul></section>
-      <section><h3>Songs</h3><div class="d-row"><select id="lbTab">${o([["trending", "Trending"], ["topAllTime", "Top, all time"], ["topYear", "Top, year"], ["topMonth", "Top, month"], ["topWeek", "Top, week"]], lbv.tab)}</select>
-        <select id="lbGroup">${o([["fiveFret", "Five fret"], ["sixFret", "Six fret"], ["drums", "Drums"]], lbv.group)}</select></div>
-        <ul class="plist">${d.songs.map((s, i) => `<li data-u="${esc(s.url)}"><div class="t">${i + 1}. ${esc(s.name)}<small>${esc(s.artist)}</small></div><div class="v">${nf(s.plays)}<small>plays</small></div></li>`).join("")}</ul></section></div>
-    <section><h3>Latest scores</h3><ul class="plist">${d.latest.map((r) => `<li data-u="${esc(r.url || "")}"><div class="t">${esc(r.name)}<small>${esc(r.artist)} · ${esc(r.username)}</small></div><div class="v">${nf(r.score)}<small>${esc(cap(r.difficulty))} ${esc(r.instrument)}${r.fc ? " · FC" : ""}</small></div></li>`).join("")}</ul></section>`;
+      <section><h3>${esc(tr("lb.songs"))}</h3><div class="d-row"><select id="lbTab">${o(["trending", "topAllTime", "topYear", "topMonth", "topWeek"].map((k) => [k, tr("lb.tab." + k)]), lbv.tab)}</select>
+        <select id="lbGroup">${o(["fiveFret", "sixFret", "drums"].map((k) => [k, tr("lb.group." + k)]), lbv.group)}</select></div>
+        <ul class="plist">${d.songs.map((s, i) => `<li data-u="${esc(s.url)}"><div class="t">${i + 1}. ${esc(s.name)}<small>${esc(s.artist)}</small></div><div class="v">${nf(s.plays)}<small>${esc(tr("lb.plays"))}</small></div></li>`).join("")}</ul></section></div>
+    <section><h3>${esc(tr("lb.latest"))}</h3><ul class="plist">${d.latest.map((r) => `<li data-u="${esc(r.url || "")}"><div class="t">${esc(r.name)}<small>${esc(r.artist)} · ${esc(r.username)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul></section>`;
   $$("#lbBody li[data-u]").forEach((li) => li.onclick = () => { if (li.dataset.u) window.open(li.dataset.u, "_blank", "noopener"); });
   $("#lbMetric").onchange = (e) => { lbv.metric = e.target.value; loadLeaderboards(); };
   $("#lbTab").onchange = (e) => { lbv.tab = e.target.value; loadLeaderboards(); };
@@ -1181,12 +1186,62 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/") { e.preventDefault(); $("#libSearch").focus(); }
 });
 
-loadLibrary().then(() => { pollLibrary(); pollJobs(); });
-loadCloud();
-// First run (or the data folder vanished): open the setup screen.
-api("/api/setup").then((d) => {
-  const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found
-  $("#navSetup").classList.toggle("on", !d.setupDone || !d.dataOk);
-  if (need) show("setup");
-}).catch(() => {});
+/* ================================================================ language */
+let appLang = "auto";                       // the saved setting: "auto" or a language code
+function fillLangSelects() {
+  const opts = [["auto", tr("settings.language_auto")], ...Object.entries(I18N.LANGS)];
+  $$("[data-lang-select]").forEach((sel) => {
+    sel.innerHTML = opts.map(([v, l]) => `<option value="${v}"${v === appLang ? " selected" : ""}>${esc(l)}</option>`).join("");
+  });
+}
+function bindLangSelects() {
+  $$("[data-lang-select]").forEach((sel) => {
+    if (!sel.options.length) fillLangSelects();
+    sel.value = appLang;
+    sel.onchange = async () => {
+      appLang = sel.value;
+      try { await api("/api/settings", { settings: { language: appLang } }); await I18N.init(false); } catch (e) { toast(e.message, 4000); }
+    };
+  });
+}
+function refreshView() {
+  switch (currentView) {
+    case "settings": loadSettings(); break;
+    case "setup": loadSetup(); break;
+    case "profile": loadProfile(); break;
+    case "leaderboards": loadLeaderboards(); break;
+    case "setlists": loadSetlists(); break;
+    case "dupes": loadDupes(); break;
+    case "charts": renderCharts(); break;
+    case "spotify": if (spData) renderSpotify(spData); break;
+    case "jobs": renderJobs(); break;
+  }
+}
+I18N.onChange(() => {
+  I18N.apply(document);
+  fillLangSelects(); bindLangSelects();
+  const g = $("#libGroup"); if (g.options[0]) g.options[0].textContent = tr("lib.all_folders");
+  $("#runBtn").textContent = $("#runOpts").classList.contains("on") ? tr("lib.start", { count: st.sel.size }) : tr("lib.run");
+  $("#plToggle").textContent = $("#plAudio").paused ? tr("player.play") : tr("player.pause");
+  updateSelbar(); updateFavCount(); applyFilters(); renderCloudFavs();
+  if (jobsSnap) renderDock();
+  pollJobs(true);                            // the server re-translates job messages for the new language
+  if (activeId && !previewing) refreshDetail();
+  refreshView();
+});
+
+(async () => {
+  await I18N.init();
+  try { appLang = (await api("/api/settings")).settings.language || "auto"; } catch (e) { /* ignore */ }
+  I18N.apply(document); fillLangSelects(); bindLangSelects(); I18N.observe();
+  $("#runBtn").textContent = tr("lib.run"); $("#plToggle").textContent = tr("player.pause");
+  loadLibrary().then(() => { pollLibrary(); pollJobs(); });
+  loadCloud();
+  // First run (or the data folder vanished): open the setup screen.
+  api("/api/setup").then((d) => {
+    const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found
+    $("#navSetup").classList.toggle("on", !d.setupDone || !d.dataOk);
+    if (need) show("setup");
+  }).catch(() => {});
+})();
 })();

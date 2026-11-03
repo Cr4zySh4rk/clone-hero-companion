@@ -15,6 +15,7 @@ import struct
 from pathlib import Path
 
 from .library import Song
+from .i18n import _
 from .paths import folder_write_error
 
 HEADER = bytes([0xEA, 0xEC, 0x33, 0x01])
@@ -63,7 +64,7 @@ def encode(entries: list[tuple[str, int]]) -> bytes:
 def safe(name: str) -> str:
     n = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name or "").strip()[:100]
     if not n:
-        raise ValueError("Give the setlist a name")
+        raise ValueError(_("setlist.need_name"))
     return n
 
 

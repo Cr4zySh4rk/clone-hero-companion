@@ -25,6 +25,7 @@ from typing import Callable
 from . import favmatch
 from .library import norm_key, strip_tags
 from .net import urlopen
+from .i18n import _
 from .paths import config_dir
 
 log = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def _http(method: str, url: str, headers: dict, body: bytes | None, timeout: flo
     except urllib.error.HTTPError as e:
         return e.code, e.read() or b""
     except Exception as e:           # DNS, timeouts, no network...
-        raise CloudError(f"offline: {e}", offline=True)
+        raise CloudError(_("cloud.offline", detail=e), offline=True)
 
 
 def make_pkce() -> tuple[str, str]:
@@ -136,11 +137,11 @@ class Cloud:
         with self.lock:
             pend, self._pending = self._pending, None
         if not pend or time.time() - pend["at"] > 900:
-            raise CloudError("No sign-in is in progress. Start again from the Profile page.")
+            raise CloudError(_("cloud.no_login"))
         status, data = self._auth_call("POST", "/auth/v1/token?grant_type=pkce",
                                        {"auth_code": code, "code_verifier": pend["verifier"]})
         if status != 200 or not data.get("access_token"):
-            raise CloudError(data.get("error_description") or data.get("msg") or f"Sign-in failed (HTTP {status})", status)
+            raise CloudError(data.get("error_description") or data.get("msg") or _("cloud.signin_failed", status=status), status)
         self._store_session(data)
         return self.user()
 
@@ -148,33 +149,33 @@ class Cloud:
     def send_email_code(self, email: str):
         email = (email or "").strip()
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            raise CloudError("Enter a valid email address.")
+            raise CloudError(_("cloud.bad_email"))
         status, data = self._auth_call("POST", "/auth/v1/otp", {"email": email, "create_user": True})
         if status == 429:
-            raise CloudError("Too many codes requested. Wait a minute and try again.", 429)
+            raise CloudError(_("cloud.too_many_codes"), 429)
         if status >= 400:
-            raise CloudError(data.get("msg") or data.get("error_description") or f"Could not send the code (HTTP {status})", status)
+            raise CloudError(data.get("msg") or data.get("error_description") or _("cloud.send_failed", status=status), status)
 
     def verify_email_code(self, email: str, code: str) -> dict:
         code = re.sub(r"\s", "", code or "")
         if not re.fullmatch(r"\d{6}", code):
-            raise CloudError("The code is 6 digits.")
+            raise CloudError(_("cloud.code_digits"))
         status, data = self._auth_call("POST", "/auth/v1/verify",
                                        {"type": "email", "email": (email or "").strip(), "token": code})
         if status == 429:
-            raise CloudError("Too many attempts. Wait a minute and try again.", 429)
+            raise CloudError(_("cloud.too_many_attempts"), 429)
         if status != 200 or not data.get("access_token"):
-            raise CloudError("That code is invalid or has expired. Check the newest email, or send a new code.", status)
+            raise CloudError(_("cloud.bad_code"), status)
         self._store_session(data)
         return self.user()
 
     def set_display_name(self, name: str):
         name = (name or "").strip()[:60]
         if not name:
-            raise CloudError("Enter a name.")
+            raise CloudError(_("cloud.enter_name"))
         uid = self.user().get("id")
         if not uid:
-            raise CloudError("Not signed in", 401)
+            raise CloudError(_("cloud.not_signed_in"), 401)
         self.rest("PATCH", "profiles", {"id": f"eq.{uid}"}, {"display_name": name}, "return=minimal")
         with self.lock:
             self.session["user"]["name"] = name
@@ -207,15 +208,15 @@ class Cloud:
                 log.info("Cloud session expired; signed out")
                 self._clear()
                 return False
-            raise CloudError(f"Could not refresh the session (HTTP {status})", status)
+            raise CloudError(_("cloud.refresh_failed", status=status), status)
 
     def access_token(self) -> str:
         with self.lock:
             if not self.session:
-                raise CloudError("Not signed in", 401)
+                raise CloudError(_("cloud.not_signed_in"), 401)
             if self.session["expires_at"] - REFRESH_MARGIN_S <= time.time():
                 if not self.refresh():
-                    raise CloudError("Not signed in", 401)
+                    raise CloudError(_("cloud.not_signed_in"), 401)
             return self.session["access_token"]
 
     def logout(self):
@@ -242,11 +243,11 @@ class Cloud:
             if status == 401 and attempt == 0:
                 with self.lock:
                     if not self.refresh():
-                        raise CloudError("Not signed in", 401)
+                        raise CloudError(_("cloud.not_signed_in"), 401)
                 continue
             if status >= 400:
                 msg = raw.decode("utf-8", "replace")[:300]
-                raise CloudError(f"{method} {path} failed (HTTP {status}): {msg}", status)
+                raise CloudError(_("cloud.request_failed", method=method, path=path, status=status, detail=msg), status)
             if not raw:
                 return None
             try:

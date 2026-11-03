@@ -13,14 +13,9 @@ APP_NAME = "CloneHeroCompanion"
 
 def folder_write_error(folder: Path, error: OSError) -> RuntimeError:
     """Explain destination failures, including Defender's misleading WinError 2."""
-    message = f'Cannot write to folder "{folder}". '
-    if sys.platform == "win32" or getattr(error, "winerror", None) is not None:
-        message += (
-            "Check Windows Security > Protection history. If Controlled folder access blocked "
-            "Clone Hero Companion, allow this app through Controlled folder access, then restart it. "
-        )
-    message += f"Also check the folder location and write permissions. Details: {error}"
-    return RuntimeError(message)
+    from .i18n import _
+    win = sys.platform == "win32" or getattr(error, "winerror", None) is not None
+    return RuntimeError(_("path.cannot_write_win" if win else "path.cannot_write", folder=folder, error=error))
 
 
 def ensure_writable_dir(folder: Path) -> None:

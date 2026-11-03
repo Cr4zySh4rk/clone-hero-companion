@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from ..i18n import _
 from ..net import urlopen
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -36,10 +37,13 @@ class DownloadError(RuntimeError):
         super().__init__(reason)
         self.reason, self.host, self.kind, self.status, self.source = reason, host, kind, status, source
 
-    def describe(self, source: str = "") -> str:
+    def describe(self, source: str = ""):
         src = source or self.source
-        where = ", ".join(x for x in (src, self.host) if x)
-        return f"{self.reason} ({where})" if where else self.reason
+        where = ", ".join(str(x) for x in (src, self.host) if x)
+        return _("dl.where", reason=self.reason, where=where) if where else self.reason
+
+    def as_msg(self):
+        return self.describe()
 
     def __str__(self):
         return self.describe()
@@ -148,13 +152,13 @@ def _page_error(text: str, url: str) -> DownloadError:
         host = host or "drive.google.com"
         low = text.lower()
         if "quota exceeded" in low or "too many users have viewed or downloaded" in low:
-            return DownloadError("Google Drive quota exceeded", host, "quota")
+            return DownloadError(_("dl.drive_quota"), host, "quota")
         if "sign in" in low or "request access" in low or "you need access" in low or "accounts.google.com" in low:
-            return DownloadError("Google Drive file is private (not shared publicly)", host, "private")
+            return DownloadError(_("dl.drive_private"), host, "private")
         if "can't scan this file for viruses" in low or "virus scan warning" in low:
-            return DownloadError("Google Drive virus-scan page had no download form", host, "page")
-        return DownloadError("Google Drive refused the download (quota exceeded or not public)", host, "quota")
-    return DownloadError("the link returned a web page instead of a file", host, "page")
+            return DownloadError(_("dl.drive_virus"), host, "page")
+        return DownloadError(_("dl.drive_refused"), host, "quota")
+    return DownloadError(_("dl.web_page"), host, "page")
 
 
 def _drive_form_url(text: str, base_url: str) -> str | None:
@@ -209,7 +213,7 @@ def _save(r, dest_dir: Path, fallback: str, progress=None, cancel=None) -> Path:
     with open(path, "wb") as f:
         while True:
             if cancel and cancel.is_set():
-                raise RuntimeError("cancelled")
+                raise RuntimeError(_("job.cancelled"))
             chunk = r.read(1 << 18)
             if not chunk:
                 break
@@ -227,7 +231,7 @@ def _save(r, dest_dir: Path, fallback: str, progress=None, cancel=None) -> Path:
 def resolve(url: str) -> str:
     url = expand_short(url.strip())
     if re.search(r"mega\.(nz|co\.nz)", url, re.I):
-        raise ManualDownload("Hosted on MEGA, which can't be downloaded automatically")
+        raise ManualDownload(_("dl.mega"))
     if re.search(r"drive\.google\.com|drive\.usercontent\.google\.com|docs\.google\.com", url):
         fid = drive_id(url)
         if fid:
@@ -238,7 +242,7 @@ def resolve(url: str) -> str:
         m = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', page, re.I) or \
             re.search(r"(https?://download\d+\.mediafire\.com/[^\"'\s]+)", page, re.I)
         if not m:
-            raise ManualDownload("Couldn't find the Mediafire download link")
+            raise ManualDownload(_("dl.mediafire"))
         link = m.group(1).replace("&amp;", "&")
         return "https:" + link if link.startswith("//") else link
     if "dropbox.com" in url:
@@ -258,9 +262,9 @@ def download(url: str, dest_dir: Path, progress=None, cancel=None, depth: int = 
         msg = f"{e.code} {e.reason}".strip()
         raise DownloadError(msg, host_of(e.url or url), "http", e.code) from e
     except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError) as e:
-        raise DownloadError(f"network error: {getattr(e, 'reason', e)}", host_of(url), "network") from e
+        raise DownloadError(_("dl.network", detail=getattr(e, "reason", e)), host_of(url), "network") from e
     except ValueError as e:        # e.g. urllib's "URL can't contain control characters"
-        raise DownloadError(f"invalid link: {e}", host_of(url), "network") from e
+        raise DownloadError(_("dl.invalid_link", detail=e), host_of(url), "network") from e
 
 
 def _download(url: str, dest_dir: Path, progress=None, cancel=None, depth: int = 0) -> list[Path]:
@@ -273,7 +277,7 @@ def _download(url: str, dest_dir: Path, progress=None, cancel=None, depth: int =
         out = []
         entries = list_drive_folder(folder)
         if not entries:
-            raise DownloadError("Google Drive folder is empty or not public", "drive.google.com", "private")
+            raise DownloadError(_("dl.drive_empty"), "drive.google.com", "private")
         for e in entries:
             if e["folder"]:
                 out += download(f"https://drive.google.com/drive/folders/{e['id']}", dest_dir / e["name"],

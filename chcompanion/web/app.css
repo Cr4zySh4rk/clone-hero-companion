@@ -10,6 +10,9 @@
   --spot: #ffb52e;
   --spot-ink: #241500;
   --green: #3cc85a; --red: #e8413a; --yellow: #f2d23a; --blue: #3a8ee8; --orange: #f08a2a;
+  --cjk-sc: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei";
+  --cjk-jp: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Source Han Sans";
+  --cjk-kr: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K";
   --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
   --ui: "Barlow", "Segoe UI", system-ui, -apple-system, sans-serif;
   --row: 46px;
@@ -33,7 +36,7 @@ input[type=range] { accent-color: var(--spot); }
 h2 { font: 900 22px/1 var(--display); letter-spacing: .01em; margin: 0; }
 .hint { color: var(--dim); padding: 0 4px; }
 
-#shell { display: grid; grid-template-columns: 210px 1fr auto; height: calc(100% - 38px); }
+#shell { display: grid; grid-template-columns: clamp(190px, 17vw, 240px) minmax(0, 1fr) auto; height: calc(100% - 38px); }
 
 /* ---------- sidebar ---------- */
 #side { background: linear-gradient(180deg, #1c1036, #140b27); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 16px 10px; gap: 14px; min-height: 0; }
@@ -296,3 +299,96 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 760px) { .profile { padding: 16px 14px 30px; } }
 .chart-tag { font-style: normal; color: var(--faint); }
 .chart-tag.on { color: var(--spot); font-weight: 600; }
+
+/* ================= i18n: CJK font fallbacks (system fonts only, nothing is bundled) ================= */
+:root:lang(zh) { --ui: "Barlow", var(--cjk-sc), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-sc), sans-serif; }
+:root:lang(ja) { --ui: "Barlow", var(--cjk-jp), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-jp), sans-serif; }
+:root:lang(ko) { --ui: "Barlow", var(--cjk-kr), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-kr), sans-serif; }
+:root:lang(zh) h2, :root:lang(ja) h2, :root:lang(ko) h2 { font-weight: 800; letter-spacing: 0; }
+:lang(zh) .brand-name, :lang(ja) .brand-name, :lang(ko) .brand-name { letter-spacing: 0; }
+
+/* ================= i18n: layout that survives long strings (German, Russian, French, ...) ================= */
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+button { white-space: nowrap; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+select { max-width: 100%; text-overflow: ellipsis; }
+.bar, .selbar, .d-row, .chips, .pickrow, .cloudfavs header, .pager, .pane-head, .p-head .actions, .setup-actions, .btnrow { gap: 6px 8px; }
+.bar { row-gap: 8px; }
+.bar > h2 { flex: none; max-width: 100%; }
+.bar > .hint { flex: 1 1 200px; min-width: 0; }
+.bar > .counts { min-width: 0; overflow-wrap: anywhere; }
+.chips button, .seg button { max-width: 100%; }
+.seg { max-width: 100%; }
+.pickrow { flex-wrap: wrap; }
+.pickrow button { flex: none; }
+.pager { flex-wrap: wrap; }
+.pager .pginfo { text-align: center; }
+.btnrow { display: flex; flex-wrap: wrap; }
+.hint, .status-line, .lbnote, .ytwarn, .favsummary, small { overflow-wrap: anywhere; }
+#toast { width: max-content; max-width: min(80vw, 640px); white-space: normal; text-align: center; overflow-wrap: anywhere; }
+dialog { min-width: min(360px, 90vw); max-width: min(560px, 94vw); }
+dialog .btns { flex-wrap: wrap; }
+dialog h2 { overflow-wrap: anywhere; line-height: 1.1; }
+.runopts { max-width: min(92vw, 460px); }
+.runopts label { white-space: normal; }
+.selbar { row-gap: 6px; }
+
+/* sidebar: labels give way to the badge, never the other way round */
+#nav button .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#nav button .badge, #nav button .dot { flex: none; margin-left: 4px; }
+#nav button { min-width: 0; max-width: none; }
+.launch { width: 100%; }
+.brand-name { min-width: 0; overflow-wrap: anywhere; }
+.side-status { overflow-wrap: anywhere; }
+#side { min-width: 0; overflow-x: hidden; }
+
+/* table header + cells */
+.thead > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row > div { min-width: 0; }
+.row > div:not(.t):not(.cell):not(.art) { overflow: hidden; }
+.pill { display: inline-block; max-width: 100%; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inst, .lv { flex-wrap: nowrap; }
+.card .tags .pill { max-width: 100%; }
+.card b, .card span { overflow-wrap: anywhere; }
+.line > div { min-width: 0; }
+.line b, .line span { overflow-wrap: anywhere; }
+.line { grid-template-columns: 26px 44px minmax(0, 1fr) auto auto; }
+
+/* panels */
+.kv { grid-template-columns: minmax(70px, 110px) minmax(0, 1fr); }
+.kv span { overflow-wrap: anywhere; }
+.slider { grid-template-columns: minmax(70px, 110px) minmax(0, 1fr) 64px; }
+.slider > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand { grid-template-columns: minmax(0, 1fr) auto auto; }
+.job { grid-template-columns: minmax(84px, 130px) minmax(0, 1fr) minmax(160px, 40%) auto; }
+.job > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job .st { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dupe .copy { grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
+.dupe .copy > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.split { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
+.pane-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-head h2 { min-width: 0; overflow-wrap: anywhere; }
+.settings .row2 { grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); }
+.settings .row2 > span:first-child { overflow-wrap: anywhere; }
+.settings .row2 label.inline { align-items: flex-start; }
+.settings .row2 label.inline input { flex: none; margin-top: 3px; }
+.settings .row2 select, .settings .row2 input[type=text] { width: 100%; }
+.settings .row2 > span { min-width: 0; overflow-wrap: anywhere; }
+.langrow { max-width: 460px; }
+.tiles { grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); }
+.tile { min-width: 0; }
+.tile span { overflow-wrap: anywhere; }
+.tile b { overflow: hidden; text-overflow: ellipsis; }
+.p-cols { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.p-head .who { min-width: min(200px, 100%); }
+.plist li > div { min-width: 0; }
+.plist .v { max-width: 45vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plist .v small { overflow: hidden; text-overflow: ellipsis; }
+.cloudfavs header { flex-wrap: wrap; }
+.cloudfavs header b { flex: 1 1 200px; min-width: 0; }
+.cfbtns { flex-wrap: wrap; justify-content: flex-end; }
+.cfbtns button { max-width: 14ch; }
+#dockJobs > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#dock { min-width: 0; }
+#plTitle { min-width: 0; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#player { min-width: 0; }
+@media (max-width: 1060px) { .settings .row2 { grid-template-columns: minmax(0, 1fr); gap: 4px; } .settings .row2 small { grid-column: 1; margin-top: 0; } }

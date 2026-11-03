@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 
 from .net import urlopen
+from .i18n import _, msg_of
 from .paths import config_dir
 
 log = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ def hot_swap(newdir: Path, version: str, gate=None, downloads=None, wait: float 
     held: list = []
     try:
         for sem, n in ((gate.sem, gate.concurrent) if gate else (None, 0), (downloads, 2) if downloads else (None, 0)):
-            for _ in range(n):
+            for _i in range(n):
                 if not sem.acquire(timeout=wait):
                     return False
                 held.append(sem)
@@ -186,7 +187,7 @@ def hot_swap(newdir: Path, version: str, gate=None, downloads=None, wait: float 
             _purge_modules()
             sys.path[:] = old_path
             sys.modules.update(old_mods)
-            raise RuntimeError(f"updated yt-dlp does not load ({e}); kept the previous version") from e
+            raise RuntimeError(_("ytdlp.wont_load", detail=e)) from e
         return True
     finally:
         for sem in held:
@@ -205,7 +206,7 @@ def check_for_update(force: bool = False, gate=None, downloads=None) -> str:
         if cached:
             have = max([have, cached[-1]], key=_ver)
         if not latest or not is_newer(latest, have):
-            STATUS["message"] = f"yt-dlp {have} is up to date"
+            STATUS["message"] = _("ytdlp.up_to_date", version=have)
             return STATUS["message"]
         dst = download(latest, data)
         try:
@@ -213,16 +214,16 @@ def check_for_update(force: bool = False, gate=None, downloads=None) -> str:
         except RuntimeError as e:
             shutil.rmtree(dst, ignore_errors=True)
             log.warning("%s", e)
-            STATUS["message"] = str(e)
+            STATUS["message"] = msg_of(e)
             return STATUS["message"]
         prune(2, protect=latest)
-        STATUS["message"] = (f"updated to yt-dlp {latest}" if swapped
-                             else f"yt-dlp {latest} downloaded; used from the next start")
+        STATUS["message"] = (_("ytdlp.updated", version=latest) if swapped
+                             else _("ytdlp.downloaded", version=latest))
         log.info("%s", STATUS["message"])
         return STATUS["message"]
     except Exception as e:
         log.debug("yt-dlp update check failed: %s", e)
-        STATUS["message"] = "couldn't check for a yt-dlp update"
+        STATUS["message"] = _("ytdlp.check_failed")
         return STATUS["message"]
     finally:
         STATUS["checking"] = False

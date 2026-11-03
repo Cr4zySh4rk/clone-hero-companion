@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from ..i18n import _
 from ..paths import cache_dir, ensure_writable_dir
 from . import hosts
 
@@ -70,8 +71,8 @@ def _extract(archive: Path, out: Path):
                     continue  # stale PATH entry: try the next extractor
                 if r.returncode == 0:
                     return
-        raise RuntimeError(f"Can't extract {archive.suffix} archives here; install 'unar' or 7-Zip")
-    raise RuntimeError(f"Unknown archive type: {archive.name}")
+        raise RuntimeError(_("install.cant_extract", ext=archive.suffix))
+    raise RuntimeError(_("install.unknown_archive", name=archive.name))
 
 
 def _song_dirs(root: Path) -> list[Path]:
@@ -138,7 +139,7 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
         if not installed and skipped:
             raise AlreadyInstalled(", ".join(p.name for p in skipped))
         if not installed:
-            raise RuntimeError("No chart found in the download (needs song.ini / notes.chart / notes.mid or a .sng)")
+            raise RuntimeError(_("install.no_chart"))
         return installed
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -147,34 +148,34 @@ def install_files(files: list[Path], songs_dir: Path, meta: dict) -> list[Path]:
 def install(item: dict, songs_dir: Path, progress=None, cancel=None) -> list[Path]:
     """item: a normalized search result (encore / rhythmverse) or {url, name, artist}."""
     if item.get("needsConversion"):
-        raise RuntimeError("Rock Band CON charts need conversion, which isn't supported; pick a Clone Hero version")
+        raise RuntimeError(_("install.rb_con"))
     url = item.get("downloadUrl") or item.get("url")
     if not url or not str(url).strip():
-        raise hosts.ManualDownload("No direct download for this chart; open its page to download it")
+        raise hosts.ManualDownload(_("install.no_direct"))
     if item.get("source") == "encore":
         label = safe_name(f"{item.get('artist', '')} - {item.get('name', '')}"
                           + (f" ({item['charter']})" if item.get("charter") else ""))
         if (songs_dir / (label + ".sng")).exists():
             raise AlreadyInstalled(label + ".sng")
     if progress:
-        progress("checking the Songs folder is writable")
+        progress(_("install.check_writable"))
     ensure_writable_dir(songs_dir)
     if progress:
-        progress("creating the download folder")
+        progress(_("install.creating"))
     tmp = Path(tempfile.mkdtemp(prefix="chc-dl-", dir=cache_dir()))
     try:
         def prog(done, total):
             if progress:
-                progress(f"downloading {done * 100 // total}%" if total else f"downloading {done // 1048576} MB")
+                progress(_("install.downloading_pct", pct=done * 100 // total) if total else _("install.downloading_mb", mb=done // 1048576))
         if progress:
-            progress("connecting to the chart download")
+            progress(_("install.connecting"))
         files = hosts.download(url, tmp, prog, cancel)
         if item.get("source") == "encore" and files and not files[0].name.lower().endswith(".sng"):
             if progress:
-                progress("renaming the downloaded chart")
+                progress(_("install.renaming"))
             files[0] = files[0].rename(files[0].with_suffix(".sng"))
         if progress:
-            progress(f"installing into {songs_dir}")
+            progress(_("install.installing", folder=songs_dir))
         # Drive folders come back as nested paths: treat the folder as one song
         all_files = []
         for f in files:

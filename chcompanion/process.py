@@ -38,11 +38,8 @@ def run(args, **options):
     # ffmpeg probe failures (exit 1) for callers that parse stderr.
     status = result.returncode & 0xFFFFFFFF
     if status in (0xC0000142, 0xC0000135, 0xC000007B):
-        message = (
-            f"Windows could not start {Path(exe).name} (0x{status:08X}). "
-            f"Executable: {exe}. Restart Companion and repair/reinstall it using the Windows installer. "
-            "Check Windows Security > Protection history if it still fails."
-        )
+        from .i18n import _
+        message = _("proc.win_start", tool=Path(exe).name, status=f"{status:08X}", exe=exe)
         with _FAILURE_LOCK:
             _FAILED_STARTS[exe] = message
         raise ToolStartError(message)

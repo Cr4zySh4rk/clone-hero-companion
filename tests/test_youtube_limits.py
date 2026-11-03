@@ -174,7 +174,7 @@ class BackoffTests(Base):
         job = m.submit(Job("full", "Artist - Song"))
         self._wait(job, lambda j: j.status == "failed")
         self.assertTrue(job.error.startswith("downloading the video: "), job.error)
-        self.assertIn("YouTube kept limiting requests after 3 cool-down(s)", job.error)
+        self.assertIn("YouTube kept limiting requests after 3 cool-downs", job.error)
 
     def test_media_and_full_for_one_chart_are_one_job(self):
         m = JobManager(lambda j, p: "x", workers=1)

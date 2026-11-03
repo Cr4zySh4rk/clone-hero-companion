@@ -77,6 +77,7 @@ def open_extra_window(url: str, title: str = "Now Playing", fullscreen: bool = F
 
 def pick_path(kind: str = "folder", start: str = "") -> str | None:
     """Native folder/file picker (kind: 'folder' or 'game'). None when no native window exists."""
+    from .i18n import _
     wv = _extra["webview"]
     if wv is None or not wv.windows:
         return None
@@ -88,9 +89,9 @@ def pick_path(kind: str = "folder", start: str = "") -> str | None:
         if kind == "game" and sys.platform == "darwin":
             # an .app bundle is a folder; the open dialog lets you pick it
             res = win.create_file_dialog(open_t, directory=start or "/Applications", allow_multiple=False,
-                                         file_types=("Applications (*.app)", "All files (*.*)"))
+                                         file_types=(str(_("gui.apps")), str(_("gui.all_files"))))
         elif kind == "game":
-            ft = ("Clone Hero (*.exe)", "All files (*.*)") if sys.platform == "win32" else ("All files (*.*)",)
+            ft = (str(_("gui.clone_hero_exe")), str(_("gui.all_files"))) if sys.platform == "win32" else (str(_("gui.all_files")),)
             res = win.create_file_dialog(open_t, directory=start or str(Path.home()), allow_multiple=False,
                                          file_types=ft)
         else:

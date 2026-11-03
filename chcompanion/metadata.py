@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .i18n import _
 from .library import Song, norm_key, strip_tags
 from .lyrics import clean_title
 from .net import urlopen
@@ -189,7 +190,7 @@ def fetch(song: Song) -> dict:
 def apply(song: Song, overwrite: bool = False, art: bool = True, progress=None) -> dict:
     """Fill in missing metadata for the song. Returns {field: new value}."""
     if progress:
-        progress("looking up metadata")
+        progress(_("meta.looking_up"))
     found = fetch(song)
     changes: dict[str, str] = {}
     for k in ("album", "year", "genre"):

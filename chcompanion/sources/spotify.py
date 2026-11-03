@@ -7,6 +7,7 @@ import json
 import re
 import urllib.request
 
+from ..i18n import _
 from ..net import urlopen
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -36,14 +37,14 @@ def _find_entity(node):
 def fetch_playlist(url: str) -> dict:
     pid = playlist_id(url)
     if not pid:
-        raise ValueError("That doesn't look like a Spotify playlist link (open.spotify.com/playlist/…)")
+        raise ValueError(_("spotify.bad_link"))
     req = urllib.request.Request(f"https://open.spotify.com/embed/playlist/{pid}",
                                  headers={"User-Agent": UA, "Accept-Language": "en"})
     with urlopen(req, timeout=20) as r:
         html = r.read().decode("utf-8", "replace")
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
-        raise RuntimeError("Spotify page format changed; couldn't read the playlist")
+        raise RuntimeError(_("spotify.format_changed"))
     entity = _find_entity(json.loads(m.group(1))) or {}
     tracks = []
     for t in entity.get("trackList") or []:
@@ -52,6 +53,6 @@ def fetch_playlist(url: str) -> dict:
             tracks.append({"title": title, "artist": artist.split(",")[0].strip(),
                            "artists": artist, "durationMs": t.get("duration")})
     if not tracks:
-        raise RuntimeError("The playlist is empty or private")
-    return {"name": (entity.get("name") or "Spotify playlist").strip(), "tracks": tracks,
+        raise RuntimeError(_("spotify.empty"))
+    return {"name": (entity.get("name") or _("spotify.default_name")).strip(), "tracks": tracks,
             "truncated": len(tracks) >= 100}

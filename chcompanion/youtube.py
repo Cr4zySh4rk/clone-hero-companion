@@ -25,6 +25,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
+from .i18n import _, join
 from .library import Song, norm_key
 from .lyrics import clean_title
 
@@ -60,11 +61,10 @@ UNAVAILABLE_SIGNS = ("video unavailable", "this video is not available", "privat
 CLIENT_FALLBACKS = [None]
 
 
-SIGNAL_LABELS = {"http-429": "HTTP 429 (too many requests)",
-                 "bot-check": "bot check (\"confirm you're not a bot\")",
-                 "rate-limit-text": "rate-limit message from yt-dlp"}
-BOT_HINT = ("YouTube is asking to confirm you're not a bot. Turn on 'Use my YouTube sign-in' in Settings, "
-            "or wait ~30 min.")
+SIGNAL_LABELS = {"http-429": _("yt.signal.http429"),
+                 "bot-check": _("yt.signal.botcheck"),
+                 "rate-limit-text": _("yt.signal.ratelimit")}
+BOT_HINT = _("yt.bot_hint")
 
 
 def limit_signal(e: Exception | str) -> str | None:
@@ -91,7 +91,7 @@ class BotDetected(Exception):
 class VideoProblem(Exception):
     """This video can't give us what we need; not a statement about YouTube limiting us. The
     next candidate may work and no cool-down starts. `label` is a short reason for job messages."""
-    label = "problem"
+    label = _("yt.label.problem")
 
     def __init__(self, message: str = ""):
         super().__init__(message)
@@ -99,17 +99,17 @@ class VideoProblem(Exception):
 
 
 class AgeRestricted(VideoProblem):
-    label = "age-restricted"
+    label = _("yt.label.age")
 
 
 class VideoUnavailable(VideoProblem):
-    label = "unavailable"
+    label = _("yt.label.unavailable")
 
 
 class ReducedFormats(VideoProblem):
     """The answer held no separate video streams (the PO-token-gated clients only give storyboards and
     one muxed 360p stream), or no streams at all."""
-    label = "no video streams offered"
+    label = _("yt.label.reduced")
 
 
 class NoHDVideo(Exception):
@@ -164,8 +164,7 @@ def classify_error(e: Exception, state: str | None = None, nformats: int = 0) ->
     if state == "sd":
         return NoHDVideo(f"no format at {MIN_P}p or better")
     if state in ("reduced", "empty"):
-        return ReducedFormats(f"YouTube offered {'no usable' if state == 'empty' else 'no separate video'} "
-                              f"streams ({nformats} formats listed)")
+        return ReducedFormats(_("yt.reduced_empty" if state == "empty" else "yt.reduced_nosep", count=nformats))
     return e
 
 
@@ -195,7 +194,7 @@ class RateGate:
     # ------------------------------------------------------------ activity
     def _sleep(self, secs: float):
         if self.cancel.wait(secs):
-            raise RuntimeError("cancelled")
+            raise RuntimeError(_("job.cancelled"))
 
     def _count(self, now: float, secs: float) -> int:
         return sum(1 for t in self.requests if now - t < secs)
@@ -244,7 +243,7 @@ class RateGate:
             if left <= 0:
                 return
             if progress:
-                progress(f"pacing YouTube requests ({left // 60}:{left % 60:02d})")
+                progress(_("yt.pacing", time=f"{left // 60}:{left % 60:02d}"))
             self._sleep(min(left, 1.0))
 
     def _begin(self, video_id=None):
@@ -331,7 +330,7 @@ class RateGate:
             if left <= 0:
                 break
             if progress:
-                progress(f"waiting for YouTube cool-down {left // 60}:{left % 60:02d}")
+                progress(_("job.wait_cooldown", time=f"{left // 60}:{left % 60:02d}"))
             self._sleep(min(left, 1.0))
         self.wait_budget(progress)
 
@@ -406,28 +405,26 @@ def is_cookie_error(e: Exception) -> bool:
         "cookie", "dpapi", "keyring", "keychain", "full disk access", "app-bound", "app bound"))
 
 
-def cookie_problem(e: Exception, browser: str) -> str:
+def cookie_problem(e: Exception, browser: str):
     """A plain-language reason for a failed cookie read, ending in what happens next."""
     m = str(e).lower()
     name = browser.capitalize()
     if "dpapi" in m or "app-bound" in m or "app bound" in m or "decrypt" in m:
-        why = (f"{name} on Windows encrypts its cookies so that other programs can't read them (app-bound "
-               "encryption). Use Firefox, or export a cookies.txt file instead")
+        why = _("yt.cookie.dpapi", name=name)
     elif browser == "safari" and ("permission" in m or "operation not permitted" in m or "full disk" in m):
-        why = ("Safari's cookies need Full Disk Access: System Settings > Privacy & Security > Full Disk Access, "
-               "add this app, then restart it")
+        why = _("yt.cookie.safari")
     elif "locked" in m or "could not copy" in m or "being used by another" in m or "permission" in m:
-        why = f"{name}'s cookie database is locked while the browser is running. Close {name} and try again"
+        why = _("yt.cookie.locked", name=name)
     elif "could not find" in m or "no such file" in m or "not found" in m:
-        why = f"no {name} profile with cookies was found"
+        why = _("yt.cookie.notfound", name=name)
     else:
         why = (str(e).strip().splitlines() or [type(e).__name__])[0][:160]
-    return f"Couldn't read your {name} sign-in: {why}. Continuing without sign-in."
+    return _("yt.cookie.fail", name=name, why=why)
 
 
 def _note_cookie_failure(e: Exception) -> None:
     opts = cookie_opts_mode()
-    msg = cookie_problem(e, opts) if opts != "file" else f"Couldn't read the cookies.txt file ({str(e)[:120]}). Continuing without sign-in."
+    msg = cookie_problem(e, opts) if opts != "file" else _("yt.cookie.file_fail", detail=str(e)[:120])
     _COOKIES.update(failed=True, error=msg)
     log.warning("%s (%s)", msg, e)
 
@@ -466,7 +463,7 @@ def check_cookies() -> str | None:
 
 _TOOL_CACHE: dict = {}
 JS_RUNTIMES = ("deno", "node", "bun", "qjs")
-JS_HELP = "YouTube needs Deno or Node for some videos; install Deno from deno.land (the official apps include one)"
+JS_HELP = _("yt.js_help")
 
 
 def bundled_dirs() -> list[Path]:
@@ -830,8 +827,7 @@ class YouTube:
         st = list_state(formats)
         if st == "full":
             return NoHDVideo(f"no format at {MIN_P}p or better")
-        return ReducedFormats(f"YouTube offered {'no usable' if st == 'empty' else 'no separate video'} "
-                              f"streams ({len(formats or [])} formats listed)")
+        return ReducedFormats(_("yt.reduced_empty" if st == "empty" else "yt.reduced_nosep", count=len(formats or [])))
 
     def best_res(self, video_id: str) -> int:
         f = pick_format(self.info(video_id).get("formats") or [], self.pref_p, min_p=MIN_P)
@@ -976,7 +972,7 @@ class YouTube:
             else:
                 apath = d.get("filepath")
         if not vpath:
-            raise RuntimeError("the video stream wasn't downloaded")
+            raise RuntimeError(_("yt.no_stream"))
         if with_audio and not apath and got.get("acodec") not in (None, "none"):
             # ffmpeg was found, so yt-dlp merged the streams into one file. Split it again with a
             # stream copy: the video must stay video-only, and the audio is needed for lining up.

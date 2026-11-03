@@ -24,6 +24,7 @@ import urllib.parse
 import urllib.request
 
 from .library import norm_key, strip_tags
+from .i18n import _
 from .net import urlopen
 
 log = logging.getLogger(__name__)
@@ -72,9 +73,9 @@ class Client:
                 msg = json.loads(e.read().decode("utf-8")).get("message", "")[:160]
             except Exception:
                 pass
-            raise LeaderboardError(f"CH Leaderboards answered HTTP {e.code}. {msg}".strip())
+            raise LeaderboardError(_("lb.http_detail", code=e.code, detail=msg) if msg else _("lb.http", code=e.code))
         except Exception as e:
-            raise LeaderboardError(f"CH Leaderboards is not reachable: {e}")
+            raise LeaderboardError(_("lb.unreachable", detail=e))
 
     def get(self, path: str, params: dict | None = None):
         q = urllib.parse.urlencode([(k, v) for k, v in (params or {}).items() if v not in (None, "")])
@@ -92,7 +93,7 @@ class Client:
                 self._last = self.now()
             self.cache[url] = (self.now(), data)
             if len(self.cache) > 300:
-                for k, _ in sorted(self.cache.items(), key=lambda kv: kv[1][0])[:100]:
+                for k, _v in sorted(self.cache.items(), key=lambda kv: kv[1][0])[:100]:
                     self.cache.pop(k, None)
             return data
 
@@ -102,13 +103,13 @@ class Client:
 
     def players(self, metric: str = "totalScore"):
         if metric not in METRICS:
-            raise LeaderboardError("Unknown metric")
+            raise LeaderboardError(_("lb.unknown_metric"))
         rows = self.get("stats/player-leaderboard", {"metric": metric}) or []
         return [{**r, "url": user_url(r["accountId"])} for r in rows if "accountId" in r]
 
     def songs_board(self, tab: str = "trending", group: str = "fiveFret"):
         if tab not in SONG_TABS or group not in CONTROLLER_GROUPS:
-            raise LeaderboardError("Unknown leaderboard")
+            raise LeaderboardError(_("lb.unknown_board"))
         rows = self.get("stats/song-leaderboard", {"tab": tab, "controllerGroup": group}) or []
         return [{**r, "url": song_url(r["songHash"])} for r in rows if r.get("songHash")]
 
@@ -154,7 +155,7 @@ class Client:
     def top_scores(self, song_hash: str, instrument: str = "guitar", difficulty: str = "expert",
                    account_id: int | None = None) -> dict:
         if instrument not in INSTRUMENTS or difficulty not in DIFFICULTIES:
-            raise LeaderboardError("Unknown instrument or difficulty")
+            raise LeaderboardError(_("lb.unknown_inst"))
         d = self.get("scores", {"songHash": song_hash, "instrument": instrument, "difficulty": difficulty,
                                 "topScores": 10, "sort": "score", "accountId": account_id}) or {}
         top = [self.slim(r) for r in ((d.get("top") or {}).get("scoreData") or [])]
@@ -191,7 +192,7 @@ class Client:
         for r in latest:
             if r.get("scoreId") is not None:
                 rows[r["scoreId"]] = r
-        combos = [c for c, _ in Counter((r.get("instrument"), r.get("difficulty")) for r in latest).most_common(3)
+        combos = [c for c, _n in Counter((r.get("instrument"), r.get("difficulty")) for r in latest).most_common(3)
                   if c[0] in INSTRUMENTS and c[1] in DIFFICULTIES]
         calls = 0
         for song in (d.get("mostPlayed") or []):

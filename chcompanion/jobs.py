@@ -19,6 +19,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from .i18n import _, msg_of
+
 log = logging.getLogger(__name__)
 
 PRIO_HOVER, PRIO_USER, PRIO_PLAYED, PRIO_BATCH, PRIO_LIBRARY = 0, 1, 2, 3, 5
@@ -49,12 +51,13 @@ class Job:
     not_before: float = 0.0        # a YouTube cool-down ends then
     work_step: str = ""            # the last real step (not a cool-down notice), for error messages
     cooldowns: int = 0             # cool-downs this job has already waited through
+    video_added: bool = False      # the run put a video into the song (the UI then reminds about Scan Songs)
 
     def public(self) -> dict:
         return {"id": self.id, "kind": self.kind, "title": self.title, "songId": self.song_id,
                 "status": self.status, "step": self.step, "result": self.result, "error": self.error,
                 "priority": self.priority, "created": self.created, "started": self.started,
-                "finished": self.finished}
+                "finished": self.finished, "videoAdded": self.video_added}
 
 
 class JobManager:
@@ -168,19 +171,19 @@ class JobManager:
                     if j.not_before > time.time():
                         deferred.append((prio, order, jid))
                         left = int(j.not_before - time.time() + 0.999)
-                        j.status, j.step = "waiting", f"waiting for YouTube cool-down {left // 60}:{left % 60:02d}"
+                        j.status, j.step = "waiting", _("job.wait_cooldown", time=f"{left // 60}:{left % 60:02d}")
                         continue
                     if self.busy(j):
                         deferred.append((prio, order, jid))
                         if j.status != "waiting":
-                            j.status, j.step = "waiting", "waiting until the song isn't playing"
+                            j.status, j.step = "waiting", _("job.wait_playing")
                         continue
                     job = j
                     break
                 for d in deferred:
                     heapq.heappush(self.heap, d)
                 if job:
-                    job.status, job.started, job.step = "running", time.time(), "starting"
+                    job.status, job.started, job.step = "running", time.time(), _("job.starting")
                     self.active += 1
                     return job
                 self.lock.wait(timeout=2.0)
@@ -192,15 +195,15 @@ class JobManager:
                 return
             self.on_change(job)
 
-            def progress(msg: str, job=job):
+            def progress(msg, job=job):
                 if job.cancel.is_set():
                     raise Cancelled()
                 job.step = msg
-                if not msg.startswith(("waiting for YouTube", "pacing YouTube")):
+                if getattr(msg, "key", "") not in ("job.wait_cooldown", "yt.pacing"):
                     job.work_step = msg
                 self.on_change(job)
             try:
-                job.result = self.runner(job, progress) or "done"
+                job.result = self.runner(job, progress) or _("job.done")
                 job.status = "done"
                 job.step = ""
             except Cancelled:
@@ -217,28 +220,28 @@ class JobManager:
                         with self.lock:
                             job.not_before = time.time() + left
                             job.status = "waiting"
-                            job.step = f"waiting for YouTube cool-down {left // 60}:{left % 60:02d}"
+                            job.step = _("job.wait_cooldown", time=f"{left // 60}:{left % 60:02d}")
                             heapq.heappush(self.heap, (job.priority, next(self.order), job.id))
                             self.active -= 1
                         self.on_change(job)
                         continue
                     sig = youtube.SIGNAL_LABELS.get((youtube.GATE.last_limit or {}).get("signal"), "")
-                    why = (f"YouTube kept limiting requests after {job.cooldowns - 1} cool-down(s)"
-                           f"{f' ({sig})' if sig else ''}; try again later")
-                    log.warning("Job %s (%s) failed for %s: %s", job.id, job.kind, job.title, why)
+                    why = (_("job.yt_limited_sig", count=job.cooldowns - 1, signal=sig) if sig
+                           else _("job.yt_limited", count=job.cooldowns - 1))
+                    log.warning("Job %s (%s) failed for %s: %s", job.id, job.kind, job.title, str(why))
                     job.status = "failed"
-                    job.error = f"{job.work_step or 'searching YouTube'}: {why}"
+                    job.error = _("job.error_in_step", step=job.work_step or _("job.searching_youtube"), detail=why)
                     job.not_before = 0.0
                     detail = None
                 else:
-                    detail = str(e) or type(e).__name__
+                    detail = msg_of(e)
                 # Keep the operation and traceback: Windows' missing-executable
                 # errors often have no filename and otherwise look identical.
                 if detail is not None:
                     log.exception("Job %s (%s) failed for %s during %s: %s",
                                   job.id, job.kind, job.title, job.step or "starting", detail)
                     job.status = "failed"
-                    job.error = f"{job.step}: {detail}" if job.step else detail
+                    job.error = _("job.error_in_step", step=job.step, detail=detail) if job.step else detail
             finally:
                 if job.status != "waiting":
                     job.finished = time.time()

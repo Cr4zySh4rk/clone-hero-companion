@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import favmatch, favrecover, setlists
+from .i18n import _, msg_of
 from .library import Library, Song, norm_key, strip_tags
 from .paths import cache_dir, config_dir
 from .store import Store
@@ -733,8 +734,8 @@ class LibraryManager:
             trash.mkdir(parents=True, exist_ok=True)
             shutil.move(str(path), str(unique(trash / path.name)))
         except Exception as e2:
-            raise OSError(f"{first}; fallback move failed: {e2}") from e2
-        return f"moved to Deleted Songs ({first})"
+            raise OSError(_("lib.fallback_failed", first=first, detail=e2)) from e2
+        return _("lib.moved_deleted", first=first)
 
     def delete(self, ids: list[str], progress=None) -> dict:
         """Trash the songs. Never raises per item: returns {"deleted": n, "failed": [{id, name, reason}]}."""
@@ -757,7 +758,7 @@ class LibraryManager:
                     gone.append(s.path)
                 except Exception as e:
                     log.warning("delete %s: %s", s.path, e)
-                    failed.append({"id": song_id(s), "name": s.display, "reason": str(e) or type(e).__name__})
+                    failed.append({"id": song_id(s), "name": s.display, "reason": msg_of(e)})
                 if progress:
                     progress(i + 1, len(songs), deleted, failed)
             try:
@@ -807,7 +808,7 @@ class LibraryManager:
                     after()
             except Exception as e:
                 log.exception("delete job failed")
-                op.update(status="error", error=str(e))
+                op.update(status="error", error=msg_of(e))
         threading.Thread(target=run, daemon=True, name="delete").start()
         return op["id"]
 
@@ -918,7 +919,7 @@ class LibraryManager:
         names = [n for n in chart_audio_files(s.list_files())]
         names += [n for n in s.list_files() if n.lower().rsplit(".", 1)[0] == "crowd"][:0]
         if not ff or not names:
-            raise RuntimeError("no audio")
+            raise RuntimeError(_("lib.no_audio"))
         tmp = None
         if s.is_sng:
             import tempfile

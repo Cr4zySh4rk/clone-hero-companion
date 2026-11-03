@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-title-key="app.title">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -17,20 +17,20 @@
       <div class="brand-name">Clone Hero<br>Companion</div>
     </div>
     <nav id="nav">
-      <button data-view="library" class="on">Library <span class="badge" id="navLibCount"></span></button>
-      <button data-view="favs">★ Favourites <span class="badge" id="navFavCount"></span></button>
-      <button data-view="charts">Get charts</button>
-      <button data-view="spotify">Spotify import</button>
-      <button data-view="setlists">Setlists</button>
-      <button data-view="dupes">Duplicates</button>
-      <button data-view="jobs">Jobs <span class="badge hot" id="navJobs"></span></button>
-      <button data-view="profile">Profile</button>
-      <button data-view="leaderboards">Leaderboards</button>
-      <button data-view="now">Now playing <span class="dot" id="navNow"></span></button>
-      <button data-view="setup">Game &amp; folders <span class="dot warn" id="navSetup"></span></button>
-      <button data-view="settings">Settings</button>
+      <button data-view="library" class="on"><span class="lbl" data-i18n="nav.library"></span> <span class="badge" id="navLibCount"></span></button>
+      <button data-view="favs"><span class="lbl" data-i18n="nav.favourites"></span> <span class="badge" id="navFavCount"></span></button>
+      <button data-view="charts"><span class="lbl" data-i18n="nav.charts"></span></button>
+      <button data-view="spotify"><span class="lbl" data-i18n="nav.spotify"></span></button>
+      <button data-view="setlists"><span class="lbl" data-i18n="nav.setlists"></span></button>
+      <button data-view="dupes"><span class="lbl" data-i18n="nav.dupes"></span></button>
+      <button data-view="jobs"><span class="lbl" data-i18n="nav.jobs"></span> <span class="badge hot" id="navJobs"></span></button>
+      <button data-view="profile"><span class="lbl" data-i18n="nav.profile"></span></button>
+      <button data-view="leaderboards"><span class="lbl" data-i18n="nav.leaderboards"></span></button>
+      <button data-view="now"><span class="lbl" data-i18n="nav.now"></span> <span class="dot" id="navNow"></span></button>
+      <button data-view="setup"><span class="lbl" data-i18n="nav.setup"></span> <span class="dot warn" id="navSetup"></span></button>
+      <button data-view="settings"><span class="lbl" data-i18n="nav.settings"></span></button>
     </nav>
-    <button id="launchGame" class="launch">Launch Clone Hero</button>
+    <button id="launchGame" class="launch ellipsis" data-i18n="nav.launch"></button>
     <div id="sideStatus" class="side-status"></div>
   </aside>
 
@@ -38,52 +38,52 @@
     <!-- ============ LIBRARY ============ -->
     <section class="view on" id="view-library">
       <header class="bar">
-        <input id="libSearch" type="search" placeholder="Search title, artist, album, charter…" autocomplete="off">
+        <input id="libSearch" type="search" data-i18n-placeholder="lib.search_ph" autocomplete="off">
         <div class="chips" id="libFilters">
-          <button data-f="all" class="on">All</button>
-          <button data-f="novideo">No video</button>
-          <button data-f="lowres">Video below 640p</button>
-          <button data-f="nolyrics">No lyrics</button>
-          <button data-f="fav">Favourites</button>
-          <button data-f="recent">Recently added</button>
-          <button data-f="disabled">Disabled</button>
+          <button data-f="all" class="on" data-i18n="lib.filter.all"></button>
+          <button data-f="novideo" data-i18n="lib.filter.novideo"></button>
+          <button data-f="lowres" data-i18n="lib.filter.lowres"></button>
+          <button data-f="nolyrics" data-i18n="lib.filter.nolyrics"></button>
+          <button data-f="fav" data-i18n="lib.filter.fav"></button>
+          <button data-f="recent" data-i18n="lib.filter.recent"></button>
+          <button data-f="disabled" data-i18n="lib.filter.disabled"></button>
         </div>
-        <select id="libGroup" title="Folder"><option value="">All folders</option></select>
+        <select id="libGroup" data-i18n-title="lib.folder"><option value="" data-i18n="lib.all_folders"></option></select>
       </header>
       <div class="selbar" id="selbar">
         <span id="selCount"></span>
-        <button class="primary" id="runBtn">Run</button>
+        <button class="primary" id="runBtn"></button>
         <div class="runopts" id="runOpts">
-          <label><input type="checkbox" id="optVideo" checked> Music video (HD, 640p or better)</label>
-          <label><input type="checkbox" id="optLyrics" checked> Lyrics in game</label>
-          <label><input type="checkbox" id="optMeta" checked> Metadata and album art</label>
-          <label><input type="checkbox" id="optForce"> Replace videos the songs already have</label>
+          <label><input type="checkbox" id="optVideo" checked> <span data-i18n="lib.opt.video"></span></label>
+          <label><input type="checkbox" id="optLyrics" checked> <span data-i18n="lib.opt.lyrics"></span></label>
+          <label><input type="checkbox" id="optMeta" checked> <span data-i18n="lib.opt.meta"></span></label>
+          <label><input type="checkbox" id="optForce"> <span data-i18n="lib.opt.force"></span></label>
         </div>
         <span class="sep"></span>
-        <button data-act="favorite" id="favBtn">★ Add to favourites</button>
-        <button data-act="setlist">Add to setlist…</button>
-        <button data-act="pack">Export pack</button>
-        <button data-act="rename">Rename folders</button>
-        <button data-act="restore" title="Remove added videos/lyrics and restore original files">Undo changes</button>
-        <button data-act="disable" id="disableBtn">Disable</button>
-        <button data-act="delete" class="danger">Move to Trash</button>
-        <button data-act="clear" class="ghost">Clear selection</button>
+        <button data-act="favorite" id="favBtn"></button>
+        <button data-act="setlist" data-i18n="lib.act.setlist"></button>
+        <button data-act="pack" data-i18n="lib.act.pack"></button>
+        <button data-act="rename" data-i18n="lib.act.rename"></button>
+        <button data-act="restore" data-i18n="lib.act.restore" data-i18n-title="lib.act.restore_tip"></button>
+        <button data-act="disable" id="disableBtn"></button>
+        <button data-act="delete" class="danger" data-i18n="lib.act.delete"></button>
+        <button data-act="clear" class="ghost" data-i18n="lib.act.clear"></button>
       </div>
       <div class="favsummary" id="favSummary" hidden></div>
       <div class="cloudfavs" id="cloudFavs" hidden></div>
       <div class="table" id="libTable">
         <div class="thead" id="libHead">
-          <div class="c-chk"><input type="checkbox" id="selAll" title="Select all shown"></div>
+          <div class="c-chk"><input type="checkbox" id="selAll" data-i18n-title="lib.select_all"></div>
           <div class="c-art"></div>
-          <div class="c-name sortable" data-k="name">Song</div>
-          <div class="c-album sortable" data-k="album">Album</div>
-          <div class="c-year sortable" data-k="year">Year</div>
-          <div class="c-len sortable" data-k="length">Length</div>
-          <div class="c-charter sortable" data-k="charter">Charter</div>
-          <div class="c-inst">Parts</div>
-          <div class="c-video sortable" data-k="video">Video</div>
-          <div class="c-lyr sortable" data-k="lyrics">Lyrics</div>
-          <div class="c-fav sortable" data-k="fav">★</div>
+          <div class="c-name sortable ellipsis" data-k="name" data-i18n="lib.col.song"></div>
+          <div class="c-album sortable ellipsis" data-k="album" data-i18n="lib.col.album"></div>
+          <div class="c-year sortable ellipsis" data-k="year" data-i18n="lib.col.year"></div>
+          <div class="c-len sortable ellipsis" data-k="length" data-i18n="lib.col.length"></div>
+          <div class="c-charter sortable ellipsis" data-k="charter" data-i18n="lib.col.charter"></div>
+          <div class="c-inst ellipsis" data-i18n="lib.col.parts"></div>
+          <div class="c-video sortable ellipsis" data-k="video" data-i18n="lib.col.video"></div>
+          <div class="c-lyr sortable ellipsis" data-k="lyrics" data-i18n="lib.col.lyrics"></div>
+          <div class="c-fav sortable" data-k="fav" data-i18n-title="lib.col.fav">★</div>
         </div>
         <div class="tbody" id="libBody"><div class="spacer" id="libSpacer"></div></div>
         <div class="empty" id="libEmpty" hidden></div>
@@ -93,17 +93,17 @@
     <!-- ============ CHARTS ============ -->
     <section class="view" id="view-charts">
       <header class="bar">
-        <div class="seg" id="chartDb"><button data-db="encore" class="on">Chorus Encore</button><button data-db="rhythmverse">RhythmVerse</button></div>
-        <input id="chartSearch" type="search" placeholder="Search charts by song, artist, album or charter" autocomplete="off">
-        <select id="chartInst"><option value="">Any instrument</option><option value="guitar">Guitar</option><option value="bass">Bass</option><option value="drums">Drums</option><option value="keys">Keys</option><option value="vocals">Vocals</option></select>
-        <select id="chartDiff"><option value="">Any difficulty</option><option value="expert">Expert</option><option value="hard">Hard</option><option value="medium">Medium</option><option value="easy">Easy</option></select>
-        <select id="chartSort"><option value="">Relevance</option><option value="newest">Newest</option><option value="name">Title</option><option value="artist">Artist</option><option value="length">Length</option></select>
+        <div class="seg" id="chartDb"><button data-db="encore" class="on" data-i18n="charts.db_encore"></button><button data-db="rhythmverse" data-i18n="charts.db_rv"></button></div>
+        <input id="chartSearch" type="search" data-i18n-placeholder="charts.search_ph" autocomplete="off">
+        <select id="chartInst"><option value="" data-i18n="charts.any_instrument"></option><option value="guitar" data-i18n="inst.guitar"></option><option value="bass" data-i18n="inst.bass"></option><option value="drums" data-i18n="inst.drums"></option><option value="keys" data-i18n="inst.keys"></option><option value="vocals" data-i18n="inst.vocals"></option></select>
+        <select id="chartDiff"><option value="" data-i18n="charts.any_difficulty"></option><option value="expert" data-i18n="diff.expert"></option><option value="hard" data-i18n="diff.hard"></option><option value="medium" data-i18n="diff.medium"></option><option value="easy" data-i18n="diff.easy"></option></select>
+        <select id="chartSort"><option value="" data-i18n="charts.sort.relevance"></option><option value="newest" data-i18n="charts.sort.newest"></option><option value="name" data-i18n="charts.sort.title"></option><option value="artist" data-i18n="charts.sort.artist"></option><option value="length" data-i18n="charts.sort.length"></option></select>
       </header>
       <div class="selbar" id="chartSel">
         <span id="chartSelCount"></span>
-        <button class="primary" id="chartDl">Download</button>
-        <label class="inline"><input type="checkbox" id="chartProcess" checked> then add video, lyrics and metadata</label>
-        <button class="ghost" id="chartClear">Clear selection</button>
+        <button class="primary" id="chartDl" data-i18n="charts.download"></button>
+        <label class="inline"><input type="checkbox" id="chartProcess" checked> <span data-i18n="charts.then_process"></span></label>
+        <button class="ghost" id="chartClear" data-i18n="charts.clear"></button>
       </div>
       <div class="results" id="chartResults"></div>
       <footer class="pager" id="chartPager"></footer>
@@ -112,44 +112,44 @@
     <!-- ============ SPOTIFY ============ -->
     <section class="view" id="view-spotify">
       <header class="bar">
-        <input id="spUrl" type="url" placeholder="Paste a public Spotify playlist link: open.spotify.com/playlist/…">
-        <button class="primary" id="spGo">Find charts</button>
+        <input id="spUrl" type="url" data-i18n-placeholder="spotify.url_ph">
+        <button class="primary" id="spGo" data-i18n="spotify.find"></button>
       </header>
       <div class="selbar" id="spSel">
         <span id="spSelCount"></span>
-        <button class="primary" id="spDl">Download</button>
-        <label class="inline"><input type="checkbox" id="spProcess" checked> then add video, lyrics and metadata</label>
+        <button class="primary" id="spDl" data-i18n="charts.download"></button>
+        <label class="inline"><input type="checkbox" id="spProcess" checked> <span data-i18n="charts.then_process"></span></label>
       </div>
-      <div class="results list" id="spResults"><p class="hint">Charts are matched on Chorus Encore. Songs you already have are marked.</p></div>
+      <div class="results list" id="spResults"><p class="hint" data-i18n="spotify.hint"></p></div>
     </section>
 
     <!-- ============ SETLISTS ============ -->
     <section class="view" id="view-setlists">
       <div class="split">
         <div class="pane-list">
-          <div class="pane-head"><h2>Setlists</h2><button id="slNew">New setlist</button></div>
+          <div class="pane-head"><h2 data-i18n="setlists.title"></h2><button id="slNew" data-i18n="setlists.new"></button></div>
           <ul id="slList"></ul>
-          <p class="hint">Clone Hero reads setlists when it starts. Add songs from the Library with “Add to setlist…”.</p>
+          <p class="hint" data-i18n="setlists.hint"></p>
         </div>
-        <div class="pane-body" id="slBody"><p class="hint">Pick a setlist.</p></div>
+        <div class="pane-body" id="slBody"><p class="hint" data-i18n="setlists.pick"></p></div>
       </div>
     </section>
 
     <!-- ============ DUPES ============ -->
     <section class="view" id="view-dupes">
-      <header class="bar"><h2>Duplicate charts</h2><button id="dupRefresh">Refresh</button></header>
+      <header class="bar"><h2 data-i18n="dupes.title"></h2><button id="dupRefresh" data-i18n="dupes.refresh"></button></header>
       <div class="results list" id="dupList"></div>
     </section>
 
     <!-- ============ JOBS ============ -->
     <section class="view" id="view-jobs">
       <header class="bar">
-        <h2>Jobs</h2>
+        <h2 data-i18n="jobs.title"></h2>
         <span id="jobCounts" class="counts"></span>
-        <label class="inline">Workers <input type="range" id="jobWorkers" min="1" max="8" step="1"> <b id="jobWorkersVal"></b></label>
-        <button id="jobRetry">Retry failed</button>
-        <button id="jobClear">Clear finished</button>
-        <button id="jobCancel" class="danger">Cancel all</button>
+        <label class="inline"><span data-i18n="jobs.workers"></span> <input type="range" id="jobWorkers" min="1" max="8" step="1"> <b id="jobWorkersVal"></b></label>
+        <button id="jobRetry" data-i18n="jobs.retry"></button>
+        <button id="jobClear" data-i18n="jobs.clear"></button>
+        <button id="jobCancel" class="danger" data-i18n="jobs.cancel_all"></button>
       </header>
       <div class="ytwarn" id="ytWarn" hidden></div>
       <div class="results list" id="jobList"></div>
@@ -164,52 +164,53 @@
     <!-- ============ NOW ============ -->
     <section class="view" id="view-now">
       <header class="bar">
-        <h2>Now playing</h2>
-        <span class="hint">Music video and sing-along lyrics for the song you're playing.</span>
+        <h2 data-i18n="now.title"></h2>
+        <span class="hint" data-i18n="now.hint"></span>
         <span style="flex:1"></span>
-        <button id="nowWin">Open in separate window</button>
-        <button id="nowFull" class="primary">Separate window, fullscreen</button>
+        <button id="nowWin" data-i18n="now.open_window"></button>
+        <button id="nowFull" class="primary" data-i18n="now.open_full"></button>
       </header>
-      <iframe id="nowFrame" title="Now playing" src="about:blank"></iframe>
+      <iframe id="nowFrame" data-i18n-title="now.title" src="about:blank"></iframe>
     </section>
 
     <!-- ============ SETUP ============ -->
     <section class="view" id="view-setup">
       <div class="settings setup" id="setupForm">
-        <h2>Where is Clone Hero?</h2>
-        <p class="hint">The app needs three locations. Anything found automatically is filled in; check it, or use Browse to pick a different place. This works wherever Clone Hero and your songs are kept, on any drive.</p>
+        <div class="row2 langrow"><span data-i18n="settings.language"></span><select id="setupLang" data-lang-select></select></div>
+        <h2 data-i18n="setup.title"></h2>
+        <p class="hint" data-i18n="setup.intro"></p>
         <section id="fdaCard" hidden>
-          <h3>Full Disk Access (recommended on macOS)</h3>
-          <p class="hint">Without it, macOS asks separately for every protected folder (Documents, Desktop, Downloads, external drives). With Full Disk Access the app can find and manage songs wherever they are, without prompts. Only you can switch it on: the button opens the right page in System Settings.</p>
+          <h3 data-i18n="setup.fda_title"></h3>
+          <p class="hint" data-i18n="setup.fda_intro"></p>
           <div class="status" id="fdaStatus"></div>
-          <div class="d-row" id="fdaBtns"><button class="primary" id="fdaOpen">Grant Full Disk Access…</button><button id="fdaRestart" hidden>Restart the app</button></div>
+          <div class="d-row" id="fdaBtns"><button class="primary" id="fdaOpen" data-i18n="setup.fda_grant"></button><button id="fdaRestart" hidden data-i18n="setup.fda_restart"></button></div>
           <ol class="hint" id="fdaSteps" hidden>
-            <li>In System Settings, find <b>Clone Hero Companion</b> in the list and switch it on. If it isn't listed, click <b>+</b> and choose it from Applications (a Finder window with the app is open too; you can drag it in).</li>
-            <li>macOS then offers <b>Quit &amp; Reopen</b>; choose it, or click <b>Restart the app</b> here.</li>
+            <li data-i18n-html="setup.fda_step1"></li>
+            <li data-i18n-html="setup.fda_step2"></li>
           </ol>
         </section>
         <section>
-          <h3>1 · The game</h3>
+          <h3 data-i18n="setup.game_title"></h3>
           <p class="hint" id="suGameHint"></p>
-          <div class="pickrow"><input type="text" id="suGame" placeholder="Location of Clone Hero"><button data-browse="game" data-target="suGame">Browse…</button></div>
+          <div class="pickrow"><input type="text" id="suGame" data-i18n-placeholder="setup.game_ph"><button data-browse="game" data-target="suGame" data-i18n="setup.browse"></button></div>
           <div class="chips found" id="suGameFound"></div>
           <div class="status" id="suGameStatus"></div>
         </section>
         <section>
-          <h3>2 · Clone Hero's data folder</h3>
+          <h3 data-i18n="setup.data_title"></h3>
           <p class="hint" id="suDataHint"></p>
-          <div class="pickrow"><input type="text" id="suData" placeholder="Folder with settings.ini and Logs"><button data-browse="folder" data-target="suData">Browse…</button></div>
+          <div class="pickrow"><input type="text" id="suData" data-i18n-placeholder="setup.data_ph"><button data-browse="folder" data-target="suData" data-i18n="setup.browse"></button></div>
           <div class="chips found" id="suDataFound"></div>
           <div class="status" id="suDataStatus"></div>
         </section>
         <section>
-          <h3>3 · Song folders</h3>
-          <p class="hint">Every folder Clone Hero scans for songs. Add the same folders you set in Clone Hero under Settings → General → Song folders.</p>
+          <h3 data-i18n="setup.songs_title"></h3>
+          <p class="hint" data-i18n="setup.songs_intro"></p>
           <ul class="dirlist" id="suSongs"></ul>
-          <div class="pickrow"><input type="text" id="suSongAdd" placeholder="Add a song folder (paste a path or Browse)"><button data-browse="folder" data-target="suSongAdd">Browse…</button><button id="suSongAddBtn">Add</button></div>
+          <div class="pickrow"><input type="text" id="suSongAdd" data-i18n-placeholder="setup.song_add_ph"><button data-browse="folder" data-target="suSongAdd" data-i18n="setup.browse"></button><button id="suSongAddBtn" data-i18n="setup.add"></button></div>
           <div class="chips found" id="suSongsFound"></div>
         </section>
-        <div class="setup-actions"><button class="primary" id="suSave">Use these locations</button><span class="status" id="suSaveStatus"></span></div>
+        <div class="setup-actions"><button class="primary" id="suSave" data-i18n="setup.save"></button><span class="status" id="suSaveStatus"></span></div>
       </div>
     </section>
 
@@ -220,7 +221,7 @@
   </main>
 
   <aside id="detail" hidden>
-    <button class="close" id="detailClose" title="Close">×</button>
+    <button class="close" id="detailClose" data-i18n-title="detail.close">×</button>
     <div id="detailBody"></div>
   </aside>
 </div>
@@ -228,13 +229,14 @@
 <footer id="dock">
   <div id="dockJobs"></div>
   <div id="player" hidden>
-    <button id="plToggle">Pause</button>
+    <button id="plToggle"></button>
     <span id="plTitle"></span>
     <audio id="plAudio" preload="none"></audio>
   </div>
 </footer>
 <div id="toast" role="status"></div>
 <dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<script src="/static/i18n.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

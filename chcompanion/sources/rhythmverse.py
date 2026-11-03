@@ -14,6 +14,7 @@ import time
 import urllib.parse
 import urllib.request
 
+from ..i18n import _
 from ..net import urlopen
 from . import hosts
 
@@ -121,7 +122,7 @@ def _fetch(text: str, page: int, records: int, system: str, instrument: str | No
     with urlopen(req, timeout=30) as r:
         data = json.loads(r.read().decode("utf-8"))
     if data.get("status") != "success":
-        raise RuntimeError("RhythmVerse returned an error")
+        raise RuntimeError(_("rv.error"))
     raw = (data.get("data") or {}).get("songs") or []
     songs = [s for s in (normalize(x) for x in raw) if "ps3" not in s["format"]]
     total = ((data.get("data") or {}).get("records") or {}).get("total_filtered", len(songs))

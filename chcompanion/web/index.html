@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-title-key="np.page_title">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,9 +18,15 @@
   --green: #3cc85a; --red: #e8413a; --yellow: #f2d23a; --blue: #3a8ee8; --orange: #f08a2a;
   --lyric: clamp(2.2rem, 5.6vw, 5.4rem);
   --lyric-next: clamp(1.4rem, 3.2vw, 3rem);
+  --cjk-sc: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei";
+  --cjk-jp: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Source Han Sans";
+  --cjk-kr: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K";
   --ui: "Barlow", "Segoe UI", system-ui, sans-serif;
   --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
 }
+:root:lang(zh) { --ui: "Barlow", var(--cjk-sc), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-sc), sans-serif; }
+:root:lang(ja) { --ui: "Barlow", var(--cjk-jp), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-jp), sans-serif; }
+:root:lang(ko) { --ui: "Barlow", var(--cjk-kr), "Segoe UI", system-ui, sans-serif; --display: "Big Shoulders Display", var(--cjk-kr), sans-serif; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--stage); color: var(--ink); font-family: var(--ui); overflow: hidden; }
 body.obs { background: transparent; }
@@ -50,7 +56,11 @@ body.no-video #video, body.no-video #yt { opacity: 0 !important; }
 #cardArt.on { display: block; }
 #songName { font-family: var(--display); font-weight: 900; font-size: clamp(1.6rem, 3vw, 2.6rem); line-height: 1; letter-spacing: .01em; }
 #songArtist { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 600; margin-top: 6px; }
-#songMeta { font-size: .95rem; color: var(--ink-dim); margin-top: 4px; }
+#songName, #songArtist { overflow-wrap: anywhere; }
+#card { max-width: min(60vw, calc(100vw - 260px)); }
+#status { max-width: 45vw; }
+#status .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#songMeta { overflow-wrap: anywhere; font-size: .95rem; color: var(--ink-dim); margin-top: 4px; }
 
 /* ---------- status ---------- */
 #status { position: fixed; top: clamp(16px, 3vw, 40px); right: clamp(16px, 3vw, 44px); font-size: .9rem; font-weight: 500;
@@ -75,7 +85,7 @@ body.no-video #video, body.no-video #yt { opacity: 0 !important; }
 #wait { visibility: hidden; font-family: var(--display); font-size: var(--lyric-next); color: var(--ink-dim); height: 1.1em; display: flex; justify-content: center; gap: .4em; }
 #wait i { width: .32em; height: .32em; border-radius: 50%; background: currentColor; align-self: center; opacity: .25; transition: opacity .3s, background .3s; }
 #wait i.lit { opacity: 1; background: var(--spot); }
-#source { position: fixed; left: clamp(16px, 3vw, 44px); bottom: 18px; font-size: .8rem; color: var(--ink-dim); }
+#source { max-width: calc(100vw - 48px); overflow-wrap: anywhere; position: fixed; left: clamp(16px, 3vw, 44px); bottom: 18px; font-size: .8rem; color: var(--ink-dim); }
 
 /* ---------- song progress: the five frets ---------- */
 #progress { position: fixed; left: 0; right: 0; bottom: 0; height: 5px; display: grid; grid-template-columns: repeat(5, 1fr); opacity: .9; }
@@ -114,13 +124,18 @@ body.idle-ui #controls { opacity: 0; pointer-events: none; }
 #controls .val.wide { min-width: 7.5em; }
 #controls button { font: 500 .88rem var(--ui); color: var(--ink); background: transparent; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
 #controls button:hover { background: rgba(255,255,255,.1); }
+#controls .grp { max-width: 100%; flex-wrap: wrap; }
+#controls .lbl { overflow: hidden; text-overflow: ellipsis; }
+#controls .val { white-space: nowrap; min-width: 4.2em; }
+#controls .val.wide { min-width: 7.5em; }
+#controls button { white-space: nowrap; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
 #controls button:focus-visible { outline: 2px solid var(--spot); outline-offset: 1px; }
-#toast { position: fixed; left: 50%; top: 22px; transform: translateX(-50%); background: rgba(20,12,40,.9); border: 1px solid rgba(255,255,255,.15);
+#toast { width: max-content; text-align: center; overflow-wrap: anywhere; position: fixed; left: 50%; top: 22px; transform: translateX(-50%); background: rgba(20,12,40,.9); border: 1px solid rgba(255,255,255,.15);
   padding: 9px 16px; border-radius: 8px; font-size: .92rem; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90vw; }
 #toast.on { opacity: 1; }
 #help { position: fixed; inset: 0; background: rgba(10,6,22,.86); display: none; place-items: center; z-index: 5; }
 #help.on { display: grid; }
-#help .box { max-width: 560px; padding: 28px; line-height: 1.7; }
+#help .box { max-width: min(560px, 94vw); max-height: 94vh; overflow-y: auto; padding: 28px; line-height: 1.7; }
 #help h2 { font-family: var(--display); font-size: 2.4rem; margin: 0 0 10px; }
 #help td { padding: 2px 14px 2px 0; vertical-align: top; }
 #help td:first-child { white-space: nowrap; color: var(--spot); }
@@ -151,10 +166,8 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
 <section id="idle">
   <div>
     <div id="frets" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b></div>
-    <h1>Waiting for Clone Hero</h1>
-    <p>Start a song in the game and this screen follows along with its music video and lyrics.
-       Videos and lyrics are also added to your songs so Clone Hero shows them in-game.
-       This page is optional: use it on a second screen, in OBS, or to fine-tune a song. Press <kbd>?</kbd> for shortcuts.</p>
+    <h1 data-i18n="np.waiting"></h1>
+    <p data-i18n-html="np.idle_text"></p>
   </div>
 </section>
 
@@ -167,9 +180,9 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
   </div>
 </header>
 
-<aside id="lbPanel" aria-label="Global top scores"></aside>
+<aside id="lbPanel" data-i18n-aria="np.top_scores_label"></aside>
 
-<div id="status"><span class="dot"></span><span class="txt">Connecting</span></div>
+<div id="status"><span class="dot"></span><span class="txt" data-i18n="np.connecting"></span></div>
 
 <section id="lyrics" aria-live="polite">
   <div id="cur" class="line"></div>
@@ -179,46 +192,48 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
 <div id="source"></div>
 <div id="progress"><span></span><span></span><span></span><span></span><span></span></div>
 
-<nav id="controls" aria-label="Sync controls">
-  <div class="grp"><span class="lbl">Lyrics</span>
-    <button data-act="lyr-" title="Lyrics earlier (←)">−</button><span class="val" id="lyrVal">0.0 s</span><button data-act="lyr+" title="Lyrics later (→)">+</button></div>
-  <div class="grp"><span class="lbl">Video</span>
-    <button data-act="vid-" title="Video earlier (↓)">−</button><span class="val" id="vidVal">0.0 s</span><button data-act="vid+" title="Video later (↑)">+</button></div>
-  <div class="grp" title="Shifts lyrics and video together for every song, to match what you hear from the game"><span class="lbl">All timing</span>
-    <button data-act="sync+" title="Show lyrics and video earlier, for all songs ([)">Earlier</button><span class="val wide" id="syncVal">in sync</span><button data-act="sync-" title="Show lyrics and video later, for all songs (])">Later</button>
-    <button data-act="tap" title="Tap S as new lyric lines start to set the timing automatically">Tap to sync</button></div>
+<nav id="controls" data-i18n-aria="np.sync_controls">
+  <div class="grp"><span class="lbl" data-i18n="np.lyrics"></span>
+    <button data-act="lyr-" data-i18n-title="np.lyrics_earlier">−</button><span class="val" id="lyrVal">0.0 s</span><button data-act="lyr+" data-i18n-title="np.lyrics_later">+</button></div>
+  <div class="grp"><span class="lbl" data-i18n="np.video"></span>
+    <button data-act="vid-" data-i18n-title="np.video_earlier">−</button><span class="val" id="vidVal">0.0 s</span><button data-act="vid+" data-i18n-title="np.video_later">+</button></div>
+  <div class="grp" data-i18n-title="np.all_timing_tip"><span class="lbl" data-i18n="np.all_timing"></span>
+    <button data-act="sync+" data-i18n="np.earlier" data-i18n-title="np.earlier_tip"></button><span class="val wide" id="syncVal"></span><button data-act="sync-" data-i18n="np.later" data-i18n-title="np.later_tip"></button>
+    <button data-act="tap" data-i18n="np.tap" data-i18n-title="np.tap_tip"></button></div>
   <div class="grp">
-    <button data-act="next" title="Try the next search result (N)">Different video</button>
-    <button data-act="paste" title="Use a YouTube link you choose (U)">Use link…</button>
-    <button data-act="install" title="Redo this song's in-game video and lyrics with the current choices (I)">Update in game</button>
-    <button data-act="library" title="Add videos and lyrics to every song in your library, in the background">Prepare library</button>
-    <button data-act="toggle" title="Hide or show the video (V)">Video on/off</button>
-    <button data-act="full" title="Fullscreen (F)">Fullscreen</button>
-    <button data-act="help" title="Shortcuts (?)">?</button>
-    <button data-act="quit" title="Stop the companion app">Quit</button>
+    <button data-act="next" data-i18n="np.next" data-i18n-title="np.next_tip"></button>
+    <button data-act="paste" data-i18n="np.paste" data-i18n-title="np.paste_tip"></button>
+    <button data-act="install" data-i18n="np.install" data-i18n-title="np.install_tip"></button>
+    <button data-act="library" data-i18n="np.library" data-i18n-title="np.library_tip"></button>
+    <button data-act="toggle" data-i18n="np.toggle" data-i18n-title="np.toggle_tip"></button>
+    <button data-act="full" data-i18n="np.full" data-i18n-title="np.full_tip"></button>
+    <button data-act="help" data-i18n-title="np.help_tip">?</button>
+    <button data-act="quit" data-i18n="np.quit" data-i18n-title="np.quit_tip"></button>
   </div>
 </nav>
 <div id="toast" role="status"></div>
 <div id="help"><div class="box">
-  <h2>Shortcuts</h2>
+  <h2 data-i18n="np.help.title"></h2>
   <table>
-    <tr><td>← / →</td><td>Lyrics earlier / later by 0.1 s (hold Shift for 0.5 s)</td></tr>
-    <tr><td>↓ / ↑</td><td>Video earlier / later by 0.1 s (hold Shift for 1 s)</td></tr>
-    <tr><td>[ / ]</td><td>Everything earlier / later for all songs, if lyrics and video trail or lead the game's sound (hold Shift for bigger steps)</td></tr>
-    <tr><td>S</td><td>Tap to sync: press S as each new lyric line starts (3 times) and the timing is set for you</td></tr>
-    <tr><td>N / P</td><td>Next / previous YouTube result for this song</td></tr>
-    <tr><td>U</td><td>Use a YouTube link you paste</td></tr>
-    <tr><td>I</td><td>Redo this song's in-game video and lyrics (after changing the video or offsets)</td></tr>
-    <tr><td>V</td><td>Video on / off</td></tr>
-    <tr><td>F</td><td>Fullscreen</td></tr>
-    <tr><td>H</td><td>Hide the song card and controls</td></tr>
+    <tr><td>← / →</td><td data-i18n="np.help.lyrics"></td></tr>
+    <tr><td>↓ / ↑</td><td data-i18n="np.help.video"></td></tr>
+    <tr><td>[ / ]</td><td data-i18n="np.help.all"></td></tr>
+    <tr><td>S</td><td data-i18n="np.help.tap"></td></tr>
+    <tr><td>N / P</td><td data-i18n="np.help.nextprev"></td></tr>
+    <tr><td>U</td><td data-i18n="np.help.paste"></td></tr>
+    <tr><td>I</td><td data-i18n="np.help.install"></td></tr>
+    <tr><td>V</td><td data-i18n="np.help.toggle"></td></tr>
+    <tr><td>F</td><td data-i18n="np.help.full"></td></tr>
+    <tr><td>H</td><td data-i18n="np.help.hide"></td></tr>
   </table>
-  <p>Offsets are remembered per song. Add <code>?obs</code> to the address for a transparent background in OBS.</p>
+  <p data-i18n-html="np.help.note"></p>
 </div></div>
 
+<script src="/static/i18n.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  const tr = (k, v) => I18N.t(k, v);
   const params = new URLSearchParams(location.search);
   if (params.has("obs")) document.body.classList.add("obs");
 
@@ -226,6 +241,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
   let skew = 0;            // server clock - local clock (seconds)
   let lines = [];
   let lastIdx = -2, lastNext = -2;
+  let streamFailed = false;
   let videoKind = null, videoSrc = null, ytPlayer = null, ytReady = false, ytId = null;
   let videoEnabled = true, songShownAt = 0, hideUI = false;
   try { videoEnabled = localStorage.getItem("chc.video") !== "0"; } catch (e) {}
@@ -251,11 +267,12 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     es = new EventSource("/events");
     es.onmessage = (ev) => apply(JSON.parse(ev.data));
     es.addEventListener("ping", (ev) => { skew = parseFloat(ev.data) - Date.now() / 1000; });
-    es.onerror = () => { setStatus("offline", "Companion app not running"); };
+    es.onerror = () => { setStatus("offline", tr("np.offline")); };
   }
 
   function apply(st) {
     skew = st.serverNow - Date.now() / 1000;
+    if (st.lang && st.lang !== I18N.lang) { I18N.setLang(st.lang).then(rerender); }
     const prevSongKey = S && S.song ? (S.song.key || S.song.name) : null;
     const prevSeq = S ? S.clock.seq : -1;
     if (!st.lyrics && S) st.lyrics = S.lyrics;   // light updates omit lyrics
@@ -271,7 +288,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     renderOffsets();
     applyVideo();
     renderStatus();
-    if (st.install && st.install !== apply._lastInstall) { apply._lastInstall = st.install; toast("In game: " + st.install, 4000); }
+    if (st.install && st.install !== apply._lastInstall) { apply._lastInstall = st.install; toast(tr("np.in_game", { status: st.install }), 4000); }
     if (st.clock.seq !== prevSeq && st.clock.status === "paused") showCard();
   }
 
@@ -282,7 +299,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     if (!s) return;
     $("songName").textContent = s.name || "";
     $("songArtist").textContent = s.artist || "";
-    $("songMeta").textContent = [s.album, s.year].filter(Boolean).join(", ") + (s.charter ? `  ·  charted by ${s.charter}` : "");
+    $("songMeta").textContent = [s.album, s.year].filter(Boolean).join(", ") + (s.charter ? "  ·  " + tr("np.charted_by", { charter: s.charter }) : "");
     const art = s.hasArt ? `url(/media/art?k=${encodeURIComponent(s.key)})` : "";
     $("art").style.backgroundImage = art; $("art").classList.toggle("on", !!art);
     $("cardArt").style.backgroundImage = art; $("cardArt").classList.toggle("on", !!art);
@@ -302,12 +319,12 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
       const r = await fetch("/api/lb/song?" + p);
       const d = await r.json();
       if (tok !== lbToken || !r.ok || !d.found || !d.scores.length) return;
-      const nf = (n) => Number(n || 0).toLocaleString();
+      const nf = (n) => I18N.nf(n);
       const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-      const lvl = d.difficulty[0].toUpperCase() + d.difficulty.slice(1);
-      panel.innerHTML = `<h4>Global top scores · ${esc(lvl)} ${esc(d.instrument)}</h4>` +
+      const dn = (v) => (I18N.has("diff." + v) ? tr("diff." + v) : v), inn = (v) => (I18N.has("inst." + v) ? tr("inst." + v) : v);
+      panel.innerHTML = `<h4>${esc(tr("np.top_header", { level: dn(d.difficulty) + " " + inn(d.instrument) }))}</h4>` +
         d.scores.slice(0, 5).map((x) => `<div class="r${d.you && x.accountId === d.you.accountId ? " me" : ""}"><span>${x.placement}</span><span>${esc(x.username)}</span><span>${nf(x.score)}</span></div>`).join("") +
-        (d.you ? `<div class="r me"><span>#${d.you.placement}</span><span>you (${esc(d.ch)})</span><span>${nf(d.you.score)}</span></div>` : "");
+        (d.you ? `<div class="r me"><span>#${d.you.placement}</span><span>${esc(tr("lb.you", { name: d.ch }))}</span><span>${nf(d.you.score)}</span></div>` : "");
       panel.classList.add("on");
     } catch (e) { /* offline: nothing to show */ }
   }
@@ -318,23 +335,24 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     const lyricsLoading = S.lyrics && S.lyrics.loading;
     let txt = "";
     if (S.song) {
-      txt = lyricsLoading ? "Finding lyrics…" : src === "chart" ? "Lyrics from the chart" :
-            src === "lrclib" ? "Lyrics from LRCLIB (line timing)" : "No lyrics found for this song";
+      txt = lyricsLoading ? tr("np.src.finding") : src === "chart" ? tr("np.src.chart") :
+            src === "lrclib" ? tr("np.src.lrclib") : tr("np.src.none");
       const v = S.video || {};
-      if (v.loading) txt += "  ·  finding video…";
-      else if (v.kind === "local") txt += "  ·  video from song folder";
-      else if (v.kind === "cache") txt += "  ·  HD video (added to the song after it's played)";
-      else if (v.kind === "youtube") txt += `  ·  ${v.title || "YouTube video"} (streaming while the HD video downloads)`;
-      else if (v.kind === "pending") txt += "  ·  " + (v.message || "Getting the HD video…");
-      else txt += "  ·  " + (v.message || "no video");
+      if (v.loading) txt += "  ·  " + tr("np.vid.finding");
+      else if (v.kind === "local") txt += "  ·  " + tr("np.vid.local");
+      else if (v.kind === "cache") txt += "  ·  " + tr("np.vid.cache");
+      else if (v.kind === "youtube" && streamFailed) txt += "  ·  " + tr("np.vid.getting");
+      else if (v.kind === "youtube") txt += "  ·  " + tr("np.vid.youtube", { title: v.title || tr("np.vid.youtube_default") });
+      else if (v.kind === "pending") txt += "  ·  " + (v.message || tr("np.vid.getting"));
+      else txt += "  ·  " + (v.message || tr("np.vid.none"));
     }
     $("source").textContent = txt;
   }
-  function fmt(v) { return (v > 0 ? "+" : "") + v.toFixed(1) + " s"; }
+  function fmt(v) { return tr("np.seconds", { value: (v > 0 ? "+" : "") + v.toFixed(1) }); }
   function renderOffsets() {
     $("lyrVal").textContent = fmt(lyrOffset()); $("vidVal").textContent = fmt(vidOffset());
     const sy = (S && S.offsets && S.offsets.sync) || 0;
-    $("syncVal").textContent = Math.abs(sy) < 0.005 ? "in sync" : `${Math.abs(sy).toFixed(2)} s ${sy > 0 ? "earlier" : "later"}`;
+    $("syncVal").textContent = Math.abs(sy) < 0.005 ? tr("np.in_sync") : tr(sy > 0 ? "np.sync_earlier" : "np.sync_later", { secs: Math.abs(sy).toFixed(2) });
   }
 
   function setStatus(cls, txt) { const el = $("status"); el.className = cls; el.querySelector(".txt").textContent = txt; }
@@ -342,10 +360,10 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     const c = S.clock;
     const playing = c.status === "playing" || c.status === "paused";
     $("idle").classList.toggle("away", !!S.song && c.status !== "idle");
-    if (c.status === "idle") setStatus("", "Waiting for Clone Hero");
-    else if (c.status === "playing") setStatus("playing", c.speed !== 1 ? `Playing at ${Math.round(c.speed * 100)}%` : "Playing");
-    else if (c.status === "paused") setStatus("paused", "Paused");
-    else if (c.status === "ended") setStatus("", "Song finished");
+    if (c.status === "idle") setStatus("", tr("np.waiting"));
+    else if (c.status === "playing") setStatus("playing", c.speed !== 1 ? tr("np.status.playing_speed", { pct: Math.round(c.speed * 100) }) : tr("np.status.playing"));
+    else if (c.status === "paused") setStatus("paused", tr("np.status.paused"));
+    else if (c.status === "ended") setStatus("", tr("np.status.ended"));
     if (!playing && c.status !== "ended") { $("cur").textContent = ""; $("nxt").textContent = ""; }
   }
 
@@ -402,7 +420,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     if (v.kind === "local" || v.kind === "cache") { kind = "file"; src = v.src; }
     else if (v.kind === "youtube" && v.stream !== false) { kind = "file"; src = v.src; }
     if (kind === videoKind && src === videoSrc) return;
-    videoKind = kind; videoSrc = src;
+    videoKind = kind; videoSrc = src; streamFailed = false;
     vid.classList.remove("on"); $("yt").classList.remove("on");
     if (kind === "file") {
       vid.src = src; vid.load();
@@ -416,7 +434,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     // a YouTube stream that fails is only a stopgap: the downloaded HD video replaces it shortly
     if (videoKind === "file" && S && S.video && S.video.kind === "youtube") {
       $("video").classList.remove("on");
-      $("source").textContent = $("source").textContent.replace(/ \(streaming.*\)$/, "") + " · getting the HD video…";
+      streamFailed = true; renderSource();
     }
   });
   $("video").addEventListener("playing", () => $("video").classList.add("on"));
@@ -437,7 +455,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
       events: {
         onReady: () => { ytReady = true; ytPlayer.mute(); },
         onStateChange: (e) => { if (e.data === 1) $("yt").classList.add("on"); },
-        onError: () => { toast("This video can't be embedded. Press N for another one."); },
+        onError: () => { toast(tr("np.toast.no_embed")); },
       },
     });
   }
@@ -494,7 +512,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
   // ---------------------------------------------------------------- controls
   async function post(path, body) {
     try { const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); return await r.json(); }
-    catch (e) { toast("The companion app isn't responding"); return null; }
+    catch (e) { toast(tr("np.toast.no_response")); return null; }
   }
   const actions = {
     "lyr-": (big) => post("/api/offset", { kind: "lyrics", delta: big ? -0.5 : -0.1 }),
@@ -504,30 +522,30 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     "sync+": (big) => post("/api/offset", { kind: "sync", delta: big ? 0.25 : 0.05 }),
     "sync-": (big) => post("/api/offset", { kind: "sync", delta: big ? -0.25 : -0.05 }),
     tap: () => tapSync(),
-    next: () => { toast("Trying the next video…"); post("/api/video/next", { step: 1 }); },
-    prev: () => { toast("Trying the previous video…"); post("/api/video/next", { step: -1 }); },
+    next: () => { toast(tr("np.toast.next")); post("/api/video/next", { step: 1 }); },
+    prev: () => { toast(tr("np.toast.prev")); post("/api/video/next", { step: -1 }); },
     paste: async () => {
-      const url = prompt("Paste a YouTube link for this song:");
-      if (url) { const r = await post("/api/video/set", { url }); toast(r && r.ok ? "Using that video" : "That doesn't look like a YouTube link"); }
+      const url = prompt(tr("np.prompt_link"));
+      if (url) { const r = await post("/api/video/set", { url }); toast(r && r.ok ? tr("np.toast.using") : tr("np.toast.bad_link")); }
     },
     install: () => {
-      if (!S || !S.song) return toast("Start a song first");
-      toast("Updating this song for Clone Hero. It's applied once the song isn't playing.", 4000); post("/api/install");
+      if (!S || !S.song) return toast(tr("np.toast.start_song"));
+      toast(tr("np.toast.updating"), 4000); post("/api/install");
     },
     library: async () => {
-      if (!confirm("Add music videos and lyrics to every song in your library? This runs in the background and needs roughly 20 MB of disk per song.")) return;
-      const r = await post("/api/prepare-library"); if (r) toast(`Preparing ${r.queued} songs in the background`, 4000);
+      if (!confirm(tr("np.confirm_library"))) return;
+      const r = await post("/api/prepare-library"); if (r) toast(tr("np.toast.preparing", { count: r.queued }), 4000);
     },
     toggle: () => {
       videoEnabled = !videoEnabled; document.body.classList.toggle("no-video", !videoEnabled);
       try { localStorage.setItem("chc.video", videoEnabled ? "1" : "0"); } catch (e) {}
-      toast(videoEnabled ? "Video on" : "Video off");
+      toast(tr(videoEnabled ? "np.toast.video_on" : "np.toast.video_off"));
     },
     full: () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); },
     help: () => $("help").classList.toggle("on"),
     quit: async () => {
-      if (!confirm("Stop Clone Hero Companion? Start it again from its app file.")) return;
-      await post("/api/quit"); setStatus("offline", "Companion stopped"); es.close();
+      if (!confirm(tr("np.confirm_quit"))) return;
+      await post("/api/quit"); setStatus("offline", tr("np.status.stopped")); es.close();
     },
     hide: () => { hideUI = !hideUI; document.body.classList.toggle("idle-ui", hideUI); },
   };
@@ -537,17 +555,17 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
   // between that moment and the line's time is how far our clock is off.
   let taps = null;
   function tapSync() {
-    if (!S || !S.song || S.clock.status !== "playing" || !lines.length) return toast("Start a song with lyrics first, then tap S as each new line starts");
+    if (!S || !S.song || S.clock.status !== "playing" || !lines.length) return toast(tr("np.toast.tap_first"));
     const t = songTime() - lyrOffset();
     if (!taps) { taps = []; }
     let best = null;
     for (const l of lines) { const d = l.start - t; if (Math.abs(d) <= 3 && (!best || Math.abs(d) < Math.abs(best))) best = d; }
-    if (best === null) return toast("No lyric line near this moment; tap right as a line starts");
+    if (best === null) return toast(tr("np.toast.tap_none"));
     taps.push(best);
-    if (taps.length < 3) return toast(`Tap ${taps.length} of 3. Tap S again as the next line starts`);
+    if (taps.length < 3) return toast(tr("np.toast.tap_n", { n: taps.length }));
     const sorted = [...taps].sort((a, b) => a - b), med = sorted[1]; taps = null;
     post("/api/offset", { kind: "sync", delta: Math.round(med * 100) / 100 });
-    toast(Math.abs(med) < 0.04 ? "Already in sync" : `Timing moved ${Math.abs(med).toFixed(2)} s ${med > 0 ? "earlier" : "later"} for all songs`, 3500);
+    toast(Math.abs(med) < 0.04 ? tr("np.toast.in_sync") : tr(med > 0 ? "np.toast.moved_earlier" : "np.toast.moved_later", { secs: Math.abs(med).toFixed(2) }), 3500);
   }
   const keys = { ArrowLeft: "lyr-", ArrowRight: "lyr+", ArrowDown: "vid-", ArrowUp: "vid+", n: "next", p: "prev", u: "paste",
                  "[": "sync+", "]": "sync-", s: "tap",
@@ -569,7 +587,13 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
     idleTimer = setTimeout(() => document.body.classList.add("idle-ui", "hide-cursor"), 2500);
   });
 
-  connect();
+  // a language change (from the main window's Settings, or the first state) re-renders everything that has text
+  function rerender() {
+    I18N.apply(document);
+    if (S) { renderSource(); renderOffsets(); renderStatus(); loadTopScores(S.song); }
+    else { $("syncVal").textContent = tr("np.in_sync"); }
+  }
+  I18N.init().then(() => { I18N.apply(document); $("syncVal").textContent = tr("np.in_sync"); I18N.observe(); connect(); });
 })();
 </script>
 </body>

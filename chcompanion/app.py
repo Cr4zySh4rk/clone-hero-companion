@@ -24,6 +24,8 @@ from .libmgr import LibraryManager, song_id
 from .library import Library, Song, norm_key
 from .logwatch import ClockState, LogWatcher
 from .lyrics import fetch_lrclib
+from . import i18n
+from .i18n import _, join, msg_of
 from .paths import resource_path
 from .store import Store
 
@@ -64,6 +66,8 @@ class Companion:
         from .paths import config_dir
         youtube.GATE.attach(config_dir() / "youtube_activity.json")
         youtube.set_cookies(self.settings().get("yt_cookies"), self.settings().get("yt_cookies_file"))
+        self.locales: list[str] = []          # the browser's languages, reported by the UI (for the "auto" setting)
+        i18n.set_lang(i18n.resolve(self.settings().get("language"), i18n.os_locales()))
         self.clients: list[queue.Queue] = []
         self.clients_lock = threading.Lock()
         self.song: Song | None = None
@@ -115,7 +119,7 @@ class Companion:
         key = self.song.key if self.song else None
         per = self.store.song(key) if key else {}
         d = {
-            "version": self.version, "app": __version__, "serverNow": time.time(),
+            "version": self.version, "app": __version__, "serverNow": time.time(), "lang": i18n.LANG,
             "clock": self.clock.public(),
             "song": self.song_info,
             "video": self.video,
@@ -136,7 +140,7 @@ class Companion:
 
     def broadcast(self, full: bool = True):
         self.version += 1
-        payload = json.dumps(self.snapshot(full))
+        payload = json.dumps(i18n.deep_render(self.snapshot(full)))
         with self.clients_lock:
             for q in list(self.clients):
                 try:
@@ -168,9 +172,9 @@ class Companion:
         self.lyrics = {"source": None, "lines": [], "loading": True}
         self.video = {"kind": None, "loading": True}
         if song is None:
-            artist, _, name = logged_name.partition(" - ")
+            artist, __, name = logged_name.partition(" - ")
             self.song_info = {"key": None, "artist": artist, "name": name or logged_name}
-            self.notice = "Song not found in your library folders"
+            self.notice = _("np.song_not_found")
             self.lyrics["loading"] = False
             self.video["loading"] = False
             self.broadcast()
@@ -231,7 +235,7 @@ class Companion:
                              "startOffset": 0.0, "candidates": cands or []}
                 elif vid:
                     video = {"kind": "pending", "id": vid, "title": title, "candidates": cands or [],
-                             "message": "Getting the HD video…"}
+                             "message": _("np.getting_video")}
                     try:                      # quick stopgap while the download runs
                         r = self.yt.resolve(vid)
                         video.update(kind="youtube", src=f"/media/yt/{vid}", stream=True,
@@ -262,7 +266,7 @@ class Companion:
             except Exception as e:
                 log.info("Could not get the video for %s now: %s", song.display, e)
                 if token == self.prepare_token and self.video.get("kind") == "pending":
-                    self.video = {"kind": None, "loading": False, "message": f"No HD video: {e}"}
+                    self.video = {"kind": None, "loading": False, "message": _("np.no_video", detail=msg_of(e))}
                     self.broadcast()
             finally:
                 self._preview_busy = None
@@ -335,7 +339,8 @@ class Companion:
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "game_video_format": "auto",
-                "ch_username": "", "ch_account_id": 0, "yt_cookies": "none", "yt_cookies_file": ""}
+                "ch_username": "", "ch_account_id": 0, "yt_cookies": "none", "yt_cookies_file": "",
+                "language": "auto"}
 
     def repair_videos(self) -> int:
         """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
@@ -400,7 +405,7 @@ class Companion:
         else:
             user = self.lb.find_user(username)
             if not user:
-                raise leaderboard.LeaderboardError(f"No CH Leaderboards player named “{username}”")
+                raise leaderboard.LeaderboardError(_("lb.no_player", name=username))
             self.update_settings({"ch_username": user["username"], "ch_account_id": int(user["accountId"])})
         self.playlog.clear_leaderboard()      # another account (or none): imported scores must be re-fetched
         if self.cloud.signed_in:
@@ -440,8 +445,18 @@ class Companion:
             youtube.set_cookies(s.get("yt_cookies"), s.get("yt_cookies_file"))
             threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
         ingame.PREFER_WEBM = s.get("game_video_format") == "webm"
+        if "language" in values:
+            self.apply_language()
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
         return s
+
+    def apply_language(self) -> str:
+        """Switch the backend (and, through the next snapshot, every open page) to the chosen language."""
+        before = i18n.LANG
+        lang = i18n.set_lang(i18n.resolve(self.settings().get("language"), self.locales or i18n.os_locales()))
+        if lang != before:
+            self.broadcast()
+        return lang
 
     def needs_prep(self, song: Song) -> bool:
         per = self.store.song(song.key)
@@ -488,7 +503,7 @@ class Companion:
                 hit = [s for s in same if norm_key(self.libmgr.charter_of(s)) == want]
             if len(hit) == 1:
                 return hit[0]
-        raise RuntimeError(ingame.CHART_GONE[0].upper() + ingame.CHART_GONE[1:])
+        raise RuntimeError(ingame.chart_gone())
 
     def song_job_status(self, song: Song) -> str | None:
         sid = song_id(song)
@@ -497,7 +512,7 @@ class Companion:
                 if j["status"] == "done":
                     return j["result"]
                 if j["status"] == "failed":
-                    return "failed: " + j["error"]
+                    return _("job.failed", error=j["error"])
                 return j["step"] or j["status"]
         return None
 
@@ -524,11 +539,12 @@ class Companion:
             if job.kind in ("metadata", "full"):
                 ch = metadata.apply(song, overwrite=bool(o.get("overwrite", self.settings()["metadata_overwrite"])),
                                     progress=progress)
-                parts.append(("metadata: " + ", ".join(ch)) if ch else "metadata up to date")
+                parts.append(_("job.metadata_changed", fields=join([_("meta.field." + k) if i18n.has("meta.field." + k) else k
+                                                                   for k in ch], ", ")) if ch else _("job.metadata_current"))
             if job.kind == "media" and o.get("resync"):
                 r = ingame.resync(song, self.game_yt, self.store, progress=progress)
-                bits = [x for x in ((r.get("video") and "video sync updated"), (r.get("lyrics") and "lyrics moved")) if x]
-                return ", ".join(bits) or "nothing to update"
+                bits = [x for x in ((r.get("video") and _("job.video_sync_updated")), (r.get("lyrics") and _("job.lyrics_moved"))) if x]
+                return join(bits, ", ") if bits else _("job.nothing_to_update")
             if job.kind in ("media", "full"):
                 if o.get("force"):
                     self.store.update_song(song.key, video_failed=None, lyrics_none=None,
@@ -543,19 +559,22 @@ class Companion:
                     self.store.update_song(song.key, lyrics_none=True)
                 res = self.store.song(song.key).get("video_res")
                 if r.get("video"):
-                    where = "packed into the .sng" if song.is_sng else f"saved as {r['video']}"
-                    parts.append((f"video {res}p " if res else "video ") + where)
+                    job.video_added = True
+                    if song.is_sng:
+                        parts.append(_("job.video_sng_res", res=res) if res else _("job.video_sng"))
+                    else:
+                        parts.append(_("job.video_saved_res", res=res, file=r["video"]) if res else _("job.video_saved", file=r["video"]))
                 if r.get("lyrics") == "added":
-                    parts.append("lyrics")
+                    parts.append(_("job.lyrics_added"))
                 if r.get("video_pending"):
                     parts.append(self._video_pending(song, job, r["video_pending"]))
                 else:
                     self.store.update_song(song.key, video_pending=None)
                 if not r.get("video") and not r.get("lyrics") == "added" and not r.get("video_pending"):
-                    parts.append("already set up")
+                    parts.append(_("job.already_set_up"))
         except FileNotFoundError as e:
             if str(song.path) in str(e.filename or "") or not song.path.exists():
-                raise RuntimeError(ingame.CHART_GONE[0].upper() + ingame.CHART_GONE[1:]) from e
+                raise RuntimeError(ingame.chart_gone()) from e
             raise
         finally:
             try:
@@ -563,7 +582,7 @@ class Companion:
                     self.libmgr.refresh_song(song)
             except Exception as e:      # bookkeeping only; the song itself is done
                 log.warning("Could not refresh %s in the library view: %s", song.display, e)
-        return "; ".join(parts) or "done"
+        return join(parts) if parts else _("job.done")
 
     MAX_VIDEO_RESUMES = 4
 
@@ -576,7 +595,7 @@ class Companion:
         if n < self.MAX_VIDEO_RESUMES:
             nj = self.queue_song(song, "media", PRIO_LIBRARY, lyrics=False, resumes=n + 1)
             nj.not_before = max(nj.not_before, youtube.GATE.paused_until + 1)
-        return f"video pending (YouTube limit: {label}); resumes automatically"
+        return _("job.video_pending", signal=label)
 
     def adopt_existing(self, job: Job, item: dict, loose: bool = False):
         """An install of a missing favourite is skipped because the chart is already here: star that chart
@@ -606,7 +625,7 @@ class Companion:
 
     def _run_download(self, job: Job, progress) -> str:
         from .sources import install as inst
-        progress("checking for an existing chart")
+        progress(_("job.checking_existing"))
         s = self.settings()
         root = self.library.roots[0] if self.library.roots else self.data_dir / "Songs"
         dest = root / s["download_subdir"] if s["download_subdir"] else root
@@ -614,10 +633,10 @@ class Companion:
         if not job.options.get("force"):
             have = self.adopt_existing(job, item)       # a favourite's chart that is already here (fuzzy)
             if have is not None:
-                return f"already in your library ({have.path.name}), not downloaded again"
+                return _("job.in_library", name=have.path.name)
         if item.get("ownedSameChart") and not job.options.get("force"):
             self.adopt_existing(job, item, loose=True)
-            return "already in your library (same chart), not downloaded again"
+            return _("job.in_library_same")
         from .sources import fallback
         row = job.options.get("fav_row")
 
@@ -629,11 +648,11 @@ class Companion:
                 item, lambda it: inst.install(it, dest, progress=progress, cancel=job.cancel), more, progress)
         except inst.AlreadyInstalled as e:
             self.adopt_existing(job, item, loose=True)
-            return f"already in your library ({e}), not downloaded again"
+            return _("job.in_library", name=e)
         gone = [p for p in paths if not Path(p).exists()]
         if gone:        # never go on to processing something that was not written
-            raise RuntimeError(f"the download finished but {gone[0].name} is not in the Songs folder")
-        progress("indexing the installed chart")
+            raise RuntimeError(_("job.not_in_songs", name=gone[0].name))
+        progress(_("job.indexing"))
         self.library.scan()
         self.libmgr._reindex()
         self.build_preview_index()
@@ -643,7 +662,7 @@ class Companion:
         if want_c:      # star exactly the chart that was favourited (the charter), not other charts in a pack
             fav_targets = [x for x in new if norm_key(self.libmgr.charter_of(x)) == want_c] or fav_targets
         for x in new:
-            progress("saving the installed chart and favourite")
+            progress(_("job.saving_chart"))
             if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
                 self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
             elif item.get("source") == "rhythmverse":
@@ -657,9 +676,9 @@ class Companion:
                         self.libmgr.chart_key(x, compute=True)
             self.libmgr.refresh_song(x)
             if job.options.get("process", s["auto_process_downloads"]):
-                progress("queuing video and lyrics processing")
+                progress(_("job.queuing_processing"))
                 self.queue_song(x, "full", PRIO_BATCH)
-        return f"installed {len(paths)} chart{'s' if len(paths) != 1 else ''}"
+        return _("job.installed", count=len(paths))
 
     def simulate(self, name: str):
         """Pretend the game loaded a song (for testing without the game)."""
@@ -704,7 +723,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _json(self, obj, code: int = 200):
-        self._send(code, json.dumps(obj).encode("utf-8"))
+        self._send(code, json.dumps(i18n.deep_render(obj)).encode("utf-8"))
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -722,7 +741,7 @@ class Handler(BaseHTTPRequestHandler):
         start, end = 0, size - 1
         code = 200
         if rng and rng.startswith("bytes="):
-            a, _, b = rng[6:].split(",")[0].partition("-")
+            a, __, b = rng[6:].split(",")[0].partition("-")
             if a:
                 start = int(a)
                 end = int(b) if b else size - 1
@@ -754,7 +773,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 r = c.yt.resolve(vid)
             except Exception as e:
-                return self._json({"error": str(e)}, 502)
+                return self._json({"error": msg_of(e)}, 502)
             headers = {k: v for k, v in (r.get("headers") or {}).items()
                        if k.lower() in ("user-agent", "accept-language")}
             if self.headers.get("Range"):
@@ -768,9 +787,9 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if e.code == 416:
                     return self._send(416, b"", "text/plain")
-                return self._json({"error": f"upstream {e.code}"}, 502)
+                return self._json({"error": _("api.upstream", code=e.code)}, 502)
             except Exception as e:
-                return self._json({"error": str(e)}, 502)
+                return self._json({"error": msg_of(e)}, 502)
             try:
                 self.send_response(up.status)
                 for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
@@ -805,11 +824,17 @@ class Handler(BaseHTTPRequestHandler):
             if p in ("/now", "/karaoke"):
                 html = resource_path("web", "index.html").read_bytes()
                 return self._send(200, html, "text/html; charset=utf-8")
+            if p.startswith("/static/i18n/"):
+                code = p.rsplit("/", 1)[-1]
+                f = resource_path("web", "i18n", code)
+                if not re.fullmatch(r"[A-Za-z-]{2,8}\.json", code) or not f.is_file():
+                    return self._json({"error": _("api.not_found")}, 404)
+                return self._send(200, f.read_bytes(), "application/json; charset=utf-8")
             if p.startswith("/static/"):
                 name = p.rsplit("/", 1)[-1]
                 f = resource_path("web", name)
                 if not f.is_file() or "/" in name or "\\" in name:
-                    return self._json({"error": "not found"}, 404)
+                    return self._json({"error": _("api.not_found")}, 404)
                 ctype = {"js": "text/javascript", "css": "text/css", "svg": "image/svg+xml",
                          "png": "image/png"}.get(name.rsplit(".", 1)[-1], "application/octet-stream")
                 return self._send(200, f.read_bytes(), ctype + "; charset=utf-8" if ctype.startswith("text") else ctype)
@@ -821,7 +846,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise
             except Exception as e:
                 log.exception("API error on %s", p)
-                return self._json({"error": str(e)}, 500)
+                return self._json({"error": msg_of(e)}, 500)
             if p == "/api/state":
                 return self._json(c.snapshot())
             if p == "/api/debug":
@@ -835,22 +860,22 @@ class Handler(BaseHTTPRequestHandler):
                 name = urllib.parse.unquote(p.rsplit("/", 1)[-1])
                 f = ingame.video_cache_dir() / name
                 if "/" in name or "\\" in name or name.startswith(".") or not f.is_file():
-                    return self._json({"error": "not found"}, 404)
+                    return self._json({"error": _("api.not_found")}, 404)
                 return self._serve_file(f)
             if p == "/media/local":
                 v = c.song.local_video() if c.song else None
                 if not v:
-                    return self._json({"error": "no local video"}, 404)
+                    return self._json({"error": _("api.no_video")}, 404)
                 return self._serve_file(v)
             if p == "/media/art":
                 art = c.song.art_file() if c.song else None
                 if not art:
-                    return self._json({"error": "no art"}, 404)
+                    return self._json({"error": _("api.no_art")}, 404)
                 name, data = art
                 return self._send(200, data, mimetypes.guess_type(name)[0] or "image/png")
             if p.startswith("/media/yt/"):
                 return self._proxy_youtube(p.rsplit("/", 1)[-1][:11])
-            return self._json({"error": "not found"}, 404)
+            return self._json({"error": _("api.not_found")}, 404)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
@@ -865,7 +890,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
         except Exception as e:
             log.exception("API error on %s", p)
-            return self._json({"error": str(e)}, 500)
+            return self._json({"error": msg_of(e)}, 500)
+        if p == "/api/i18n":
+            # the UI reports the browser's languages; with the "auto" setting they decide the language
+            locs = [str(x) for x in (b.get("locales") or []) if isinstance(x, str)][:8]
+            if locs:
+                c.locales = locs
+            c.apply_language()
+            return self._json({"lang": i18n.LANG, "setting": c.settings().get("language"), "languages": i18n.LANGUAGES})
         if p == "/api/offset":
             c.adjust_offset(b.get("kind", "lyrics"), b.get("delta"), b.get("value"))
             return self._json({"ok": True})
@@ -898,7 +930,7 @@ class Handler(BaseHTTPRequestHandler):
             if line:
                 c.watcher.handle_line(line)
             return self._json({"ok": True})
-        return self._json({"error": "not found"}, 404)
+        return self._json({"error": _("api.not_found")}, 404)
 
     def _sse(self):
         c = self.companion
@@ -911,7 +943,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            self.wfile.write(f"data: {json.dumps(c.snapshot())}\n\n".encode())
+            self.wfile.write(f"data: {json.dumps(i18n.deep_render(c.snapshot()))}\n\n".encode())
             self.wfile.flush()
             while True:
                 try:

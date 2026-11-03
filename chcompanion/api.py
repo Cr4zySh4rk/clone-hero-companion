@@ -16,6 +16,8 @@ from . import __version__, youtube
 from .jobs import Job, PRIO_BATCH, PRIO_USER
 from .libmgr import find_game, launch_game, reveal, song_id
 from .library import norm_key
+from . import i18n
+from .i18n import _, join, msg_of
 from .lyrics import clean_title
 
 log = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         sid = path.split("/")[3]
         s = lm.get(sid)
         if not s:
-            return _json(h, {"error": "not found"}, 404) or True
+            return _json(h, {"error": _("api.not_found")}, 404) or True
         e = lm.entry(s)
         per = c.store.song(s.key)
         e.update({"meta": {k: v for k, v in s.meta.items() if len(str(v)) < 300},
@@ -90,13 +92,13 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         elif act == "skip":
             lm.set_flag(ids, game_skip=bool(body.get("value", True)) or None)
         else:
-            return _json(h, {"error": "unknown action"}, 400) or True
+            return _json(h, {"error": _("api.unknown_action")}, 400) or True
         if act in ("disable", "enable", "rename"):
             c.build_preview_index()
         return _json(h, {"ok": True, "count": n}) or True
     if path == "/api/songs/op" and method == "POST":
         st = lm.op_status(body.get("id") or "")
-        return _json(h, st if st else {"error": "unknown operation"}, 200 if st else 404) or True
+        return _json(h, st if st else {"error": _("api.unknown_op")}, 200 if st else 404) or True
     if path == "/api/duplicates":
         return _json(h, {"groups": lm.duplicates()}) or True
 
@@ -136,7 +138,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     if path.startswith("/api/song/") and path.endswith("/candidates") and method == "POST":
         s = lm.get(path.split("/")[3])
         if not s:
-            return _json(h, {"error": "not found"}, 404) or True
+            return _json(h, {"error": _("api.not_found")}, 404) or True
         cands = c.game_yt.search(s)
         with ThreadPoolExecutor(4) as ex:   # check which candidates exist in HD
             res = list(ex.map(lambda cd: _safe_res(c, cd["id"]), cands[:6]))
@@ -149,10 +151,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         from .app import YT_ID
         m = YT_ID.search(str(body.get("video", "")).strip())
         if not s or not m:
-            return _json(h, {"error": "Not a YouTube link"}, 400) or True
+            return _json(h, {"error": _("api.not_youtube")}, 400) or True
         r = _safe_res(c, m.group(1))
         if r < youtube.MIN_P:
-            return _json(h, {"error": f"That video isn't available in {youtube.MIN_P}p or better"}, 400) or True
+            return _json(h, {"error": _("api.video_too_low", p=youtube.MIN_P)}, 400) or True
         c.store.update_song(s.key, video_id=m.group(1), video_manual=True, video_offset_auto=True)
         c.store.update_song(s.key, video_offset=None)
         c.queue_song(s, "media", PRIO_USER, force=True)
@@ -160,7 +162,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     if path.startswith("/api/song/") and path.endswith("/offsets") and method == "POST":
         s = lm.get(path.split("/")[3])
         if not s:
-            return _json(h, {"error": "not found"}, 404) or True
+            return _json(h, {"error": _("api.not_found")}, 404) or True
         upd = {}
         if "video" in body:
             upd.update(video_offset=round(float(body["video"]), 3), video_offset_auto=None)
@@ -213,7 +215,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             res = (encore.search(q.get("q", ""), **args) if db == "encore"
                    else rhythmverse.search(q.get("q", ""), system=q.get("system", "ch"), **args))
         except Exception as e:
-            return _json(h, {"error": f"Search failed: {e}"}, 502) or True
+            return _json(h, {"error": _("api.search_failed", detail=msg_of(e))}, 502) or True
         from .library import strip_tags
         owned: dict[str, set] = {}
         for s in c.library.songs:
@@ -241,7 +243,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         try:
             pl = spotify.fetch_playlist(body.get("url", ""))
         except Exception as e:
-            return _json(h, {"error": str(e)}, 400) or True
+            return _json(h, {"error": msg_of(e)}, 400) or True
         owned = {norm_key(f"{clean_title(s.artist)} {clean_title(s.name)}"): song_id(s) for s in c.library.songs}
 
         def base_title(title: str) -> str:
@@ -288,7 +290,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             elif act == "create":
                 sl.save(c.data_dir, name, [])
         except ValueError as e:
-            return _json(h, {"error": str(e)}, 400) or True
+            return _json(h, {"error": msg_of(e)}, 400) or True
         return _json(h, {"ok": True}) or True
 
     # ---------------------------------------------------------------- cloud account
@@ -311,7 +313,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 c.cloud.set_display_name(body.get("name", ""))
         except CloudError as e:
             code = e.status if e.status in (429, 401) else 400
-            return _json(h, {"error": str(e)}, 503 if e.offline else code) or True
+            return _json(h, {"error": msg_of(e)}, 503 if e.offline else code) or True
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/logout" and method == "POST":
         c.cloud.logout()
@@ -357,7 +359,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         try:
             return _lb(h, c, lm, path, method, q, body) or True
         except LeaderboardError as e:
-            return _json(h, {"error": str(e)}, 502) or True
+            return _json(h, {"error": msg_of(e)}, 502) or True
 
     # ---------------------------------------------------------------- app / settings
     if path == "/api/settings" and method == "GET":
@@ -411,19 +413,19 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         game = (body.get("game") or "").strip()
         problems = []
         if game and not P.is_game(Path(game).expanduser()):
-            problems.append(f"Clone Hero was not found at {game}")
+            problems.append(_("api.game_missing", path=game))
         if body.get("createData") and not data.exists():
             try:
                 P.ensure_writable_dir(data)
             except RuntimeError as e:
-                return _json(h, {"error": str(e)}, 400) or True
+                return _json(h, {"error": msg_of(e)}, 400) or True
         if not data.is_dir():
-            problems.append(f"The data folder {data} does not exist")
+            problems.append(_("api.data_missing", path=data))
         missing = [x for x in songs if not Path(x).is_dir()]
         if missing:
-            problems.append("Song folder not found: " + ", ".join(missing))
+            problems.append(_("api.songs_missing", list=", ".join(missing)))
         if problems:
-            return _json(h, {"error": "; ".join(problems)}, 400) or True
+            return _json(h, {"error": join(problems)}, 400) or True
         roots = P.song_dirs(data, only=songs or None)
         # Verify the selected destinations before declaring setup complete.
         # A readable Documents folder can still reject writes through Defender.
@@ -432,7 +434,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                                          *(roots or [data / "Songs"])]):
                 P.ensure_writable_dir(folder)
         except RuntimeError as e:
-            return _json(h, {"error": str(e)}, 400) or True
+            return _json(h, {"error": msg_of(e)}, 400) or True
         c.update_settings({"data_dir": str(data), "song_dirs": songs, "game_path": game, "setup_done": True})
         roots = P.song_dirs(data, only=songs or None)
         c.reconfigure(data, roots)
@@ -458,12 +460,12 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         port = h.server.server_address[1]
         page = body.get("page", "now")
         url = f"http://127.0.0.1:{port}/{'now' if page == 'now' else ''}"
-        kind = open_extra_window(url, "Clone Hero Companion — Now Playing", bool(body.get("fullscreen")))
+        kind = open_extra_window(url, str(_("window.now_title")), bool(body.get("fullscreen")))
         return _json(h, {"ok": True, "kind": kind}) or True
     if path == "/api/game/launch" and method == "POST":
         game = find_game(c.data_dir, c.settings().get("game_path"))
         if not game:
-            return _json(h, {"error": "Clone Hero not found; set its location in Settings"}, 404) or True
+            return _json(h, {"error": _("api.game_not_found")}, 404) or True
         launch_game(game)
         return _json(h, {"ok": True}) or True
     if path == "/api/open" and method == "POST":
@@ -487,7 +489,7 @@ def _js_label() -> str | None:
         return None
     dn = youtube.deno_info() if rt[0] == "deno" else None
     if dn:
-        return f"deno {dn['version'] or ''} ({'bundled' if dn['bundled'] else 'system'})".replace("  ", " ")
+        return _("about.runtime_deno", version=dn["version"] or "?", origin=_("about.bundled" if dn["bundled"] else "about.system"))
     return rt[0]
 
 
@@ -586,7 +588,7 @@ def _stream_audio(h, lm, s, start: float):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-_CB_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Clone Hero Companion</title>
+_CB_PAGE = """<!doctype html><html lang="@LANG@"><head><meta charset="utf-8"><title>Clone Hero Companion</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"><style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#160d2b;color:#f6f1e7;font:16px/1.5 "Segoe UI",system-ui,sans-serif}
 main{background:#1e1338;border:1px solid rgba(246,241,231,.12);border-radius:14px;padding:34px 40px;max-width:430px;text-align:center}
@@ -602,19 +604,20 @@ def _auth_callback(h, c, q: dict):
     code, err = q.get("code"), q.get("error_description") or q.get("error")
     ok, msg = False, ""
     if err or not code:
-        msg = err or "No sign-in code was received."
+        msg = err or str(_("auth.no_code"))
     else:
         try:
             c.cloud.complete_login(code)
             ok = True
             threading.Thread(target=c.after_login, daemon=True, name="cloud-sync").start()
         except Exception as e:
-            msg = str(e)
+            msg = str(msg_of(e))
     if ok:
-        page = _CB_PAGE.replace("@TITLE@", "Signed in to Clone Hero Companion").replace("@MSG@", "You can close this tab.")
+        page = _CB_PAGE.replace("@TITLE@", str(_("auth.title_ok"))).replace("@MSG@", str(_("auth.close_tab")))
     else:
-        page = _CB_PAGE.replace("@TITLE@", "Sign-in did not finish").replace(
-            "@MSG@", html.escape(msg) + " You can close this tab and try again.")
+        page = _CB_PAGE.replace("@TITLE@", str(_("auth.title_fail"))).replace(
+            "@MSG@", html.escape(msg) + " " + html.escape(str(_("auth.close_retry"))))
+    page = page.replace("@LANG@", i18n.LANG)
     h._send(200 if ok else 400, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
 
 
@@ -821,4 +824,4 @@ def _lb(h, c, lm, path: str, method: str, q: dict, body: dict):
     if path == "/api/lb/link" and method == "POST":
         user = c.link_ch_username(body.get("username", ""))
         return _json(h, {"ok": True, "username": user["username"] if user else ""})
-    return _json(h, {"error": "not found"}, 404)
+    return _json(h, {"error": _("api.not_found")}, 404)

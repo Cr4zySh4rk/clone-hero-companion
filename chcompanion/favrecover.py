@@ -124,4 +124,5 @@ def parse_pid(pid: str) -> dict:
 def unknown_label(v: dict, key: str) -> str:
     import hashlib
     h = (v.get("md5") or "") or hashlib.md5((v.get("pid") or key).encode("utf-8", "replace")).hexdigest()
-    return f"Unknown chart (checksum {h[:6].lower()}…)"
+    from .i18n import _
+    return str(_("fav.unknown_chart", checksum=h[:6].lower()))
