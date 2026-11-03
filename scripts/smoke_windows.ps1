@@ -67,7 +67,7 @@ if ($doctor.ExitCode -ne 0) { throw "Installed app failed: $($doctor.ExitCode)" 
 $text = Get-Content $report -Raw
 Write-Output $text
 Write-Output ('YouTube JS runtime: ' + (($text -split "`n" | Where-Object { $_ -match '^JS runtime' }) -join ''))
-foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK', $ffmpeg, $deno)) {
+foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK', 'Languages   : 9 catalogs', $ffmpeg, $deno)) {
     if (!$text.Contains($expected)) { throw "Doctor did not confirm: $expected" }
 }
 # The bundled Deno must be the runtime in use, and it must run through the app's process helper.

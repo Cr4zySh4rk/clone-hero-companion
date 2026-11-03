@@ -110,6 +110,7 @@ jobs:
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
           "$BIN" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
           grep -q "ffmpeg      : /" doctor.txt
+          grep -q "^Languages   : 9 catalogs$" doctor.txt
           grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
           grep -q "Contents/.*/bin/deno" doctor.txt
           (softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true)
@@ -257,6 +258,7 @@ jobs:
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
           ./dist/CloneHeroCompanion doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
           grep -q "Songs       : 1" doctor.txt
+          grep -q "^Languages   : 9 catalogs$" doctor.txt
           grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
           chmod +x dist/CloneHeroCompanion
           tar -C dist -czf "$ASSET" CloneHeroCompanion

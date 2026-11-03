@@ -64,8 +64,8 @@ Chinese players); otherwise the native word. Pick one rendering per language and
 
 | English | Meaning here | Guidance |
 |---------|--------------|----------|
-| chart | a playable song file for Clone Hero (notes.chart / notes.mid / .sng) | loanword in ja (チャート), ko (차트), ru (чарт); zh: 谱面; de/fr/es/pt: "Chart" (de, fr), "chart" (es), "chart" (pt-BR) |
-| charter | the person who made the chart | ja チャーター, ko 차터, ru чартер, zh 谱师/制谱者, de Charter, fr charteur, es charter, pt-BR charter |
+| chart | a playable song file for Clone Hero (notes.chart / notes.mid / .sng) | ja チャート (loanword), ko 채보 (the usual term in Korean rhythm-game communities), ru чарт; zh: 谱面; de/fr/es/pt: "Chart" (de, fr), "chart" (es), "chart" (pt-BR) |
+| charter | the person who made the chart | ja チャーター, ko 채보자, ru чартер, zh 谱师/制谱者, de Charter, fr charteur, es charter, pt-BR charter |
 | song / track | a song in the library | native word |
 | setlist | named list of songs Clone Hero loads at start | ja セットリスト, ko 세트리스트, ru сетлист, zh 歌单/曲目表, de Setlist, fr setlist, es setlist, pt-BR setlist |
 | favourite(s) | a chart the user starred | native word for "favorite" (pt-BR: favorito; es: favorito; zh: 收藏) |

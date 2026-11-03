@@ -193,6 +193,10 @@ def cmd_doctor(args) -> int:
         say(f"numpy       : {numpy.__version__}")
     except Exception as e:
         say(f"numpy       : missing ({e})")
+    from . import i18n
+    have = [c for c in i18n.LANGUAGES if i18n.catalog(c)]
+    say(f"Languages   : {len(have)} catalogs" + ("" if len(have) == len(i18n.LANGUAGES) else
+                                                 f" (missing: {', '.join(c for c in i18n.LANGUAGES if c not in have)})"))
     store = Store(config_dir() / "config.json")
     say(f"Config      : {config_dir()}  (song start delay {store.get('start_lead')}s, "
         f"{store.get('lead_samples')} calibration samples)")

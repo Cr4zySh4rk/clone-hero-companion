@@ -40,7 +40,8 @@ ALLOW_ENGLISH = {"Clone Hero", "Companion", "Clone Hero Companion", "Chorus Enco
                  "Rhythm", "Drums", "Keys", "Vocals", "Expert", "Hard", "Medium", "Easy", "720p", "1080p", "OK", "FC", "HD",
                  "Windows", "macOS", "Linux", "Rock Band", "WebM", "MP4", "Pause", "Play", "Video", "Lyrics", "Metadata", "Charter",
                  "Album", "Jobs", "Profile", "Settings", "Folder", "Workers", "Preview", "Chart", "Setlists", "Library",
-                 "Leaderboards", "Duplicates"}
+                 "Leaderboards", "Duplicates", "Full combos",
+                 "Version", "Position", "Release", "Song", "Songs", "Videos"}      # also ordinary French/German words      # game terms and product names the app shows in English
 
 CHECK_JS = r"""
 () => {

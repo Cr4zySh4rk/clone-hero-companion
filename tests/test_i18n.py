@@ -104,13 +104,24 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(r("de", ["fr"]), "de")
 
 
+class DoctorTests(unittest.TestCase):
+    def test_doctor_reports_all_nine_catalogs(self):
+        import tempfile
+        from types import SimpleNamespace
+        from chcompanion import cli
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("builtins.print") as pr:
+            cli.cmd_doctor(SimpleNamespace(data_dir=tmp, songs_dir=None, report=None))
+        self.assertIn("\nLanguages   : 9 catalogs\n", pr.call_args[0][0] + "\n")
+
+
 class BackendTests(FakeCatalog):
     def test_missing_keys_fall_back_to_english_then_to_the_key(self):
         i18n.set_lang("de")
         self.assertEqual(str(_("job.done")), "fertig")
         self.assertEqual(str(_("dl.mega")), EN["dl.mega"])                  # not in the fake de catalog
         self.assertEqual(str(_("no.such.key")), "no.such.key")
-        i18n.set_lang("fr")                                                 # real, still empty catalog
+        i18n._cache["fr"] = {}                                              # a language with an empty catalog
+        i18n.set_lang("fr")
         self.assertEqual(str(_("job.done")), EN["job.done"])
 
     def test_message_translated_per_language_with_plurals(self):
