@@ -275,7 +275,9 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
 
     # ---------------------------------------------------------------- setlists
     if path == "/api/setlists" and method == "GET":
-        return _json(h, {"setlists": lm.setlists()}) or True
+        shared = c.friends.sharing().get("setlists") or {}
+        return _json(h, {"setlists": [{**x, "shared": bool(shared.get(x["name"]))} for x in lm.setlists()],
+                         "signedIn": c.cloud.signed_in}) or True
     if path == "/api/setlists" and method == "POST":
         from . import setlists as sl
         act, name = body.get("action"), body.get("name", "")
@@ -291,7 +293,12 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 sl.save(c.data_dir, name, [])
         except ValueError as e:
             return _json(h, {"error": msg_of(e)}, 400) or True
+        c.cloudsync.schedule()                  # signed in: the change reaches the cloud copy of the list
         return _json(h, {"ok": True}) or True
+
+    # ---------------------------------------------------------------- friends and sharing
+    if path.startswith("/api/friends") and _friends(h, c, method, path, q, body):
+        return True
 
     # ---------------------------------------------------------------- cloud account
     if path == "/auth/callback" and method == "GET":
@@ -318,6 +325,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     if path == "/api/cloud/logout" and method == "POST":
         c.cloud.logout()
         c.cloudsync.reset_account_state()
+        c.friends.reset()
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/sync" and method == "POST":
         if c.cloud.signed_in:
@@ -619,6 +627,128 @@ def _auth_callback(h, c, q: dict):
             "@MSG@", html.escape(msg) + " " + html.escape(str(_("auth.close_retry"))))
     page = page.replace("@LANG@", i18n.LANG)
     h._send(200 if ok else 400, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+
+
+def _cloud_err(h, e) -> bool:
+    """A cloud failure as a JSON error: 503 offline, 401 signed out, else the server's own status when sensible."""
+    code = 503 if e.offline else e.status if e.status in (401, 403, 404, 409, 429) else 400
+    h._json({"error": msg_of(e)}, code)
+    return True
+
+
+def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
+    from .cloud import CloudError
+    f = c.friends
+    sub = path[len("/api/friends"):].strip("/")
+    try:
+        if sub == "status" and method == "GET":
+            return _json(h, f.status()) or True
+        if sub == "" and method == "GET":
+            return _json(h, f.view() if q.get("cached") or not c.cloud.signed_in else f.refresh()) or True
+        if sub == "username/check" and method == "GET":
+            return _json(h, f.check_username(q.get("name", ""))) or True
+        if sub == "username" and method == "POST":
+            return _json(h, f.set_username(body.get("username", ""))) or True
+        if sub == "lookup" and method == "GET":
+            return _json(h, {"profile": f.lookup(q.get("q", ""))}) or True
+        if sub == "request" and method == "POST":
+            return _json(h, f.request(body.get("query", ""))) or True
+        if sub == "respond" and method == "POST":
+            return _json(h, f.respond(body.get("id", ""), bool(body.get("accept")))) or True
+        if sub == "remove" and method == "POST":
+            return _json(h, f.remove(body.get("id", ""))) or True
+        if sub == "list" and method == "GET":
+            d = f.friend_lists(q.get("friend", ""))
+            d["favorites"] = f.annotate(d["favorites"])
+            d["setlists"] = [{**x, "items": f.annotate(x["items"])} for x in d["setlists"]]
+            return _json(h, d) or True
+        if sub == "install" and method == "POST":
+            return _json(h, _install_friend(c, body)) or True
+        if sub == "sharing" and method == "GET":
+            return _json(h, f.sharing()) or True
+        if sub == "share" and method == "POST":
+            return _json(h, f.set_shared(body.get("kind", ""), body.get("name"), bool(body.get("shared")))) or True
+    except CloudError as e:
+        return _cloud_err(h, e)
+    except ValueError as e:
+        return _json(h, {"error": msg_of(e)}, 400) or True
+    return False
+
+
+def _unique_setlist(c, name: str) -> str:
+    from . import setlists as sl
+    base = sl.safe(name)
+    d, n, out = sl.setlists_dir(c.data_dir), 1, base
+    while (d / (out + ".setlist")).exists():
+        n += 1
+        out = f"{base} ({n})"
+    return out
+
+
+def _install_friend(c, body: dict) -> dict:
+    """Install the missing charts of a friend's shared list through the normal pipeline (resolve_favourite:
+    recorded source, then Chorus Encore, then RhythmVerse; the charter must match; download_first_working falls
+    back to the next candidate) and, if asked, star them and write a Clone Hero .setlist from the local copies.
+    body: friend, list {kind: favorites|setlist, name}, keys? (a subset), install (default true), process
+    (video, lyrics, metadata; default true), favourite (also add to my favourites), setlist (new local name)."""
+    from .cloud import CloudError, resolve_favourite
+    data = c.friends.friend_lists(body.get("friend", ""))
+    spec = body.get("list") or {}
+    if spec.get("kind") == "setlist":
+        lst = next((x for x in data["setlists"] if x["name"] == spec.get("name")), None)
+        if lst is None:
+            raise CloudError(_("friends.list_gone"), 404)
+        rows = lst["items"]
+    else:
+        rows = data["favorites"]
+    keys = set(body.get("keys") or [])
+    if keys:
+        rows = [r for r in rows if r["song_key"] in keys]
+    name = _unique_setlist(c, body["setlist"]) if body.get("setlist") else None
+    process = bool(body.get("process", True))
+    want_fav = bool(body.get("favourite"))
+    find = c.friends.matcher()
+    have, todo, seen = [], [], set()
+    for r in rows:
+        if r["song_key"] in seen:
+            continue
+        seen.add(r["song_key"])
+        s = find(r)
+        if s is not None:
+            have.append(s)
+        else:
+            todo.append(r)
+    if want_fav and have:
+        c.libmgr.set_fav(have, True)
+    if body.get("install", True) is False:
+        todo = []
+
+    def one(r):
+        try:
+            return r, resolve_favourite(r)
+        except Exception as e:
+            log.info("Chart lookup failed for %s: %s", r.get("name"), e)
+            return r, False
+
+    jobs, missing, failed = [], [], 0
+    with ThreadPoolExecutor(4) as ex:
+        for r, item in ex.map(one, todo):
+            if item is False:
+                failed += 1
+            elif item is None:
+                missing.append(r["song_key"])
+            else:
+                jobs.append(Job("download", f"Download: {item['artist']} - {item['name']}", item=item,
+                                options={"process": process, "mark_fav": want_fav, "fav_charter": r.get("charter") or "",
+                                         "fav_checksum": r.get("checksum") or "",
+                                         "fav_row": {k: r.get(k) for k in ("artist", "name", "charter", "checksum", "source")}},
+                                priority=PRIO_USER))
+    if name:
+        c.queue_friend_setlist(name, list(rows), jobs)
+    else:
+        for j in jobs:
+            c.jobs.submit(j)
+    return {"queued": len(jobs), "alreadyHave": len(have), "notFound": missing, "failed": failed, "setlist": name}
 
 
 def _missing_favs(c) -> list[dict]:

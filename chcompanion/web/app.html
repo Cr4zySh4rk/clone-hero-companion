@@ -24,6 +24,7 @@
       <button data-view="setlists"><span class="lbl" data-i18n="nav.setlists"></span></button>
       <button data-view="dupes"><span class="lbl" data-i18n="nav.dupes"></span></button>
       <button data-view="jobs"><span class="lbl" data-i18n="nav.jobs"></span> <span class="badge hot" id="navJobs"></span></button>
+      <button data-view="friends"><span class="lbl" data-i18n="nav.friends"></span> <span class="badge hot" id="navFriends"></span></button>
       <button data-view="profile"><span class="lbl" data-i18n="nav.profile"></span></button>
       <button data-view="leaderboards"><span class="lbl" data-i18n="nav.leaderboards"></span></button>
       <button data-view="now"><span class="lbl" data-i18n="nav.now"></span> <span class="dot" id="navNow"></span></button>
@@ -70,6 +71,10 @@
         <button data-act="clear" class="ghost" data-i18n="lib.act.clear"></button>
       </div>
       <div class="favsummary" id="favSummary" hidden></div>
+      <div class="favshare" id="favShare" hidden>
+        <label class="inline" data-i18n-title="share.tip"><input type="checkbox" id="favShareCb"> <span data-i18n="share.with_friends"></span></label>
+        <span class="pill" id="favSharedBadge" hidden data-i18n="share.shared"></span>
+      </div>
       <div class="cloudfavs" id="cloudFavs" hidden></div>
       <div class="table" id="libTable">
         <div class="thead" id="libHead">
@@ -154,6 +159,9 @@
       <div class="ytwarn" id="ytWarn" hidden></div>
       <div class="results list" id="jobList"></div>
     </section>
+
+    <!-- ============ FRIENDS ============ -->
+    <section class="view" id="view-friends"><div class="profile" id="friendsBody"></div></section>
 
     <!-- ============ PROFILE ============ -->
     <section class="view" id="view-profile"><div class="profile" id="profileBody"></div></section>

@@ -70,6 +70,7 @@ function show(view) {
   if (view === "jobs") renderJobs();
   if (view === "charts" && !charts.loaded) searchCharts(1);
   if (view === "profile") loadProfile();
+  if (view === "friends") { fr.page = null; loadFriends(); }
   if (view === "leaderboards") loadLeaderboards();
 }
 $("#nav").addEventListener("click", (e) => {
@@ -369,7 +370,20 @@ function updateFavCount() {
   const sum = $("#favSummary");
   sum.hidden = !(st.filter === "fav" && currentView === "library");
   sum.textContent = tr("fav.summary", { count: ft.total }) + (ft.notHere ? " · " + tr("fav.not_here", { count: ft.notHere }) : "");
+  paintShare();
 }
+function paintShare() {
+  const box = $("#favShare"); if (!box) return;
+  box.hidden = !(st.filter === "fav" && currentView === "library" && cloud.status && cloud.status.signedIn);
+  const on = !!(fr.status && fr.status.sharing && fr.status.sharing.favorites);
+  $("#favShareCb").checked = on; $("#favSharedBadge").hidden = !on;
+}
+$("#favShareCb").onchange = async (e) => {
+  e.target.disabled = true;
+  try { await api("/api/friends/share", { kind: "favorites", shared: e.target.checked }); toast(tr(e.target.checked ? "share.on" : "share.off")); }
+  catch (err) { toast(err.message, 4500); }
+  e.target.disabled = false; await pollFriends();
+};
 async function setFav(ids, value) {
   ids = ids.filter((i) => lib.byId.has(i));
   if (!ids.length) return;
@@ -552,19 +566,26 @@ $("#nowFull").onclick = () => openNowWindow(true);
 let setlists = [], slActive = null;
 async function loadSetlists() {
   try { setlists = (await api("/api/setlists")).setlists; } catch (e) { return toast(e.message); }
-  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}</span><span>${s.songs.length}</span></li>`).join("") || `<li class="hint">${esc(tr("setlists.none"))}</li>`;
+  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}${s.shared ? ` <small class="pill shared">${esc(tr("share.shared"))}</small>` : ""}</span><span>${s.songs.length}</span></li>`).join("") || `<li class="hint">${esc(tr("setlists.none"))}</li>`;
   renderSetlist();
 }
 function renderSetlist() {
   const sl = setlists.find((s) => s.name === slActive);
   if (!sl) { $("#slBody").innerHTML = `<p class="hint">${esc(tr("setlists.pick"))}</p>`; return; }
-  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2><button class="danger" id="slDel">${esc(tr("setlists.delete"))}</button></div>` +
+  const canShare = cloud.status && cloud.status.signedIn && sl.name !== "Favourites";
+  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2>${canShare ? `<label class="inline" title="${esc(tr("share.tip"))}"><input type="checkbox" id="slShare"${sl.shared ? " checked" : ""}> <span>${esc(tr("share.with_friends"))}</span></label>${sl.shared ? `<span class="pill shared">${esc(tr("share.shared"))}</span>` : ""}` : ""}<button class="danger" id="slDel">${esc(tr("setlists.delete"))}</button></div>` +
     sl.songs.map((x, i) => {
       const s = x.id && lib.byId.get(x.id);
       return `<div class="line"><span class="hint">${i + 1}</span><div class="art"${s && s.art ? ` style="background-image:url('/media/art/${s.id}')"` : ""}></div>
         <div><b>${s ? esc(s.name) : esc(tr("setlists.not_in_library"))}</b><span>${s ? esc(s.artist) : x.hash}</span></div>
         <span class="pill">${x.speed}%</span>${s ? `<button data-rm="${s.id}">${esc(tr("setlists.remove"))}</button>` : "<span></span>"}</div>`;
     }).join("");
+  if ($("#slShare")) $("#slShare").onchange = async (e) => {
+    e.target.disabled = true;
+    try { await api("/api/friends/share", { kind: "setlist", name: sl.name, shared: e.target.checked }); toast(tr(e.target.checked ? "share.on" : "share.off")); }
+    catch (err) { toast(err.message, 4500); }
+    loadSetlists();
+  };
   $("#slDel").onclick = async () => {
     if (!await ask({ title: tr("setlists.delete_title", { name: sl.name }), ok: tr("setlists.delete_ok"), danger: true })) return;
     await api("/api/setlists", { action: "delete", name: sl.name }); slActive = null; loadSetlists();
@@ -999,6 +1020,158 @@ async function syncNow() {
   setTimeout(async () => { await loadCloud(); if (currentView === "profile") loadProfile(); lib.version = -1; }, 3500);
 }
 
+
+/* ================================================================ friends and sharing */
+const fr = { status: null, view: null, page: null, data: null, busy: false };
+async function pollFriends() {
+  try {
+    fr.status = await api("/api/friends/status");
+  } catch (e) { fr.status = null; }
+  const n = fr.status ? fr.status.incoming : 0;
+  const b = $("#navFriends"); b.textContent = n || ""; b.title = n ? tr("friends.requests", { count: n }) : "";
+  paintShare();
+}
+function usernameBox() {
+  return `<h3>${esc(tr("friends.username_title"))}</h3><p class="hint">${esc(tr("friends.username_text"))}</p>
+    <div class="fr-add"><input type="text" id="unIn" maxlength="20" autocomplete="off" spellcheck="false" placeholder="${esc(tr("friends.username_ph"))}">
+    <button class="primary" id="unSave" disabled>${esc(tr("friends.username_save"))}</button></div><p class="hint" id="unMsg"></p>`;
+}
+function bindUsernameBox(root, done) {
+  const inp = $("#unIn", root), save = $("#unSave", root), msg = $("#unMsg", root);
+  let timer = null, seq = 0;
+  inp.oninput = () => {
+    save.disabled = true; msg.textContent = "";
+    clearTimeout(timer);
+    const v = inp.value.trim();
+    if (!v) return;
+    timer = setTimeout(async () => {
+      const my = ++seq;
+      try {
+        const r = await api(`/api/friends/username/check?name=${encodeURIComponent(v)}`);
+        if (my !== seq) return;
+        msg.textContent = tr(!r.valid ? "friends.username_invalid" : r.available ? "friends.username_ok" : "friends.username_taken");
+        save.disabled = !(r.valid && r.available);
+      } catch (e) { if (my === seq) msg.textContent = e.message; }
+    }, 350);
+  };
+  save.onclick = async () => {
+    save.disabled = true;
+    try { await api("/api/friends/username", { username: inp.value }); toast(tr("friends.username_saved")); pollFriends(); done(); }
+    catch (e) { msg.textContent = e.message; }
+  };
+}
+const avatar = (p) => `<div class="fr-ava"${p.avatar ? ` style="background-image:url('${esc(p.avatar)}')"` : ""}>${p.avatar ? "" : esc((p.name || p.username || "?")[0].toUpperCase())}</div>`;
+const who = (p) => `<div class="who"><b>${esc(p.name || p.username || "?")}</b><span>${p.username ? "@" + esc(p.username) : ""}</span></div>`;
+async function loadFriends(keepPage) {
+  const body = $("#friendsBody");
+  if (!keepPage) fr.page = null;
+  if (!cloud.status) await loadCloud();
+  if (!cloud.status || !cloud.status.signedIn) {
+    body.innerHTML = `<h2>${esc(tr("friends.title"))}</h2><div class="fr-card"><h3>${esc(tr("friends.signed_out_title"))}</h3><p class="hint">${esc(tr("friends.signed_out_text"))}</p>
+      <button class="primary" id="frGo">${esc(tr("friends.go_profile"))}</button></div>`;
+    $("#frGo").onclick = () => show("profile");
+    return;
+  }
+  let v;
+  try { v = await api("/api/friends"); } catch (e) { v = await api("/api/friends?cached=1").catch(() => null); if (!v) return toast(e.message, 4500); v.offline = true; }
+  fr.view = v;
+  if (fr.page) return renderFriendPage();
+  const me = v.me || {};
+  const offline = v.offline ? `<div class="fr-banner">${esc(tr("friends.offline"))}</div>` : "";
+  const dis = v.offline ? " disabled" : "";
+  body.innerHTML = `<h2>${esc(tr("friends.title"))}</h2>${offline}
+    ${v.needsUsername ? `<div class="fr-card" id="frUserBox">${usernameBox()}</div>` : ""}
+    <div class="fr-card"><h3>${esc(tr("friends.your_id"))}</h3><div class="fr-id">
+      <div><small>${esc(tr("friends.username"))}</small><b>${me.username ? "@" + esc(me.username) : esc(tr("friends.no_username"))}</b></div>
+      <div><small>${esc(tr("friends.friend_code"))}</small><b id="frCode">${esc(me.friend_code || "—")}</b></div>
+      <button id="frCopy"${me.friend_code ? "" : " disabled"}>${esc(tr("friends.copy"))}</button></div></div>
+    <div class="fr-card"><h3>${esc(tr("friends.add_title"))}</h3><div class="fr-add"><input type="text" id="frQuery" maxlength="40" autocomplete="off" spellcheck="false" placeholder="${esc(tr("friends.add_ph"))}"${dis}>
+      <button class="primary" id="frSend"${dis}>${esc(tr("friends.add_btn"))}</button></div></div>
+    ${v.incoming.length ? `<div class="fr-card"><h3>${esc(tr("friends.incoming"))}</h3>${v.incoming.map((p) => `<div class="fr-row">${avatar(p)}${who(p)}
+      <button class="primary" data-acc="${esc(p.id)}"${dis}>${esc(tr("friends.accept"))}</button><button data-rm="${esc(p.id)}"${dis}>${esc(tr("friends.decline"))}</button></div>`).join("")}</div>` : ""}
+    ${v.outgoing.length ? `<div class="fr-card"><h3>${esc(tr("friends.outgoing"))}</h3>${v.outgoing.map((p) => `<div class="fr-row">${avatar(p)}${who(p)}
+      <button data-rm="${esc(p.id)}"${dis}>${esc(tr("friends.cancel"))}</button></div>`).join("")}</div>` : ""}
+    <div class="fr-card"><h3>${esc(tr("friends.list_title"))}</h3>${v.friends.length ? v.friends.map((p) => `<div class="fr-row click" data-open="${esc(p.id)}">${avatar(p)}${who(p)}
+      <button data-unf="${esc(p.id)}" data-nm="${esc(p.name || p.username || "")}"${dis}>${esc(tr("friends.unfriend"))}</button></div>`).join("") : `<p class="hint">${esc(tr("friends.none"))}</p>`}</div>`;
+  if ($("#frUserBox")) bindUsernameBox($("#frUserBox"), () => loadFriends());
+  $("#frCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(me.friend_code); toast(tr("friends.copied")); }
+    catch (e) { const r = document.createRange(); r.selectNodeContents($("#frCode")); getSelection().removeAllRanges(); getSelection().addRange(r); }
+  };
+  const send = async () => {
+    const q = $("#frQuery").value.trim(); if (!q) return;
+    $("#frSend").disabled = true;
+    try { const r = await api("/api/friends/request", { query: q }); toast(tr(r.status === "accepted" ? "friends.now_friends" : "friends.requested")); await pollFriends(); }
+    catch (e) { toast(e.message, 4500); }
+    loadFriends();
+  };
+  if (!v.offline) { $("#frSend").onclick = send; $("#frQuery").onkeydown = (e) => { if (e.key === "Enter") send(); }; }
+  $$("#friendsBody [data-acc]").forEach((b) => b.onclick = async () => { b.disabled = true; try { await api("/api/friends/respond", { id: b.dataset.acc, accept: true }); } catch (e) { toast(e.message, 4500); } await pollFriends(); loadFriends(); });
+  $$("#friendsBody [data-rm]").forEach((b) => b.onclick = async () => { b.disabled = true; try { await api("/api/friends/remove", { id: b.dataset.rm }); } catch (e) { toast(e.message, 4500); } await pollFriends(); loadFriends(); });
+  $$("#friendsBody [data-unf]").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    if (!await ask({ title: tr("friends.unfriend_title", { name: b.dataset.nm }), text: tr("friends.unfriend_text"), ok: tr("friends.unfriend_ok"), danger: true })) return;
+    try { await api("/api/friends/remove", { id: b.dataset.unf }); } catch (err) { toast(err.message, 4500); }
+    await pollFriends(); loadFriends();
+  });
+  $$("#friendsBody [data-open]").forEach((r) => r.onclick = () => { fr.page = r.dataset.open; renderFriendPage(); });
+}
+async function renderFriendPage() {
+  const body = $("#friendsBody");
+  body.innerHTML = `<p class="hint">${esc(tr("common.loading"))}</p>`;
+  let d;
+  try { d = await api(`/api/friends/list?friend=${encodeURIComponent(fr.page)}`); }
+  catch (e) { toast(e.message, 4500); fr.page = null; return loadFriends(); }
+  fr.data = d;
+  const p = d.friend, ro = !!d.offline, dis = ro ? " disabled" : "";
+  const list = (key, title, items, setlist) => {
+    const miss = items.filter((x) => !x.present).length;
+    const sum = `${tr("friends.song_count", { count: items.length })}${miss ? " · " + tr("friends.missing_count", { count: miss }) : ""}`;
+    return `<div class="fr-card" data-list="${esc(key)}"><h3>${esc(title)}</h3><p class="hint">${esc(sum)}</p>
+      <div class="fr-tools"><label class="inline"><input type="checkbox" class="frProc" checked> <span>${esc(tr("charts.then_process"))}</span></label>
+        <button data-do="install"${miss && !ro ? "" : " disabled"}>${esc(tr("friends.install_missing"))}</button>
+        ${setlist ? `<button class="primary" data-do="installadd"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.install_add"))}</button><button data-do="copy"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.copy_setlist"))}</button>` : ""}
+        <button data-do="favs"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.add_favs"))}</button></div>
+      ${items.map((x) => `<div class="fr-song"><div class="t"><b>${esc(x.name)}</b><span>${esc(x.artist)}${x.artist && x.charter ? " · " : ""}${esc(x.charter)}</span></div>
+        <span class="${x.present ? "have" : "miss"}">${esc(tr(x.present ? "friends.in_library" : "friends.not_installed"))}</span>
+        <button data-fav="${esc(x.song_key)}"${dis}>${esc(tr("friends.add_fav"))}</button></div>`).join("")}</div>`;
+  };
+  const lists = (d.favorites.length ? list("fav", tr("friends.fav_title"), d.favorites, false) : "") +
+    d.setlists.map((s, i) => list("sl:" + i, tr("friends.setlist_title", { name: s.name }), s.items, true)).join("");
+  body.innerHTML = `<div class="fr-tools"><button id="frBack">${esc(tr("friends.back"))}</button></div>
+    <div class="fr-row">${avatar(p)}${who(p)}</div>
+    ${ro ? `<div class="fr-banner">${esc(tr("friends.offline"))}</div>` : ""}
+    ${lists || `<p class="hint">${esc(tr("friends.nothing_shared", { name: p.name || p.username || "" }))}</p>`}`;
+  $("#frBack").onclick = () => { fr.page = null; loadFriends(); };
+  $$("#friendsBody .fr-card[data-list]").forEach((card) => {
+    const key = card.dataset.list;
+    const spec = key === "fav" ? { kind: "favorites" } : { kind: "setlist", name: d.setlists[Number(key.slice(3))].name };
+    const proc = () => card.querySelector(".frProc").checked;
+    const go = async (extra, btn) => {
+      btn.disabled = true;
+      try {
+        const r = await api("/api/friends/install", { friend: fr.page, list: spec, process: proc(), ...extra });
+        let m = r.queued ? tr("toast.downloading", { count: r.queued }) : "";
+        if (r.setlist) m += (m ? " · " : "") + tr("friends.setlist_queued", { name: r.setlist });
+        if (r.notFound.length) m += (m ? " · " : "") + tr("toast.not_found_online", { count: r.notFound.length });
+        if (r.failed) m += (m ? " · " : "") + tr("cloud.lookup_failed", { count: r.failed });
+        toast(m || tr("friends.nothing_to_do"), 6000, () => show("jobs"));
+        pollJobs(true); lib.version = -1; loadCloud();
+      } catch (e) { toast(e.message, 4500); }
+      renderFriendPage();
+    };
+    $$("[data-do]", card).forEach((b) => b.onclick = async () => {
+      const act = b.dataset.do;
+      if (act === "install") return go({}, b);
+      if (act === "favs") return go({ favourite: true }, b);
+      const r = await ask({ title: tr("friends.setlist_name_title"), input: spec.name, ok: tr("common.save") });
+      if (!r || !r.input.trim()) return;
+      go({ setlist: r.input.trim(), install: act === "installadd", favourite: false }, b);
+    });
+    $$("[data-fav]", card).forEach((b) => b.onclick = () => go({ keys: [b.dataset.fav], favourite: true }, b));
+  });
+}
+
 /* ================================================================ profile */
 const prof = { inst: "", diff: "" };
 function openSong(it) {
@@ -1018,7 +1191,8 @@ function songList(items, right, empty) {
 }
 async function loadProfile() {
   const body = $("#profileBody");
-  const [cs, d] = await Promise.all([loadCloud(), api(`/api/stats?instrument=${encodeURIComponent(prof.inst)}&difficulty=${encodeURIComponent(prof.diff)}`)]);
+  const [cs, d, fv] = await Promise.all([loadCloud(), api(`/api/stats?instrument=${encodeURIComponent(prof.inst)}&difficulty=${encodeURIComponent(prof.diff)}`),
+    api("/api/friends").catch(() => null)]);
   const T = d.totals, f = d.facets, H = d.heatmap;
   const max = Math.max(1, ...H.days.map((x) => x.n));
   const lvl = (n) => (n ? Math.min(4, 1 + Math.floor((n / max) * 3.999)) : 0);
@@ -1035,7 +1209,7 @@ async function loadProfile() {
         <div class="d-row" id="pCodeRow" hidden><input type="text" id="pCode" inputmode="numeric" maxlength="6" placeholder="${esc(tr("profile.code_ph"))}" autocomplete="one-time-code"><button class="primary" id="pVerify">${esc(tr("profile.verify"))}</button></div>
         <span id="pMsg" class="hint"></span></div></div>`;
   const sel = (id, vals, cur, any, label) => `<select id="${id}"><option value="">${esc(any)}</option>${vals.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label(v))}</option>`).join("")}</select>`;
-  body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}
+  body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}${cs.signedIn && fv && fv.needsUsername ? `<div class="fr-card" id="pUserBox">${usernameBox()}</div>` : ""}
     <div class="p-filter">${sel("pInst", f.instruments, prof.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, prof.diff, tr("profile.all_difficulties"), dn)}
       <span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span></div>
     <p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end"))}</p>
@@ -1063,6 +1237,7 @@ async function loadProfile() {
   fill("#lNeeds", d.needsPractice, (it) => `${esc(tr("profile.best_pct", { pct: pct(it.bestAccuracy) }))}<small>${it.plays}×</small>`, tr("profile.empty.needs"));
   fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, tr("profile.empty.pbs"));
   fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, tr("profile.empty.recent"));
+  if ($("#pUserBox")) bindUsernameBox($("#pUserBox"), () => loadProfile());
   if (cs.signedIn) {
     $("#pOut").onclick = signOut; $("#pSync").onclick = syncNow;
     $("#pRename").onclick = async (e) => {
@@ -1209,6 +1384,7 @@ function refreshView() {
     case "settings": loadSettings(); break;
     case "setup": loadSetup(); break;
     case "profile": loadProfile(); break;
+    case "friends": loadFriends(true); break;
     case "leaderboards": loadLeaderboards(); break;
     case "setlists": loadSetlists(); break;
     case "dupes": loadDupes(); break;
@@ -1223,7 +1399,7 @@ I18N.onChange(() => {
   const g = $("#libGroup"); if (g.options[0]) g.options[0].textContent = tr("lib.all_folders");
   $("#runBtn").textContent = $("#runOpts").classList.contains("on") ? tr("lib.start", { count: st.sel.size }) : tr("lib.run");
   $("#plToggle").textContent = $("#plAudio").paused ? tr("player.play") : tr("player.pause");
-  updateSelbar(); updateFavCount(); applyFilters(); renderCloudFavs();
+  updateSelbar(); updateFavCount(); applyFilters(); renderCloudFavs(); paintShare();
   if (jobsSnap) renderDock();
   pollJobs(true);                            // the server re-translates job messages for the new language
   if (activeId && !previewing) refreshDetail();
@@ -1236,7 +1412,7 @@ I18N.onChange(() => {
   I18N.apply(document); fillLangSelects(); bindLangSelects(); I18N.observe();
   $("#runBtn").textContent = tr("lib.run"); $("#plToggle").textContent = tr("player.pause");
   loadLibrary().then(() => { pollLibrary(); pollJobs(); });
-  loadCloud();
+  loadCloud(); pollFriends(); setInterval(pollFriends, 30000);
   // First run (or the data folder vanished): open the setup screen.
   api("/api/setup").then((d) => {
     const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found

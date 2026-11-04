@@ -42,6 +42,7 @@ class CloudError(Exception):
     def __init__(self, msg: str, status: int | None = None, offline: bool = False):
         super().__init__(msg)
         self.status, self.offline = status, offline
+        self.body = ""
 
 
 def _http(method: str, url: str, headers: dict, body: bytes | None, timeout: float = 20.0) -> tuple[int, bytes]:
@@ -247,7 +248,9 @@ class Cloud:
                 continue
             if status >= 400:
                 msg = raw.decode("utf-8", "replace")[:300]
-                raise CloudError(_("cloud.request_failed", method=method, path=path, status=status, detail=msg), status)
+                err = CloudError(_("cloud.request_failed", method=method, path=path, status=status, detail=msg), status)
+                err.body = msg          # the server's own words (e.g. 'not_found' from a friends RPC)
+                raise err
             if not raw:
                 return None
             try:
@@ -522,6 +525,54 @@ class CloudSync:
         self.state["cloud_only"] = cloud_only       # so the count is right at the next launch, before any sync
         self._save_state()
 
+    # ------------------------------------------------------------ setlists
+    def _setlist_state(self) -> dict:
+        st = self.state.get("setlists")
+        if not isinstance(st, dict) or st.get("uid") != self._uid():
+            st = self.state["setlists"] = {"uid": self._uid(), "sig": {}, "meta": {}}
+        return st
+
+    def sync_setlists(self) -> int:
+        """Upload the local Clone Hero .setlist files (the source of truth for the game) as cloud setlists, with
+        each chart's artist, title, charter and source so a friend can find or install it. Only changed lists are
+        sent; a list deleted here since the last sync is deleted in the cloud. The 'Favourites' setlist is derived
+        from the favourites and is not uploaded. Returns the number of lists uploaded."""
+        from . import setlists as sl
+        lm, c, st = self.lm, self.cloud, self._setlist_state()
+        local = {x["name"]: x["entries"] for x in sl.list_all(lm.data_dir) if x["name"] != lm.FAV_SETLIST}
+        if not local and not st["sig"]:
+            return 0
+        try:
+            lm._hash_index()
+        except Exception as e:
+            log.debug("hash index failed: %s", e)
+        meta = st["meta"]
+        for s in self._songs():
+            h = lm.chart_md5(s)
+            if h:
+                meta[h] = self._record(s)
+        remote = {r["name"] for r in (c.rest("GET", "setlists", {"select": "name", "owner": f"eq.{self._uid()}"}) or [])}
+        for name in [n for n in st["sig"] if n not in local]:       # deleted here since the last sync
+            c.rest("DELETE", "setlists", {"owner": f"eq.{self._uid()}", "name": f"eq.{name}"}, prefer="return=minimal")
+            st["sig"].pop(name, None)
+        sent = 0
+        for name, entries in local.items():
+            items = []
+            for h, _speed in entries:
+                h = h.upper()
+                items.append(meta.get(h) or {"song_key": h, "checksum": h, "artist": "", "name": "", "charter": "",
+                                              "album": "", "source": {}})
+            sig = hashlib.md5(json.dumps(items, sort_keys=True).encode()).hexdigest()
+            if st["sig"].get(name) == sig and name in remote:
+                continue
+            c.rest("POST", "rpc/upsert_setlist", None, {"p_name": name, "p_items": items})
+            st["sig"][name] = sig
+            sent += 1
+        if len(meta) > 20000:
+            st["meta"] = dict(list(meta.items())[-20000:])
+        self._save_state()
+        return sent
+
     # ------------------------------------------------------------ plays
     def _uid(self):
         return self.cloud.user().get("id")
@@ -586,7 +637,8 @@ class CloudSync:
                 return res
             self.syncing = True
         try:
-            for name, fn in (("favorites", self.sync_favorites), ("pushed", self.push_plays), ("pulled", self.pull_plays)):
+            for name, fn in (("favorites", self.sync_favorites), ("setlists", self.sync_setlists),
+                             ("pushed", self.push_plays), ("pulled", self.pull_plays)):
                 res[name] = fn()
             self.state["lastSync"] = int(time.time())
             self.state["lastError"] = None
@@ -622,7 +674,7 @@ class CloudSync:
 
     def reset_account_state(self):
         """After sign-out: forget per-account progress so the next account starts clean."""
-        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, lastSync=None, lastError=None, cloud_only=[])
+        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, setlists={}, lastSync=None, lastError=None, cloud_only=[])
         self.cloud_only = []
         self.playlog.clear_cloud()
         self._save_state()

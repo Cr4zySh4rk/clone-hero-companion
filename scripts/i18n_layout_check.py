@@ -34,7 +34,7 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers")
 from chcompanion.i18n import LANGUAGES  # noqa: E402
 
 SIZES = [(1400, 900), (980, 620)]           # 980x620 is the smallest main window the app allows
-VIEWS = ["library", "favs", "charts", "spotify", "setlists", "dupes", "jobs", "profile", "leaderboards", "now", "setup", "settings"]
+VIEWS = ["library", "favs", "charts", "spotify", "setlists", "dupes", "jobs", "profile", "friends", "leaderboards", "now", "setup", "settings"]
 ALLOW_ENGLISH = {"Clone Hero", "Companion", "Clone Hero Companion", "Chorus Encore", "RhythmVerse", "CH Leaderboards", "YouTube",
                  "Spotify", "OBS", "Google", "Chrome", "Edge", "Firefox", "Safari", "Brave", "yt-dlp", "Deno", "Guitar", "Bass",
                  "Rhythm", "Drums", "Keys", "Vocals", "Expert", "Hard", "Medium", "Easy", "720p", "1080p", "OK", "FC", "HD",

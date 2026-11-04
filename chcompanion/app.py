@@ -9,6 +9,7 @@ import queue
 import re
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +19,7 @@ from pathlib import Path
 from . import __version__, net, youtube
 from . import ingame, metadata, leaderboard
 from .cloud import Cloud, CloudSync
+from .friends import Friends, POLL_S as FRIENDS_POLL_S
 from .playstats import PlayLog, PlayWatcher, candidate_files
 from .jobs import Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
 from .libmgr import LibraryManager, song_id
@@ -53,6 +55,10 @@ class Companion:
         self.playlog = PlayLog()
         self.cloud = Cloud()
         self.cloudsync = CloudSync(self.cloud, store, self.libmgr, self.playlog)
+        self.friends = Friends(self.cloud, self.cloudsync, self.libmgr)
+        self.pending_setlists: dict[str, dict] = {}     # friend-setlist installs waiting for their download jobs
+        self._psl_lock = threading.Lock()
+        self._stop = threading.Event()
         self.libmgr.on_fav = self.cloudsync.fav_changed
         self.libmgr.on_rekey = self.cloudsync.rekey
         self.lb = leaderboard.Client()
@@ -418,6 +424,7 @@ class Companion:
     def after_login(self):
         """First sync after signing in; adopts a CH username saved from another machine."""
         self.cloudsync.sync_all()
+        self.friends.poll()
         try:
             name = (self.cloud.get_profile() or {}).get("ch_username")
             if name and not self.settings().get("ch_username"):
@@ -521,7 +528,67 @@ class Companion:
             return False
         return (song_id(self.song) == job.song_id and self.clock.status in ("playing", "paused"))
 
+    # ---- a friend's setlist: install what is missing, then write the .setlist from the local copies
+    def queue_friend_setlist(self, name: str, rows: list[dict], jobs: list[Job]):
+        """Submit the download jobs, then (once they have all finished) a 'setlist' job that writes the Clone
+        Hero .setlist from the charts now in the library. With no downloads the setlist job goes straight in."""
+        if not jobs:
+            self.submit_setlist_job(name, rows)
+            return
+        token = uuid.uuid4().hex
+        with self._psl_lock:
+            self.pending_setlists[token] = {"name": name, "rows": rows, "jobs": {j.id for j in jobs}}
+        for j in jobs:
+            j.options["fsl"] = token
+            self.jobs.submit(j)
+
+    def submit_setlist_job(self, name: str, rows: list[dict]):
+        self.jobs.submit(Job("setlist", _("job.setlist_title", name=name), options={"name": name, "rows": rows},
+                             priority=PRIO_USER))
+
+    def _friend_job_finished(self, job: Job):
+        tok = job.options.get("fsl")
+        with self._psl_lock:
+            p = self.pending_setlists.get(tok)
+            if not p:
+                return
+            p["jobs"].discard(job.id)
+            if p["jobs"]:
+                return
+            self.pending_setlists.pop(tok, None)
+        self.submit_setlist_job(p["name"], p["rows"])
+
+    def _run_setlist(self, job: Job, progress) -> str:
+        from . import setlists as sl
+        o = job.options
+        progress(_("job.setlist_matching"))
+        self.libmgr._reindex()
+        self.libmgr._hash_index()
+        find = self.friends.matcher()
+        entries, seen, missing = [], set(), 0
+        for r in o["rows"]:
+            s = find(r)
+            h = s is not None and self.libmgr.chart_md5(s, compute=True)
+            if not h:
+                missing += 1
+            elif h not in seen:
+                seen.add(h)
+                entries.append((h, 100))
+        if not entries:
+            raise RuntimeError(_("job.setlist_empty"))
+        progress(_("job.setlist_writing"))
+        name = sl.safe(o["name"])
+        sl.save(self.data_dir, name, entries)
+        self.cloudsync.schedule()
+        return _("job.setlist_saved", name=name, count=len(entries), missing=missing)
+
+    def _friends_poll(self):
+        while not self._stop.wait(FRIENDS_POLL_S):
+            self.friends.poll()
+
     def _job_changed(self, job: Job):
+        if job.options.get("fsl") and job.status in ("done", "failed", "cancelled"):
+            self._friend_job_finished(job)
         if self.song and job.song_id == song_id(self.song):
             if job.status == "done" and self.video.get("kind") != "local":
                 # the song now has its own video file: show that one
@@ -532,6 +599,8 @@ class Companion:
     def _run_job(self, job: Job, progress) -> str:
         if job.kind == "download":
             return self._run_download(job, progress)
+        if job.kind == "setlist":
+            return self._run_setlist(job, progress)
         song = self._locate_chart(job)
         o = job.options
         parts = []
@@ -691,6 +760,8 @@ class Companion:
         self.playwatcher.start()
         if self.cloud.signed_in:
             threading.Thread(target=self.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
+            threading.Thread(target=self.friends.poll, daemon=True, name="friends-poll").start()
+        threading.Thread(target=self._friends_poll, daemon=True, name="friends-poll-loop").start()
         self.jobs.start()
         def scan_then_repair():
             from .library import sweep_temp_files
