@@ -44,7 +44,7 @@ jobs:
   macos:
     needs: [test, release]
     if: ${{ !cancelled() && needs.test.result == 'success' }}
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       PY: /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
       ASSET: CloneHeroCompanion-macOS-universal.dmg
