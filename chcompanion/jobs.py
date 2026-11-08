@@ -112,10 +112,12 @@ class JobManager:
         self.on_change(job)
         return job
 
-    def cancel(self, job_id: str | None = None):
+    def cancel(self, job_id: str | None = None, kind: str | None = None):
         with self.lock:
             targets = [self.jobs[job_id]] if job_id in self.jobs else (
                 list(self.jobs.values()) if job_id is None else [])
+            if kind:
+                targets = [j for j in targets if j.kind == kind]
             for j in targets:
                 if j.status in ("queued", "waiting", "running"):
                     j.cancel.set()

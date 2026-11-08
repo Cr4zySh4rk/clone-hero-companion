@@ -66,6 +66,7 @@ class LibraryManager:
         self.enriching = False
         self.enrich_progress = (0, 0)
         self.version = 0
+        self.on_scanned = None       # called (no args) after every rescan
         self._save_timer = None
         self._save_lock = threading.Lock()
         self._fav_lock = threading.Lock()
@@ -93,6 +94,11 @@ class LibraryManager:
             log.debug("favourite reconcile failed: %s", e)
         self.start_fav_recovery()
         self.start_enrich()
+        if self.on_scanned:
+            try:
+                self.on_scanned()
+            except Exception as e:
+                log.debug("after-scan hook failed: %s", e)
 
     def _reindex(self):
         with self.lock:

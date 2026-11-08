@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import ytupdate
+from . import hwvideo, ytupdate
 from . import __version__, youtube
 from .jobs import Job, PRIO_BATCH, PRIO_USER
 from .libmgr import find_game, launch_game, reveal, song_id
@@ -108,7 +108,16 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         snap["youtube"] = youtube.GATE.status()
         snap["ytdlp"] = ytupdate.active_info()
         snap["now"] = {"status": c.clock.status, "song": c.clock.song}
+        snap["convert"] = c.convert_status()
         return _json(h, snap) or True
+    if path == "/api/videos/convert" and method == "POST":
+        return _json(h, {"queued": c.convert_videos()}) or True
+    if path == "/api/videos/convert/later" and method == "POST":
+        c.update_settings({"video_convert_asked": __version__})
+        return _json(h, c.convert_status()) or True
+    if path == "/api/videos/convert/cancel" and method == "POST":
+        c.jobs.cancel(kind="convert")
+        return _json(h, {"ok": True}) or True
     if path == "/api/jobs" and method == "POST":
         kind = body.get("kind", "full")
         prio = PRIO_USER if len(body.get("ids") or []) <= 3 else PRIO_BATCH
@@ -125,7 +134,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             n += 1
         return _json(h, {"queued": n, **extra}) or True
     if path == "/api/jobs/cancel" and method == "POST":
-        c.jobs.cancel(body.get("id"))
+        c.jobs.cancel(body.get("id"), body.get("kind"))
         return _json(h, {"ok": True}) or True
     if path == "/api/jobs/retry" and method == "POST":
         c.jobs.retry_failed()
@@ -378,6 +387,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                          "version": __version__, "ytdlp": _ytdlp_version(),
                          "jsRuntime": _js_label(), "jsHelp": youtube.JS_HELP,
                          "ejs": youtube.ejs_status(), "ffmpeg": bool(ffmpeg_path()),
+                         "videoPath": hwvideo.describe() if ffmpeg_path() else "",
                          "minP": youtube.MIN_P, "youtube": youtube.GATE.status(),
                          "ytdlpInfo": ytupdate.active_info()}) or True
     if path == "/api/settings" and method == "POST":

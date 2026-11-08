@@ -123,10 +123,8 @@ class FlowTests(unittest.TestCase):
                 mock.patch.object(ingame, "cached_video", return_value=None), \
                 mock.patch.object(ingame, "per_manual_offset", return_value=True), \
                 mock.patch.object(ingame, "looks_static", return_value=False), \
-                mock.patch.object(ingame, "PREFER_WEBM", False), \
-                mock.patch.object(ingame, "_to_h264"), mock.patch.object(ingame, "probe_codec", return_value="h264"), \
-                mock.patch.dict("os.environ", {"CHC_TARGET_OS": "darwin"}), \
-                mock.patch.object(ingame, "mp4_needs_remux", return_value=False):
+                mock.patch.object(ingame, "encode_vp8", lambda s, d, pad=0.0, progress=None: Path(d).write_bytes(b"w")), \
+                mock.patch.object(ingame, "video_res", return_value=720):
             return ingame.download_video(song(), youtube.YouTube(), store or Store())
 
     def watches(self):
@@ -135,7 +133,7 @@ class FlowTests(unittest.TestCase):
     def test_age_restricted_candidate_is_skipped_without_a_cooldown(self):
         Fy.answers = {"vid0": err("age_gate_embedding_disabled")}
         out = self.run_video()
-        self.assertTrue(str(out).endswith(".mp4"))
+        self.assertTrue(str(out).endswith(".webm"))
         self.assertEqual([c.rsplit("=", 1)[-1] for c in self.watches()], ["vid0", "vid1"])
         self.assertEqual((youtube.GATE.remaining(), youtube.GATE.strikes), (0, 0))
 

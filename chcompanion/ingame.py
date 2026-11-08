@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 from .process import run as run_process
-import sys
+import subprocess
 import tempfile
 import threading
 import time
@@ -136,33 +136,14 @@ def _ffmpeg() -> str | None:
     return ffmpeg_path()
 
 
-def pad_video_start(src: Path, seconds: float) -> Path:
-    """Prepend `seconds` of black so the video can start together with the song
-    (instead of relying on a negative video_start_time)."""
-    ff = _ffmpeg()
-    if not ff:
-        raise InGameError(_("ingame.no_ffmpeg"))
-    webm = src.suffix.lower() == ".webm"
-    dst = src.with_name("padded" + (".webm" if webm else ".mp4"))
-    vf = ["-vf", f"tpad=start_duration={seconds:.3f}:color=black"]
-    if webm:
-        _encode(ff, src, dst, vf + ["-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime",
-                                    "-cpu-used", "8"])
-    else:
-        _encode_h264(ff, src, dst, vf)
-    src.unlink(missing_ok=True)
-    return dst.rename(src.with_name("video" + dst.suffix))
+# --------------------------------------------------------------- VP8 / WebM encoding
+# Every video we write into a song is VP8 in WebM: Clone Hero plays that on Windows, macOS and Linux, so a
+# library can be copied between systems. YouTube serves no VP8 at HD, so nearly every video is re-encoded;
+# the settings below are the fastest ones whose quality is fine behind a highway (see the 2.3.1 notes).
+from .hwvideo import MAX_HEIGHT, encode_slots  # noqa: E402
+from . import hwvideo  # noqa: E402
 
-
-def _to_vp8(src: Path, dst: Path) -> None:
-    ff = _ffmpeg()
-    if not ff:
-        raise InGameError(_("ingame.ffmpeg_needed_linux"))
-    r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
-                        "-c:v", "libvpx", "-b:v", "2500k", "-crf", "10", "-deadline", "realtime",
-                        "-cpu-used", "8", str(dst)], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise InGameError(_("ingame.ffmpeg_failed", detail=r.stderr.strip()[-300:]))
+WEB_EXTS = (".webm", ".ogv", ".vp8")
 
 
 def _probe(p: Path) -> tuple[tuple[int, int], int]:
@@ -187,44 +168,110 @@ def looks_static(p: Path) -> bool:
     return bool(kbps) and kbps < 90
 
 
-def _to_h264(src: Path, dst: Path) -> None:
+_ENCODES = threading.Semaphore(encode_slots())     # encodes are CPU heavy and multithreaded
+_PROGRESS_KEYS = {"frame", "fps", "bitrate", "total_size", "out_time_us", "out_time_ms", "out_time", "dup_frames",
+                  "drop_frames", "speed", "progress"}
+
+
+def _encode(ff: str, src: Path, dst: Path, args: list[str], progress=None, total: float = 0.0,
+            pre: list[str] = ()) -> None:
+    """Run ffmpeg, reporting the percentage from its -progress output (needs `total` seconds).
+    pre: input options (hardware decoding) that go before -i."""
+    from .process import popen
+    cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", *pre, "-i", str(src), *args,
+           "-progress", "pipe:1", str(dst)]
+    if not _ENCODES.acquire(blocking=False):
+        if progress:
+            progress(_("ingame.waiting_encoder"))
+        _ENCODES.acquire()
+    proc = None
+    try:
+        proc = popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        last, errs = -1, []
+        for line in proc.stdout:
+            key, sep, val = line.strip().partition("=")
+            if sep and key in _PROGRESS_KEYS:
+                if key == "out_time_us" and total and progress and val.isdigit():
+                    pct = min(99, int(int(val) / 1e6 / total * 100))
+                    if pct != last:
+                        last = pct
+                        progress(_("ingame.encoding_pct", pct=pct))
+            elif line.strip():
+                errs.append(line.strip())
+        rc = proc.wait()
+    except BaseException:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except Exception:
+                proc.kill()
+        dst.unlink(missing_ok=True)
+        raise
+    finally:
+        _ENCODES.release()
+    if rc != 0:
+        dst.unlink(missing_ok=True)
+        raise InGameError(_("ingame.ffmpeg_failed", detail=" ".join(errs)[-300:]))
+
+
+def media_info(p: Path) -> dict:
+    """{'w', 'h', 'kbps', 'secs'} of a media file via ffmpeg -i (zeros if unknown)."""
+    ff = _ffmpeg()
+    out = {"w": 0, "h": 0, "kbps": 0, "secs": 0.0}
+    if not ff:
+        return out
+    try:
+        err = run_process([ff, "-hide_banner", "-i", str(p)], capture_output=True, text=True, timeout=30).stderr
+    except Exception:
+        return out
+    m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", err)
+    if m:
+        out["w"], out["h"] = int(m.group(1)), int(m.group(2))
+    m = re.search(r"bitrate:\s*(\d+)\s*kb/s", err)
+    if m:
+        out["kbps"] = int(m.group(1))
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err)
+    if m:
+        out["secs"] = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return out
+
+
+def encode_vp8(src: Path, dst: Path, pad: float = 0.0, progress=None) -> None:
+    """The one place a video becomes VP8 WebM (padding with black included, so a video is never encoded twice).
+    Tries the hardware paths hwvideo found (GPU decode/scale, rarely a GPU VP8 encode), each verified or
+    falling back, and always ends with the plain CPU path."""
     ff = _ffmpeg()
     if not ff:
-        raise InGameError(_("ingame.no_ffmpeg_convert"))
-    _encode_h264(ff, src, dst, [])
-
-
-# Re-encodes are CPU heavy: run only a few at once so downloads and lookups keep moving.
-_ENCODES = threading.Semaphore(max(2, (os.cpu_count() or 4) // 4))
-_HW = {"ok": None}     # does this ffmpeg have a working hardware H.264 encoder?
-
-
-def _encode(ff: str, src: Path, dst: Path, args: list[str]) -> None:
-    with _ENCODES:
-        r = run_process([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-an", *args, str(dst)],
-                           capture_output=True, text=True)
-    if r.returncode != 0:
-        dst.unlink(missing_ok=True)
-        raise InGameError(_("ingame.ffmpeg_failed", detail=r.stderr.strip()[-300:]))
-
-
-def _encode_h264(ff: str, src: Path, dst: Path, pre: list[str]) -> None:
-    """H.264 for Clone Hero: Apple's hardware encoder on macOS (fast, light on the CPU),
-    otherwise x264."""
-    tail = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
-    if sys.platform == "darwin" and _HW["ok"] is not False:
+        raise InGameError(_("ingame.ffmpeg_needed"))
+    info = media_info(src)
+    total = (info["secs"] + pad) if info["secs"] else 0.0
+    expect = 0
+    for path in hwvideo.plan():
+        pre, post = hwvideo.build(path, info["w"], info["h"], pad)
         try:
-            _wh, kbps = _probe(src)
-            rate = max(3500, min(9000, int(kbps * 1.4) if kbps else 5000))
-            _encode(ff, src, dst, pre + ["-c:v", "h264_videotoolbox", "-b:v", f"{rate}k", "-profile:v", "high",
-                                         "-allow_sw", "1", *tail])
-            _HW["ok"] = True
+            _encode(ff, src, dst, post, progress, total, pre)
+            if path.encode:          # a GPU-made VP8 file is only trusted when it checks out
+                expect = expect or hwvideo.count_frames(ff, src)
+                if not hwvideo.verify_output(ff, dst, expect):
+                    raise InGameError(_("ingame.ffmpeg_failed", detail="GPU output failed verification"))
             return
         except InGameError as e:
-            if _HW["ok"] is None:
-                log.info("Hardware video encoder not available (%s); using x264", str(e)[:120])
-            _HW["ok"] = False
-    _encode(ff, src, dst, pre + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", *tail])
+            if path.key == "cpu":
+                raise
+            dst.unlink(missing_ok=True)
+            hwvideo.note_failed(path, str(e))
+
+
+PAD_MARK = ".padded"
+
+
+def padded_seconds(vpath: Path) -> float:
+    """Seconds of black download_video already put in front of this video (0 if none)."""
+    try:
+        return float((vpath.parent / PAD_MARK).read_text())
+    except (OSError, ValueError):
+        return 0.0
 
 
 STD_MP4_BRANDS = {b"isom", b"mp42", b"mp41", b"avc1", b"M4V ", b"qt  ", b"iso2"}
@@ -294,19 +341,33 @@ def repair_fragmented_videos(songs, progress=None) -> int:
     return fixed
 
 
-# Which codecs Clone Hero plays per platform (Clone Hero manual: VP8 .webm works everywhere,
-# .mp4 needs H.264 on Windows/macOS, Linux only plays VP8 .webm and .ogv).
-PLAYABLE = {
-    "linux": {"vp8", "theora"},
-    "win32": {"h264", "vp8", "theora", "mpeg1video", "mpeg2video"},
-    "darwin": {"h264", "hevc", "vp8", "theora", "mpeg1video", "mpeg2video"},
-}
-PREFER_WEBM = False      # setting "Video format for Clone Hero: WebM (most compatible)"
+# What we write: VP8 in WebM, which Clone Hero plays on Windows, macOS and Linux (an .mp4 with H.264 plays on
+# Windows/macOS only; on Linux just VP8 .webm and .ogv do). Videos already in the library may be MP4.
+def playable_in_game(codec: str) -> bool:
+    """Plays in Clone Hero on every OS."""
+    return not codec or codec in ("vp8", "theora")      # unknown: don't touch it
 
 
-def target_os() -> str:
-    t = os.environ.get("CHC_TARGET_OS", sys.platform)
-    return "linux" if t.startswith("linux") else "win32" if t.startswith("win") else "darwin"
+def video_names(song: Song) -> list[str]:
+    return [n for n in song.list_files() if n.lower() in VIDEO_NAMES]
+
+
+def needs_vp8(song: Song) -> bool:
+    """The song's video is in a container that does not play everywhere (MP4, MOV...) and there is no WebM.
+    Judged by file name only, so a whole library can be checked quickly after a scan."""
+    names = [n.lower() for n in video_names(song)]
+    return bool(names) and not any(n.endswith(WEB_EXTS) for n in names)
+
+
+def unplayable_songs(songs) -> list[Song]:
+    out = []
+    for s in songs:
+        try:
+            if needs_vp8(s):
+                out.append(s)
+        except Exception:
+            continue
+    return out
 
 
 def probe_codec(p: Path) -> str:
@@ -320,33 +381,6 @@ def probe_codec(p: Path) -> str:
         return ""
     m = re.search(r"Video:\s*([A-Za-z0-9_]+)", err)
     return m.group(1).lower() if m else ""
-
-
-def playable_in_game(codec: str) -> bool:
-    if not codec:
-        return True          # unknown: don't touch it
-    ok = PLAYABLE[target_os()]
-    if PREFER_WEBM:
-        ok = {"vp8"}
-    return codec in ok
-
-
-def current_video_codec(song: Song, store: Store) -> str:
-    """Codec of the video the song already has (cached by size/mtime)."""
-    try:
-        p = song.local_video()
-        if not p:
-            return ""
-        st = (song.path if song.is_sng else p).stat()
-        sig = f"{st.st_size}:{int(st.st_mtime)}"
-        per = store.song(song.key)
-        if per.get("video_codec_probe", {}).get("sig") == sig:
-            return per["video_codec_probe"]["codec"]
-        codec = probe_codec(p)
-        store.update_song(song.key, video_codec_probe={"sig": sig, "codec": codec})
-        return codec
-    except Exception:
-        return ""
 
 
 # --------------------------------------------------------------- video cache
@@ -387,7 +421,7 @@ def fetch_preview_video(song: Song, yt: YouTube, store: Store, progress=None) ->
         hit = cached_video(per.get("video_id")) if per.get("video_id") else None
         if hit:
             return hit
-        vpath = download_video(song, yt, store, progress)
+        vpath = download_video(song, yt, store, progress, convert=False)
         try:
             vid = store.song(song.key).get("video_id")
             dst = video_cache_dir() / f"{vid}{vpath.suffix.lower()}"
@@ -425,10 +459,12 @@ def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
 
 
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False,
-                   defer: bool = False) -> Path:
-    """Download the best matching HD (>= 640p) music video for the song, lined up and
-    in a codec Clone Hero plays on this OS. Raises InGameError if there is none.
-    defer: while a YouTube cool-down runs, raise BotDetected at once instead of waiting it out."""
+                   defer: bool = False, convert: bool = True) -> Path:
+    """Download the best matching HD (>= 640p) music video for the song, lined up and as VP8 WebM (plays in
+    Clone Hero on every OS). A video that is already VP8 is used as it is; a lead-in of black for a negative
+    offset is folded into the one encode (see padded_seconds). Raises InGameError if there is none.
+    defer: while a YouTube cool-down runs, raise BotDetected at once instead of waiting it out.
+    convert=False: return the original download (for the Now Playing preview), nothing is encoded."""
     from .youtube import GATE, BotDetected, NoHDVideo, VideoProblem
 
     def gate_wait():
@@ -546,24 +582,20 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             if "BotDetected" in type(e).__name__:
                 raise
             log.warning("Could not line up the video for %s: %s", song.display, e)
-    target = os.environ.get("CHC_TARGET_OS", sys.platform)
     codec = (fmt.get("vcodec") or "").lower()
-    if target.startswith("linux") or PREFER_WEBM:
-        if not (path.suffix.lower() == ".webm" and codec.startswith("vp8")):
-            if progress:
-                progress(_("ingame.converting_vp8"))
-            out = tmpdir / "video_vp8.webm"
-            _to_vp8(path, out)
-            path.unlink(missing_ok=True)
-            return out.rename(tmpdir / "video.webm")
-    elif not (codec.startswith("avc1") or codec.startswith("h264")):
-        if progress:
-            progress(_("ingame.converting_h264"))
-        out = tmpdir / "video_h264.mp4"
-        _to_h264(path, out)
+    if convert:
+        pad = -float(store.song(song.key).get("video_offset", 0.0) or 0.0)
+        pad = pad if pad >= 0.05 else 0.0
+        height = (video_res(path) or int(fmt.get("res_class") or 0)) if codec.startswith("vp8") else 0
+        if path.suffix.lower() == ".webm" and codec.startswith("vp8") and not pad and 0 < height <= MAX_HEIGHT + 20:
+            return path          # YouTube offered VP8 (rare) or the cache had it: no re-encode
+        out = tmpdir / "video_vp8.webm"
+        encode_vp8(path, out, pad, progress)
         path.unlink(missing_ok=True)
-        return out.rename(tmpdir / "video.mp4")
-    elif path.suffix.lower() in (".mp4", ".m4v"):
+        if pad:
+            (tmpdir / PAD_MARK).write_text(f"{pad:.3f}")
+        return out.rename(tmpdir / "video.webm")
+    if path.suffix.lower() in (".mp4", ".m4v"):
         with open(path, "rb") as f:
             head = f.read(16)
         if mp4_needs_remux(head):
@@ -746,19 +778,21 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
                     store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
                     per = store.song(song.key)
         existing = has_video(song)
-        unplayable = existing and video and not playable_in_game(current_video_codec(song, store))
+        converted = None
+        if existing and video and not force_video and needs_vp8(song):
+            # a video from before (MP4): convert it in place instead of downloading it again
+            try:
+                converted = convert_song_video(song, store, progress)
+            except Exception as e:
+                log.warning("Could not convert the video of %s (%s); getting a new one", song.display, e)
+            if converted:
+                result["video"] = converted
+                store.update_song(song.key, game_video=converted)
+        unplayable = existing and video and converted is None and needs_vp8(song)
         want_video = video and (force_video or not existing or unplayable
                                 or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD))
         vpath = None
-        keep_start = False
-        if want_video and unplayable and not force_video and PREFER_WEBM and per.get("game_video"):
-            # a video we added earlier, just in a format this setup can't use: convert it
-            vpath = _convert_existing_to_webm(song, progress)
-            keep_start = vpath is not None
-        if want_video and vpath is None:
-            if unplayable:
-                log.info("%s has a video Clone Hero can't play here (%s); getting a new one",
-                         song.display, current_video_codec(song, store))
+        if want_video:
             try:
                 vpath = download_video(song, yt, store, progress, force=force_video or unplayable,
                                        defer=defer_video)
@@ -771,17 +805,8 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             per = store.song(song.key)
         off_v = float(per.get("video_offset", 0.0) or 0.0)
         write_v = off_v  # value for video_start_time
-        if keep_start:   # converted in place: padding and start time stay as they were
-            off_v = float(per.get("video_offset_written", 0.0) or 0.0)
-            write_v = song.video_start_s
-        elif vpath and off_v <= -0.05:
-            try:
-                if progress:
-                    progress(_("ingame.adjusting_start"))
-                vpath = pad_video_start(vpath, -off_v)
-                write_v = 0.0
-            except Exception as e:
-                log.warning("Could not pad the video (%s); using a negative video_start_time", e)
+        if vpath and padded_seconds(vpath):     # the black lead-in is already in the file (one encode)
+            write_v = 0.0
         off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
         try:
             if song.is_sng:
@@ -792,12 +817,10 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
             if vpath:
                 shutil.rmtree(vpath.parent, ignore_errors=True)
         changes = {}
-        if result["video"] and not keep_start:
+        if result["video"] and vpath:
             changes["game_video"] = result["video"]
             changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
             changes["video_padded"] = round(off_v - write_v, 3) or None
-        elif result["video"]:
-            changes["game_video"] = result["video"]
         if result["lyrics"] == "added":
             changes["game_lyrics"] = True
             changes["lyrics_offset_written"] = off_l
@@ -806,29 +829,43 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         return result
 
 
-def _convert_existing_to_webm(song: Song, progress=None) -> Path | None:
-    src = song.local_video()
-    if not src:
-        return None
-    tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
-    out = tmpdir / "video.webm"
-    try:
+def convert_song_video(song: Song, store: Store, progress=None) -> str | None:
+    """Re-encode the song's MP4 (folder or .sng) as VP8 WebM and replace it: a folder gets video.webm and loses
+    video.mp4; a .sng is repacked with video.webm (backup first, then verified, like every .sng change here).
+    Start time and padding stay as they were. Returns the new name, None if there was nothing to convert."""
+    with _lock_for(song.key):
+        if not song.path.exists():
+            raise InGameError(chart_gone())
+        names = video_names(song)
+        if not names or not needs_vp8(song):
+            return None
         if progress:
             progress(_("ingame.converting_webm"))
-        _to_vp8(src, out)
-        return out
-    except Exception as e:
-        log.warning("Could not convert the video of %s: %s", song.display, e)
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        return None
+        tmpdir = Path(tempfile.mkdtemp(prefix="chc-conv-", dir=cache_dir()))
+        try:
+            if song.is_sng:
+                src = open_sng(str(song.path))
+                name = next(n for n in src.files if n.lower() in VIDEO_NAMES)
+                a = tmpdir / ("in" + Path(name).suffix.lower())
+                a.write_bytes(src.read(name))
+            else:
+                a = song.path / names[0]
+            out = tmpdir / "video.webm"
+            encode_vp8(a, out, progress=progress)
+            if not out.exists() or out.stat().st_size == 0:
+                raise InGameError(_("ingame.ffmpeg_failed", detail="empty output"))
+            result: dict = {"video": None, "lyrics": None}
+            if song.is_sng:
+                _apply_sng(song, out, [], 0.0, song.video_start_s, result)
+            else:
+                _apply_folder(song, out, [], 0.0, song.video_start_s, result)
+            return result["video"]
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
     if vpath:
-        for n in VIDEO_NAMES:
-            old = song.path / n
-            if old.exists():
-                old.unlink()
         dst = song.path / ("video" + vpath.suffix.lower())
         tmp = song.path / ".chc-video.tmp"
         try:
@@ -843,6 +880,10 @@ def _apply_folder(song: Song, vpath: Path | None, lines, off_l, off_v, result):
             got = -1
         if got != want:
             raise InGameError(_("ingame.video_not_saved", path=song.path, got=got, want=want))
+        for n in VIDEO_NAMES:                # only now (a failed copy must not cost the old video)
+            old = song.path / n
+            if old.exists() and old.name != dst.name:
+                old.unlink()
         result["video"] = dst.name
         if abs(off_v) >= 0.05 or "video_start_time" in song.meta:
             _set_ini(song, "video_start_time", int(round(off_v * 1000)))
@@ -1013,8 +1054,7 @@ def _redo_video(song: Song, yt: YouTube, store: Store, progress=None) -> str | N
     off_v = float(per.get("video_offset", 0.0) or 0.0)
     write_v = off_v
     try:
-        if off_v <= -0.05:
-            vpath = pad_video_start(vpath, -off_v)
+        if padded_seconds(vpath):
             write_v = 0.0
         result: dict = {"video": None, "lyrics": None}
         if song.is_sng:

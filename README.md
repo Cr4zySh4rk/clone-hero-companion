@@ -127,7 +127,7 @@ tar xzf CloneHeroCompanion-linux-x64.tar.gz
 ./CloneHeroCompanion
 ```
 
-The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are saved as VP8 `.webm`, the format Clone Hero plays on Linux.
+The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are always saved as VP8 `.webm`, the one format Clone Hero plays on Windows, macOS and Linux.
 </details>
 
 ## Windows setup
@@ -153,13 +153,19 @@ After downloading new charts, run **Settings → Scan Songs** in Clone Hero so t
 ## FAQ
 
 <details>
+<summary><b>Moving your library between Mac/Windows and Linux</b></summary>
+
+Videos are always saved as VP8 WebM, which Clone Hero plays on Windows, macOS and Linux, so you can copy or drag a song library from one system to another and the videos still play. Older MP4 videos (from earlier versions of the app, or from another tool) don't play in Clone Hero on Linux: after a scan the app shows *"N songs have videos that won't play on every system"* with a **Convert** button that re-encodes them in place (folders get `video.webm`, `.sng` packages are repacked with a backup first). You can stop and continue later. Preparing takes longer than saving an MP4 because each video is re-encoded; where your computer has a supported GPU the app uses it to decode and scale, and *Settings → About* shows which path is used.
+</details>
+
+<details>
 <summary><b>Will it mess up my songs or my scores?</b></summary>
 
 Every file the app changes is backed up first (`*.chc-backup` next to it), and **Undo changes** puts the originals back. Videos, video alignment and metadata don't affect scores. Adding lyrics changes the chart file, so Clone Hero starts a fresh high-score list for that chart (your old scores come back if you undo). To leave charts untouched, turn off *Settings → In the game → Lyrics*.
 
 | | Song folder | `.sng` package |
 | --- | --- | --- |
-| Video | `video.mp4` (H.264), `video.webm` (VP8) on Linux | added inside the package |
+| Video | `video.webm` (VP8, plays on every OS) | `video.webm` inside the package |
 | Video alignment | `video_start_time` in `song.ini` | package metadata |
 | Lyrics (charts without them) | vocals track in `notes.mid` / events in `notes.chart` | same, inside the package |
 | Metadata | `album`, `year`, `genre`, `song_length`, `album.jpg` | package metadata, `album.jpg` |

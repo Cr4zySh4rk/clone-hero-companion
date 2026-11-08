@@ -71,21 +71,23 @@
 <p>You can also download from either site in your browser. Put the <code>.sng</code> file, or the extracted chart folder, inside one of your song folders, then run Scan Songs in Clone Hero. Clone Hero Companion will then list it and can add the video, lyrics and metadata.</p>
 
 <h2 id="video-formats">Clone Hero video background formats (WebM and MP4, per OS)</h2>
-<p>You do not have to convert anything when you use Clone Hero Companion, because it saves the format that works on your system. Here is what it writes.</p>
+<p>You do not have to convert anything when you use Clone Hero Companion: it always saves VP8 WebM, the one format that plays in Clone Hero on every system. Here is what it writes.</p>
 <div class="tblwrap"><table>
 <thead><tr><th>System</th><th>Video file</th><th>Notes</th></tr></thead>
 <tbody>
-<tr><td>macOS 11+</td><td><code>video.mp4</code> (H.264)</td><td>One universal build for Apple Silicon and Intel.</td></tr>
-<tr><td>Windows 10 / 11</td><td><code>video.mp4</code> (H.264)</td><td>Nothing else to install; ffmpeg is bundled.</td></tr>
-<tr><td>Linux x64</td><td><code>video.webm</code> (VP8)</td><td>The format Clone Hero plays on Linux.</td></tr>
+<tr><td>macOS 11+</td><td><code>video.webm</code> (VP8)</td><td>One universal build for Apple Silicon and Intel.</td></tr>
+<tr><td>Windows 10 / 11</td><td><code>video.webm</code> (VP8)</td><td>Nothing else to install; ffmpeg is bundled.</td></tr>
+<tr><td>Linux x64</td><td><code>video.webm</code> (VP8)</td><td>The only format Clone Hero plays on Linux.</td></tr>
 </tbody></table></div>
 <ul>
-<li><strong>Song folders:</strong> the video sits next to the chart as <code>video.mp4</code> or <code>video.webm</code>, and its offset is stored as <code>video_start_time</code> in <code>song.ini</code>.</li>
+<li><strong>Song folders:</strong> the video sits next to the chart as <code>video.webm</code>, and its offset is stored as <code>video_start_time</code> in <code>song.ini</code>.</li>
 <li><strong>.sng packages:</strong> the video and its alignment are added inside the package.</li>
 <li><strong>Resolution:</strong> 640p or better is accepted, 720p preferred and 1080p optional. Bigger files cost more disk space and decode time, so 720p is a good default for a large library.</li>
 </ul>
 <p>If you add a video yourself, use the file names above for your system, then use the song panel's <strong>Preview</strong> and <strong>Save sync to game</strong> to set the start offset. The videos themselves are fetched from YouTube, so the original upload decides the source quality.</p>
 
+<h3 id="move-library">Moving your library between Mac/Windows and Linux</h3>
+<p>Because every video is saved as VP8 WebM, a song library copied or dragged between Mac, Windows and Linux keeps its videos. MP4 videos from older versions or other tools do not play in Clone Hero on Linux: after a scan the app shows a banner, <em>N songs have videos that won't play on every system</em>, with a <strong>Convert</strong> button. It re-encodes each video in place (folders get <code>video.webm</code>; <code>.sng</code> packages are repacked after a backup), can be stopped and continued later, and shows its progress. It takes longer than saving an MP4 because each video is re-encoded.</p>
 <h2 id="organise-library">Organise a big Clone Hero library (duplicates, setlists, favourites)</h2>
 <p>Once you have thousands of charts, finding things matters more than collecting them. These tools are all in Clone Hero Companion's library.</p>
 <h3>Search, filter and sort</h3>

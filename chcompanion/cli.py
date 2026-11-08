@@ -175,6 +175,9 @@ def cmd_doctor(args) -> int:
     ff = ffmpeg_path()
     say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")
     if ff:
+        from . import hwvideo
+        say(hwvideo.describe())
+    if ff:
         import subprocess
         from .process import run as run_process, ToolStartError
         try:

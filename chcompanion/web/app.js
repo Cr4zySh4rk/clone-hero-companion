@@ -724,7 +724,7 @@ async function pollJobs(once) {
     jobsSnap = await api("/api/jobs");
     if (!jobsSeen) jobsSeen = new Set(jobsSnap.jobs.filter((j) => ["done", "failed", "cancelled"].includes(j.status)).map((j) => j.id));
     else if (jobsNewlyFinished(jobsSeen, jobsSnap).length) { loadLibrary(); loadCloud(); }   // charts landed: the "not on this machine" box shrinks
-    renderDock(); if (currentView === "jobs") renderJobs();
+    renderConvert(); renderDock(); if (currentView === "jobs") renderJobs();
     if (activeId && detail) {
       const j = jobsSnap.jobs.find((x) => x.songId === activeId);
       if (j) { const s = j.status === "done" ? j.result : j.status === "failed" ? tr("job.failed", { error: j.error }) : (j.step || tr("job.status." + j.status)); if (detail.status !== s) { detail.status = s; updateDetailStatus(); } }
@@ -733,6 +733,25 @@ async function pollJobs(once) {
   } catch (e) { /* ignore */ }
   if (!once) setTimeout(pollJobs, 1500);
 }
+/* videos that won't play on every system (MP4 from before 2.3.1, or from another computer) */
+function renderConvert() {
+  const el = $("#convertBanner"); const c = jobsSnap && jobsSnap.convert;
+  if (!el || !c) return;
+  if (c.active) {
+    el.hidden = false;
+    el.innerHTML = `<span>${esc(tr("convert.running", { n: nf(c.active) }))}</span> <button data-conv="cancel">${esc(tr("convert.cancel"))}</button>`;
+  } else if (c.count) {
+    el.hidden = false;
+    el.innerHTML = `<span>${esc(c.prompt ? tr("convert.ask") : tr("convert.banner", { n: nf(c.count) }))}</span>
+      <button class="primary" data-conv="go">${esc(tr(c.prompt ? "convert.now" : "convert.go"))}</button>${c.prompt ? ` <button data-conv="later">${esc(tr("convert.later"))}</button>` : ""}
+      <small class="hint">${esc(tr("convert.note"))}</small>`;
+  } else { el.hidden = true; el.innerHTML = ""; }
+}
+$("#convertBanner").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-conv]"); if (!b) return;
+  const url = { go: "/api/videos/convert", later: "/api/videos/convert/later", cancel: "/api/videos/convert/cancel" }[b.dataset.conv];
+  await api(url, {}); pollJobs(true);
+});
 function renderDock() {
   const c = jobsSnap.counts || {};
   const active = (c.running || 0) + (c.queued || 0) + (c.waiting || 0);
@@ -796,9 +815,7 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.pref_quality"))}</span><select data-k="pref_p"><option value="720"${s.pref_p == 720 ? " selected" : ""}>720p</option><option value="1080"${s.pref_p == 1080 ? " selected" : ""}>1080p</option></select>
         <small>${esc(tr("settings.min_note", { p: d.minP }))}</small></div>
       ${chk("replace_low_res", tr("settings.low_res"), tr("settings.low_res_help"))}
-      <div class="row2"><span>${esc(tr("settings.video_format"))}</span><select data-k="game_video_format">
-          <option value="auto"${s.game_video_format !== "webm" ? " selected" : ""}>${esc(tr("settings.format_auto"))}</option>
-          <option value="webm"${s.game_video_format === "webm" ? " selected" : ""}>${esc(tr("settings.format_webm"))}</option></select>
+      <div class="row2"><span>${esc(tr("settings.video_format"))}</span><span>${esc(tr("settings.format_webm"))}</span>
         <small>${esc(tr("settings.format_note"))}</small></div>
     </section>
     <section><h3>${esc(tr("settings.in_game"))}</h3>
@@ -830,6 +847,7 @@ async function loadSettings() {
     <section><h3>${esc(tr("settings.about"))}</h3>
       <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? esc(tr("settings.js_runtime", { name: d.jsRuntime, ejs: d.ejs })) : tr("settings.js_missing", { help: esc(d.jsHelp) })}</span></div>
       <div class="row2"><span>yt-dlp</span><span>${esc(d.ytdlpInfo.version)} (${esc(tr("about." + d.ytdlpInfo.source))}) <button id="ytdlpCheck">${esc(tr("settings.check_now"))}</button> <span id="ytdlpMsg" class="hint">${esc(d.ytdlpInfo.message || "")}</span></span></div>
+      ${d.videoPath ? `<div class="row2"><span>${esc(tr("settings.video_path"))}</span><span>${esc(d.videoPath)}</span></div>` : ""}
       <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
   bindLangSelects();

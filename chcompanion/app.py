@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, net, youtube
-from . import ingame, metadata, leaderboard
+from . import hwvideo, ingame, metadata, leaderboard
 from .cloud import Cloud, CloudSync
 from .friends import Friends, POLL_S as FRIENDS_POLL_S
 from .playstats import PlayLog, PlayWatcher, candidate_files
@@ -56,11 +56,13 @@ class Companion:
         self.cloud = Cloud()
         self.cloudsync = CloudSync(self.cloud, store, self.libmgr, self.playlog)
         self.friends = Friends(self.cloud, self.cloudsync, self.libmgr)
+        self.unplayable: list[str] = []
         self.pending_setlists: dict[str, dict] = {}     # friend-setlist installs waiting for their download jobs
         self._psl_lock = threading.Lock()
         self._stop = threading.Event()
         self.libmgr.on_fav = self.cloudsync.fav_changed
         self.libmgr.on_rekey = self.cloudsync.rekey
+        self.libmgr.on_scanned = self.refresh_unplayable
         self.lb = leaderboard.Client()
         self._score_cache: tuple[float, list[Path]] = (0.0, [])
         self.playwatcher = PlayWatcher(self.playlog, self._score_files, self._song_length,
@@ -68,7 +70,6 @@ class Companion:
         self.jobs = JobManager(self._run_job, workers=int(self.settings().get("workers") or 0) or None,
                                busy=self._job_busy, on_change=self._job_changed)
         self.game_yt.pref_p = int(self.settings().get("pref_p", 720))
-        ingame.PREFER_WEBM = self.settings().get("game_video_format") == "webm"
         from .paths import config_dir
         youtube.GATE.attach(config_dir() / "youtube_activity.json")
         youtube.set_cookies(self.settings().get("yt_cookies"), self.settings().get("yt_cookies_file"))
@@ -344,9 +345,34 @@ class Companion:
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
-                "setup_done": False, "fav_setlist": True, "game_video_format": "auto",
+                "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
                 "ch_username": "", "ch_account_id": 0, "yt_cookies": "none", "yt_cookies_file": "",
                 "language": "auto"}
+
+    # ------------------------------------------------------------ videos that don't play everywhere
+    def refresh_unplayable(self) -> int:
+        """After a scan: which songs have a video (MP4...) that Clone Hero can't play on every system."""
+        self.unplayable = [song_id(s) for s in ingame.unplayable_songs(list(self.library.songs))]
+        return len(self.unplayable)
+
+    def convert_status(self) -> dict:
+        with self.jobs.lock:
+            active = [j for j in self.jobs.jobs.values() if j.kind == "convert" and j.status in ("queued", "running", "waiting")]
+            done = sum(1 for j in self.jobs.jobs.values() if j.kind == "convert" and j.status == "done")
+        todo = [i for i in self.unplayable if i not in {j.song_id for j in active}]
+        asked = self.settings().get("video_convert_asked") == __version__
+        return {"count": len(todo), "active": len(active), "done": done,
+                "prompt": bool(todo) and not asked and not active}
+
+    def convert_videos(self) -> int:
+        """Queue a conversion job for every song whose video won't play everywhere."""
+        n = 0
+        for s in list(self.library.songs):
+            if song_id(s) in self.unplayable:
+                self.queue_song(s, "convert", PRIO_LIBRARY)
+                n += 1
+        self.update_settings({"video_convert_asked": __version__})
+        return n
 
     def repair_videos(self) -> int:
         """Rewrite DASH-fragmented video.mp4 files (YouTube downloads) into standard MP4s."""
@@ -451,7 +477,6 @@ class Companion:
         if "yt_cookies" in values or "yt_cookies_file" in values:
             youtube.set_cookies(s.get("yt_cookies"), s.get("yt_cookies_file"))
             threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
-        ingame.PREFER_WEBM = s.get("game_video_format") == "webm"
         if "language" in values:
             self.apply_language()
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
@@ -604,6 +629,19 @@ class Companion:
         song = self._locate_chart(job)
         o = job.options
         parts = []
+        if job.kind == "convert":
+            try:
+                name = ingame.convert_song_video(song, self.store, progress)
+            finally:
+                if song.path.exists():
+                    self.libmgr.refresh_song(song)
+            if name:
+                job.video_added = True
+                self.unplayable = [i for i in self.unplayable if i != job.song_id]
+                self.store.update_song(song.key, game_video=name)
+                return _("job.video_converted", file=name)
+            self.unplayable = [i for i in self.unplayable if i != job.song_id]
+            return _("job.already_set_up")
         try:
             if job.kind in ("metadata", "full"):
                 ch = metadata.apply(song, overwrite=bool(o.get("overwrite", self.settings()["metadata_overwrite"])),
@@ -763,6 +801,7 @@ class Companion:
             threading.Thread(target=self.friends.poll, daemon=True, name="friends-poll").start()
         threading.Thread(target=self._friends_poll, daemon=True, name="friends-poll-loop").start()
         self.jobs.start()
+        threading.Thread(target=hwvideo.capabilities, daemon=True, name="hw-probe").start()
         def scan_then_repair():
             from .library import sweep_temp_files
             sweep_temp_files(self.library.roots + [self.libmgr.disabled_dir])
