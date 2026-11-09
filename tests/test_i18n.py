@@ -297,3 +297,19 @@ process.stdout.write(JSON.stringify(out));
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_no_template_placeholders_in_plain_string_literals():
+    """A '${...}' inside a quoted (non-template) JS string is shown literally in the UI."""
+    import re, pathlib
+    web = pathlib.Path(__file__).resolve().parent.parent / "chcompanion" / "web"
+    bad = []
+    for f in ["app.js", "update.js", "i18n.js"]:
+        src = (web / f).read_text(encoding="utf-8")
+        # single- or double-quoted string on one line that contains ${...} and isn't inside a template literal
+        for n, line in enumerate(src.splitlines(), 1):
+            for m in re.finditer(r"""(?<![\w`])'([^'\n`]*\$\{[^}\n]+\}[^'\n`]*)'""", line):
+                before = line[:m.start()]
+                if before.count("`") % 2 == 0 and "<" in m.group(1):
+                    bad.append(f"{f}:{n}: {m.group(1)[:80]}")
+    assert not bad, "template placeholders in plain strings:\n" + "\n".join(bad)

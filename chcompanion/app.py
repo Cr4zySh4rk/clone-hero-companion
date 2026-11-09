@@ -1053,9 +1053,8 @@ class Handler(BaseHTTPRequestHandler):
             c.store.set("prepare_library", True)
             return self._json({"queued": c.prepare_library()})
         if p == "/api/quit":
-            self._json({"ok": True})
-            c.quit_requested.set()
-            return
+            c.quit_requested.set()  # before replying, so the caller sees it already set
+            return self._json({"ok": True})
         if p == "/api/simulate":
             c.simulate(str(b.get("song", "")))
             return self._json({"ok": True})

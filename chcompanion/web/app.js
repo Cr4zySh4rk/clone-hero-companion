@@ -643,7 +643,7 @@ function renderCharts() {
   $("#chartResults").innerHTML = charts.items.map((c, i) => `<div class="card${charts.sel.has(c.id) ? " sel" : ""}${c.owned ? " owned" : ""}" data-i="${i}">
       <input type="checkbox" class="chk"${charts.sel.has(c.id) ? " checked" : ""}>
       <div class="art"${c.artUrl ? ` style="background-image:url('${esc(c.artUrl)}')"` : ""}></div>
-      ${c.source === "encore" && c.downloadUrl ? '<button class="pv" title="${esc(tr("charts.preview_tip"))}">${esc(tr("charts.preview"))}</button>' : ""}
+      ${c.source === "encore" && c.downloadUrl ? `<button class="pv" title="${esc(tr("charts.preview_tip"))}">${esc(tr("charts.preview"))}</button>` : ""}
       <div class="body"><b>${esc(c.name)}</b><span>${esc(c.artist)}</span><span>${esc(c.charter)}${c.length ? " · " + fmtLen(c.length) : ""}</span>
       <div class="tags">${instHtml(c.difficulties || {})}${levelsHtml(c.levels)}${c.hasVideo ? `<span class="pill ok">${esc(tr("charts.has_video"))}</span>` : ""}${c.needsConversion ? `<span class="pill low">${esc(tr("charts.rb_format"))}</span>` : ""}${!c.downloadUrl && !c.needsConversion ? `<span class="pill">${esc(tr("charts.manual"))}</span>` : ""}</div>
       ${c.owned ? `<span class="inlib">${esc(tr("charts.in_library"))}${!c.ownedSameChart && c.ownedCharters && c.ownedCharters.length ? ` <em>${esc(tr("charts.yours", { charters: c.ownedCharters.join(", ") }))}</em>` : ""}</span>` : ""}</div></div>`).join("")
