@@ -545,7 +545,7 @@ def deno_info() -> dict | None:
         ver = None
         try:
             from .process import run, ToolStartError
-            r = run([p, "--version"], capture_output=True, text=True, timeout=20)
+            r = run([p, "--version"], capture_output=True, text=True, timeout=60)
             m = re.match(r"deno (\S+)", r.stdout or "") if r.returncode == 0 else None
             ver = m.group(1) if m else None
         except Exception:   # OSError, timeout, ToolStartError
