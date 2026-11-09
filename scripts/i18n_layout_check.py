@@ -155,7 +155,7 @@ class App:
         base = Path(self.tmp.name)
         self.data = seed(base)
         self.port = free_port()
-        env = dict(os.environ, XDG_CONFIG_HOME=str(base / "cfg"), HOME=str(base / "home"), APPDATA=str(base / "cfg"),
+        env = dict(os.environ, CHC_SKIP_UPDATE_CHECK="1", XDG_CONFIG_HOME=str(base / "cfg"), HOME=str(base / "home"), APPDATA=str(base / "cfg"),
                    CLONEHERO_DATA_DIR=str(self.data))
         (base / "home").mkdir(exist_ok=True)
         self.proc = subprocess.Popen(

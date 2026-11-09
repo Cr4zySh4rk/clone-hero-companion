@@ -144,7 +144,7 @@ def lint_all() -> dict[str, list[tuple[int, str]]]:
     out = {}
     for name in ("app.html", "index.html"):
         out[name] = lint_html(WEB / name)
-    for name in ("app.js", "i18n.js"):
+    for name in ("app.js", "i18n.js", "update.js"):
         out[name] = lint_js(WEB / name)
     # the Now Playing page keeps its script inline
     inline = re.search(r"<script>\n(.*?)</script>", (WEB / "index.html").read_text("utf-8"), re.S)

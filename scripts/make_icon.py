@@ -45,4 +45,9 @@ iconset.mkdir(exist_ok=True)
 for size in (16, 32, 128, 256, 512):
     img.resize((size, size), Image.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
     img.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
+# plain <size>.png files: Linux AppImage hicolor icons and the desktop-entry installer
+plain = out.parent / "icons"
+plain.mkdir(exist_ok=True)
+for size in (16, 24, 32, 48, 64, 128, 256, 512):
+    img.resize((size, size), Image.LANCZOS).save(plain / f"{size}.png")
 print("icons written to", out)

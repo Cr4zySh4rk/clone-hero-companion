@@ -68,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--open-browser", action="store_true", help="open the companion page on start")
     run.add_argument("--max-height", type=int, default=1080, help="max video height for the companion page")
     run.add_argument("--window", action="store_true", help="open the app window (default when started without arguments)")
+    run.add_argument("--smoke-window", action="store_true",
+                     help="CI check: open the native window, wait for the page to load, print the backend and exit")
     run.add_argument("--game-max-height", type=int, default=720,
                      help="max height of videos saved for Clone Hero (default 720)")
 
@@ -139,6 +141,19 @@ def youtube_activity_line(st: dict) -> str:
             f"(budget {st.get('budget')}), {last}; {sign}")
 
 
+def update_check_line() -> str:
+    """Never blocks and never fails the doctor run."""
+    from . import updater
+    try:
+        r = updater.check_once(timeout=5.0)
+    except Exception as e:
+        return f"Update check: offline ({e})"
+    return {"skipped": f"Update check: skipped ({updater.SKIP_ENV}=1)",
+            "available": f"Update check: update available {r['latest']} (running {__version__})",
+            "current": f"Update check: up to date ({__version__})",
+            "offline": "Update check: offline"}[r["state"]]
+
+
 def cmd_doctor(args) -> int:
     out: list[str] = []
     say = out.append
@@ -171,6 +186,9 @@ def cmd_doctor(args) -> int:
     say(f"yt-dlp ver  : {ai['version']} ({ai['source']})")
     youtube.GATE.attach(config_dir() / "youtube_activity.json")
     say(youtube_activity_line(youtube.GATE.status()))
+    say(update_check_line())
+    from . import gui
+    say(f"Window      : {gui.describe_backend()}")
     from .align import ffmpeg_path
     ff = ffmpeg_path()
     say(f"ffmpeg      : {ff or 'not found (needed for video/lyrics alignment)'}")
@@ -340,6 +358,7 @@ def cmd_run(args) -> int:
             logging.warning("Clone Hero's Song Videos setting is OFF - turn it on in Settings > Custom Content.")
     from . import ytupdate
     ytupdate.start_background_check()
+    comp.updater.start()          # blocks the UI (not the CLI commands) when a newer release exists; CHC_SKIP_UPDATE_CHECK=1 disables
 
     # periodic rescan so newly added songs are found
     def rescan():
@@ -358,8 +377,13 @@ def cmd_run(args) -> int:
         pass
     if args.window:
         from .gui import run_window
-        run_window(url, stop, config_dir() / "window")
+        smoke = bool(getattr(args, "smoke_window", False))
+        run_window(url, stop, config_dir() / "window", smoke=smoke)
         stop.set()
+        if smoke:
+            from .gui import SMOKE
+            print(f"SMOKE-WINDOW {'OK' if SMOKE['ok'] else 'FAIL'}: {SMOKE['detail']}", flush=True)
+            return 0 if SMOKE["ok"] else 1
     else:
         first_run = not store.get("opened_once")
         if not args.no_browser and (args.open_browser or first_run):
@@ -393,6 +417,8 @@ def main(argv=None) -> int:
         argv = ["run"] + argv
     args = ap.parse_args(argv)
     _setup_logging(getattr(args, "verbose", False))
+    if getattr(args, "smoke_window", False):
+        args.window = True
     if getattr(args, "window", False):
         _log_to_file()
     return {"run": cmd_run, "prepare": cmd_prepare, "install-videos": cmd_prepare,

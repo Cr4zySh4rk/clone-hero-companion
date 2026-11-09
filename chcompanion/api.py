@@ -376,6 +376,15 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         except LeaderboardError as e:
             return _json(h, {"error": msg_of(e)}, 502) or True
 
+    # ---------------------------------------------------------------- app updates (open even while an update is required)
+    if path == "/api/update" and method == "GET":
+        return _json(h, c.updater.public()) or True
+    if path == "/api/update/check" and method == "POST":
+        return _json(h, c.updater.check()) or True
+    if path == "/api/update/install" and method == "POST":
+        started = c.updater.start_install()
+        return _json(h, dict(c.updater.public(), started=started)) or True
+
     # ---------------------------------------------------------------- app / settings
     if path == "/api/settings" and method == "GET":
         from .align import ffmpeg_path
@@ -463,6 +472,15 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
     if path == "/api/macperm/open" and method == "POST":
         from . import macperm
         return _json(h, {"ok": macperm.open_settings()}) or True
+    if path == "/api/desktop-entry":   # Linux: optional app-menu entry (see desktop_entry.py)
+        from . import desktop_entry as de
+        if method == "POST":
+            try:
+                return _json(h, {"ok": bool(de.install()), "installed": True}) or True
+            except RuntimeError as e:
+                return _json(h, {"ok": False, "error": str(e)}) or True
+        return _json(h, {"applicable": de.applicable() and de.launcher_path() is not None,
+                         "installed": de.is_installed()}) or True
     if path == "/api/restart" and method == "POST":
         from . import macperm
         ok = macperm.relaunch(c.quit_requested)

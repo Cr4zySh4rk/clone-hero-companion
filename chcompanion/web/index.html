@@ -230,6 +230,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
 </div></div>
 
 <script src="/static/i18n.js"></script>
+<script src="/static/update.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -511,7 +512,7 @@ body.obs #lbPanel, body.no-lb #lbPanel { display: none; }
 
   // ---------------------------------------------------------------- controls
   async function post(path, body) {
-    try { const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); return await r.json(); }
+    try { const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); if (r.status === 426 && window.CHCUpdate) window.CHCUpdate.refresh(); return await r.json(); }
     catch (e) { toast(tr("np.toast.no_response")); return null; }
   }
   const actions = {

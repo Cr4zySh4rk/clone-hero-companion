@@ -1,0 +1,5 @@
+pywebview
+qtpy
+PySide6-Essentials~=6.12.0
+PySide6-Addons~=6.12.0
+PySide6-WebEngine~=6.12.0

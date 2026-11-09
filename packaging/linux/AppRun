@@ -1,0 +1,5 @@
+#!/bin/sh
+# AppImage entry point: start the bundled (PyInstaller onedir) app. The AppImage runtime sets $APPIMAGE and $APPDIR.
+HERE="$(dirname "$(readlink -f "$0")")"
+export APPDIR="${APPDIR:-$HERE}"
+exec "$HERE/usr/lib/CloneHeroCompanion/CloneHeroCompanion" "$@"

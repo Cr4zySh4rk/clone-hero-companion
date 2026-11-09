@@ -95,7 +95,7 @@ Grab the file for your system from the **[latest release](https://github.com/Cr4
 | --- | --- |
 | **macOS** 11 or newer, Apple Silicon and Intel | `CloneHeroCompanion-macOS-universal.dmg` |
 | **Windows** 10 / 11 | `CloneHeroCompanion-windows-x64.msi` |
-| **Linux** x64 | `CloneHeroCompanion-linux-x64.tar.gz` |
+| **Linux** x64 | `CloneHeroCompanion-linux-x86_64.AppImage` |
 
 Everything is included (ffmpeg, Deno and yt-dlp, which keeps itself up to date). Nothing else to install.
 
@@ -123,11 +123,18 @@ This release is unsigned until a trusted signing identity is configured; [signin
 <summary><b>Linux</b></summary>
 
 ```
-tar xzf CloneHeroCompanion-linux-x64.tar.gz
-./CloneHeroCompanion
+chmod +x CloneHeroCompanion-linux-x86_64.AppImage
+./CloneHeroCompanion-linux-x86_64.AppImage
 ```
 
-The window opens in Chrome/Chromium/Edge app mode if one is installed, otherwise in your browser. Videos are always saved as VP8 `.webm`, the one format Clone Hero plays on Windows, macOS and Linux.
+The AppImage is one self-contained file (about 290 MB: it carries its own Qt and browser engine, so no GTK or WebKit packages are needed) and opens the app in its own window, on X11 and Wayland. For an application-menu entry, use **Settings → Application menu → Add to application menu**. Needs a 64-bit distro with glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, Debian 12 or newer).
+
+- If it says it needs **FUSE**, install `libfuse2` (Debian/Ubuntu: `sudo apt install libfuse2t64`; older: `libfuse2`), or run it with `--appimage-extract-and-run` as the first argument.
+- If it reports missing X11 libraries (for example `libxcb-cursor.so.0`), install the packages it names; it then opens in Chrome/Chromium/Edge app mode or your browser instead, and says why once.
+- Set `CHC_SOFTWARE_RENDER=1` if the window stays blank on a machine with a broken GPU driver.
+- The older `CloneHeroCompanion-linux-x64.tar.gz` (published for one more release) contains the same AppImage as a single file: `tar xzf` it and run `./CloneHeroCompanion`.
+
+Videos are always saved as VP8 `.webm`, the one format Clone Hero plays on Windows, macOS and Linux.
 </details>
 
 ## Windows setup
@@ -238,6 +245,7 @@ Clone Hero writes `<data folder>/Logs/Session-*.log`. *Loading Song: Artist - Na
 
 ```
 python -m pip install -r requirements.txt pywebview send2trash py7zr pillow
+# Linux: also  -r packaging/linux/requirements.txt  (Qt window) or install PyGObject + WebKit2GTK
 python -m chcompanion                    # app window
 python -m unittest discover -s tests     # tests
 ```

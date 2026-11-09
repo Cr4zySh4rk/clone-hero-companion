@@ -17,6 +17,7 @@ async function api(path, body, method) {
   const r = await fetch(path, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { /* empty */ }
+  if (r.status === 426 && window.CHCUpdate) window.CHCUpdate.refresh();      // an update is required: show the update screen
   if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
   return data;
 }
@@ -854,6 +855,7 @@ async function loadSettings() {
       <div class="row2"><span>YouTube</span><span>${d.jsRuntime ? esc(tr("settings.js_runtime", { name: d.jsRuntime, ejs: d.ejs })) : tr("settings.js_missing", { help: esc(d.jsHelp) })}</span></div>
       <div class="row2"><span>yt-dlp</span><span>${esc(d.ytdlpInfo.version)} (${esc(tr("about." + d.ytdlpInfo.source))}) <button id="ytdlpCheck">${esc(tr("settings.check_now"))}</button> <span id="ytdlpMsg" class="hint">${esc(d.ytdlpInfo.message || "")}</span></span></div>
       ${d.videoPath ? `<div class="row2"><span>${esc(tr("settings.video_path"))}</span><span>${esc(d.videoPath)}</span></div>` : ""}
+      <div class="row2"><span>${esc(tr("settings.updates"))}</span><span><span id="updState"></span> <button id="updCheck">${esc(tr("settings.check_now"))}</button></span></div>
       <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
   bindLangSelects();
@@ -865,12 +867,23 @@ async function loadSettings() {
   }));
   $("#setChange").onclick = () => show("setup");
   $("#ytdlpCheck").onclick = async () => { $("#ytdlpMsg").textContent = tr("settings.checking"); await api("/api/ytdlp/check", {}); setTimeout(async () => { const i = (await api("/api/settings")).ytdlpInfo; $("#ytdlpMsg").textContent = tr("settings.ytdlp_result", { message: i.message || tr("common.done"), version: i.version, source: tr("about." + i.source) }); }, 4000); };
+  const paintUpd = (u) => { $("#updState").textContent = u.checking ? tr("settings.checking") : u.status === "available" ? tr("settings.update_available", { version: u.latest }) : u.status === "current" ? tr("settings.update_ok", { version: u.current }) : u.status === "offline" ? tr("update.offline_banner") : u.status === "disabled" ? tr("settings.update_off", { version: u.current }) : tr("settings.checking"); };
+  api("/api/update").then(paintUpd).catch(() => {});
+  $("#updCheck").onclick = async () => { $("#updState").textContent = tr("settings.checking"); try { const u = await api("/api/update/check", {}); paintUpd(u); if (window.CHCUpdate) window.CHCUpdate.refresh(); } catch (e) { toast(e.message, 4000); } };
   api("/api/macperm").then((m) => {
     if (!m.applicable) return;
     const row = document.createElement("div"); row.className = "row2";
     row.innerHTML = `<span>${esc(tr("settings.fda"))}</span><span>${m.fda ? esc(tr("settings.fda_on")) : `${esc(tr("settings.fda_off"))} <button id="setFda">${esc(tr("settings.fda_grant"))}</button>`}</span>`;
     $("#setChange").closest(".row2").before(row);
     const btn = $("#setFda"); if (btn) btn.onclick = () => show("setup");
+  }).catch(() => {});
+  api("/api/desktop-entry").then((m) => {   // Linux AppImage: optional app-menu entry
+    if (!m.applicable) return;
+    const row = document.createElement("div"); row.className = "row2";
+    row.innerHTML = `<span>${esc(tr("settings.desktop_entry"))}</span><span>${m.installed ? esc(tr("settings.desktop_entry_on")) : `<button id="setDeskEntry">${esc(tr("settings.desktop_entry_add"))}</button>`}</span>`;
+    $("#setChange").closest(".row2").before(row);
+    const btn = $("#setDeskEntry");
+    if (btn) btn.onclick = async () => { const r = await api("/api/desktop-entry", {}); if (r.ok) { toast(tr("toast.desktop_entry_done")); btn.replaceWith(tr("settings.desktop_entry_on")); } else toast(tr("toast.desktop_entry_failed", { error: r.error || "" }), 6000); };
   }).catch(() => {});
   $("#setOpen").onclick = () => api("/api/open", {});
   $("#setRescan").onclick = async () => { await api("/api/library/rescan", {}); toast(tr("toast.rescanning")); };

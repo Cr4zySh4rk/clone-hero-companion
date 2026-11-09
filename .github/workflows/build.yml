@@ -4,7 +4,7 @@ name: Build apps
 # them as a GitHub Release (uploaded straight to the release, no artifact storage).
 #   macOS:   universal (Apple Silicon + Intel) .app in a .dmg
 #   Windows: MSI installer with an onedir app and stable helper paths
-#   Linux:   single binary in a .tar.gz
+#   Linux:   AppImage (own Qt window, X11 + Wayland), plus a one-release .tar.gz holding the same file
 
 on:
   push:
@@ -234,36 +234,81 @@ jobs:
     if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
-      ASSET: CloneHeroCompanion-linux-x64.tar.gz
+      ASSET: CloneHeroCompanion-linux-x86_64.AppImage
+      LEGACY_ASSET: CloneHeroCompanion-linux-x64.tar.gz
+      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: System libraries
+        # PyInstaller copies the X11/xcb helper libraries (not the GPU drivers) from this machine into the
+        # bundle, so hosts that lack e.g. libxcb-cursor0 still work. xvfb + x11-utils are for the smoke test.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxcb-xinerama0 libxcb-randr0 \
+            libxkbcommon-x11-0 libxkbfile1 libnss3 libasound2 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libegl1 libgl1 libgbm1 libdbus-1-3 libfontconfig1 xvfb x11-utils
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller py7zr send2trash
+          pip install -r requirements.txt -r packaging/linux/requirements.txt pyinstaller py7zr send2trash pillow
       - name: Build
         run: |
           python scripts/fetch_deno.py linux build/bin/deno
-          pyinstaller --noconfirm --onefile --console --name CloneHeroCompanion \
+          python scripts/make_icon.py build/icon
+          # onedir (no per-launch unpacking); scripts/qt_excludes.py keeps unused Qt modules out of the bundle
+          pyinstaller --noconfirm --onedir --console --name CloneHeroCompanion \
             --add-binary "build/bin/deno:bin" --add-data "packaging/licenses:licenses" \
-            --add-data "chcompanion/web:chcompanion/web" \
+            --add-data "chcompanion/web:chcompanion/web" --add-data "build/icons:icons" \
             --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
-            --hidden-import yt_dlp --exclude-module tkinter run.py
+            --hidden-import yt_dlp --hidden-import qtpy --hidden-import PySide6.QtWebEngineWidgets \
+            --hidden-import PySide6.QtWebChannel --exclude-module tkinter $(python scripts/qt_excludes.py) run.py
+          curl -fsSL -o appimagetool "$APPIMAGETOOL_URL"
+          chmod +x appimagetool
+          APPIMAGE_EXTRACT_AND_RUN=1 scripts/build_appimage.sh dist/CloneHeroCompanion build/icons "$ASSET" ./appimagetool
       - name: Smoke test
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          CHC_SOFTWARE_RENDER: "1"     # the runner has no GPU
         run: |
           mkdir -p "$RUNNER_TEMP/ch/Logs" "$RUNNER_TEMP/ch/Songs/Artist - Song"
           printf '[song]\nartist = Artist\nname = Song\n' > "$RUNNER_TEMP/ch/Songs/Artist - Song/song.ini"
-          ./dist/CloneHeroCompanion doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
+          ls -l "$ASSET"
+          # AppDir contents: desktop entry, icon, bundled deno and ffmpeg
+          ./"$ASSET" --appimage-extract >/dev/null
+          grep -q "^StartupWMClass=CloneHeroCompanion$" squashfs-root/CloneHeroCompanion.desktop
+          grep -q "^Categories=Game;AudioVideo;$" squashfs-root/CloneHeroCompanion.desktop
+          test -f squashfs-root/usr/share/icons/hicolor/256x256/apps/CloneHeroCompanion.png
+          I=squashfs-root/usr/lib/CloneHeroCompanion/_internal
+          test -x "$I/bin/deno"
+          ls "$I"/imageio_ffmpeg/binaries/ffmpeg-* >/dev/null
+          rm -rf squashfs-root
+          # doctor (under a virtual display so the window backend can be probed)
+          xvfb-run -a ./"$ASSET" doctor --data-dir "$RUNNER_TEMP/ch" | tee doctor.txt
           grep -q "Songs       : 1" doctor.txt
           grep -q "^Languages   : 9 catalogs$" doctor.txt
           grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
-          chmod +x dist/CloneHeroCompanion
-          tar -C dist -czf "$ASSET" CloneHeroCompanion
+          grep -q "^ffmpeg check: OK" doctor.txt
+          grep -q "^ffmpeg media: OK" doctor.txt
+          grep -q "^Window      : native (qt/xcb)" doctor.txt
+          # the real window: Qt (not the browser fallback) must open and load the UI
+          xvfb-run -a ./"$ASSET" run --smoke-window --no-youtube --no-browser --port 0 \
+            --data-dir "$RUNNER_TEMP/ch" | tee smoke.txt
+          grep -q "^SMOKE-WINDOW OK: backend=qt platform=qt/xcb" smoke.txt
+          # without a display it must fail loudly (and quickly), never silently fall back
+          if env -u DISPLAY -u WAYLAND_DISPLAY ./"$ASSET" run --smoke-window --no-youtube --no-browser --port 0 \
+              --data-dir "$RUNNER_TEMP/ch" > nodisplay.txt 2>&1; then echo "expected a failure"; exit 1; fi
+          grep -q "no display" nodisplay.txt
+      - name: Legacy tar.gz
+        # Kept for one release: the same AppImage as a single file, so "tar xzf; ./CloneHeroCompanion" still works.
+        run: |
+          mkdir legacy && cp "$ASSET" legacy/CloneHeroCompanion
+          tar -C legacy -czf "$LEGACY_ASSET" CloneHeroCompanion
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" "$LEGACY_ASSET" --repo "$GITHUB_REPOSITORY" --clobber

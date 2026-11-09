@@ -32,6 +32,7 @@ from . import i18n
 from .i18n import _, join, msg_of
 from .paths import resource_path
 from .store import Store
+from .updater import Updater
 
 log = logging.getLogger(__name__)
 YT_ID = re.compile(r"(?:v=|youtu\.be/|/embed/|/shorts/|^)([A-Za-z0-9_-]{11})(?:[&?#/]|$)")
@@ -89,6 +90,7 @@ class Companion:
         self.install_status: dict[str, str] = {}
         self.clock = ClockState()
         self.quit_requested = threading.Event()
+        self.updater = Updater(self.quit_requested)
         self.watcher = LogWatcher(data_dir, self._on_clock,
                                   start_lead=lambda: float(self.store.get("start_lead", 2.0)),
                                   learn_lead=self._learn_lead)
@@ -828,6 +830,11 @@ class Companion:
 
 
 # ======================================================================== HTTP
+# POSTs that keep working while an update is required: the update screen itself, the UI reporting its language
+# (so the screen is translated), and quitting.
+UPDATE_OPEN_POSTS = frozenset({"/api/update/check", "/api/update/install", "/api/i18n", "/api/quit"})
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "CloneHeroCompanion/" + __version__
     companion: Companion = None  # set by serve()
@@ -1009,6 +1016,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         p = url.path
         b = self._body()
+        u = getattr(c, "updater", None)
+        if u is not None and u.required and p not in UPDATE_OPEN_POSTS:
+            # a stale tab must not keep working on an outdated app; the update screen's own calls stay open
+            return self._json(u.gate_payload(), 426)
         from . import api
         try:
             if api.handle(self, "POST", p, urllib.parse.parse_qs(url.query), b):

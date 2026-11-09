@@ -8,7 +8,7 @@ var CACHE="chc-latest-release",TTL=10*60*1000;
 var NAMES={mac:"macOS",win:"Windows",linux:"Linux"};
 var DIRECT={mac:LATEST+"/download/CloneHeroCompanion-macOS-universal.dmg",
   win:LATEST+"/download/CloneHeroCompanion-windows-x64.msi",
-  linux:LATEST+"/download/CloneHeroCompanion-linux-x64.tar.gz"};
+  linux:LATEST+"/download/CloneHeroCompanion-linux-x86_64.AppImage"};
 var $=function(id){return document.getElementById(id)};
 var ICON={mac:"",win:"",linux:""};
 
@@ -78,7 +78,8 @@ function pickAssets(rel){
     var o=osOfAsset(a.name);if(!o)return;
     // Windows: prefer the .msi installer, else the portable .exe, whichever the latest release has
     if(o==="win"&&out.win&&/\.msi$/i.test(out.win.name))return;
-    if(!out[o]||(o==="win"&&/\.msi$/i.test(a.name)))out[o]=a;
+    if(o==="linux"&&out.linux&&/\.appimage$/i.test(out.linux.name))return;   // Linux: prefer the AppImage over the tar.gz
+    if(!out[o]||(o==="win"&&/\.msi$/i.test(a.name))||(o==="linux"&&/\.appimage$/i.test(a.name)))out[o]=a;
   });
   return out;
 }
@@ -107,7 +108,7 @@ function renderDownload(rel,os,arch){
     if(target==="mac"){
       meta.textContent=m+" · universal, Apple Silicon and Intel";
       detectMacArch(function(a){ if(a) meta.textContent=m+" · universal build, runs natively on your "+a+" Mac"; });
-    } else meta.textContent=m+(target==="win"?" · Windows 10 and 11, 64-bit":" · x64 tar.gz");
+    } else meta.textContent=m+(target==="win"?" · Windows 10 and 11, 64-bit":(/\.appimage$/i.test(assets[target].browser_download_url)?" · x64 AppImage":" · x64 tar.gz"));
     others.innerHTML="Also for: "+links.join("")+tail;
   } else {
     btn.href=LATEST;
