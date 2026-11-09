@@ -219,8 +219,10 @@ class SharingTests(Harness):
         out = self.fr.friend_lists(BOB)
         fav = self.sb.calls_to("favorites")[0]
         sl = self.sb.calls_to("setlists")[-1]
+        self.assertEqual(self.sb.calls_to("rpc/lists_visible")[0][3], {"owner": BOB})
         self.assertEqual(fav[2]["user_id"], f"eq.{BOB}")
-        self.assertEqual((sl[2]["owner"], sl[2]["shared"]), (f"eq.{BOB}", "eq.true"))
+        self.assertEqual(sl[2]["owner"], f"eq.{BOB}")
+        self.assertNotIn("shared", sl[2])                  # the single switch is enforced by RLS, not by a per-list filter
         self.assertEqual([i["song_key"] for i in out["setlists"][0]["items"]], ["a", "b"])      # ordered by position
         self.assertEqual(out["favorites"][0]["name"], "Hysteria")
 
@@ -262,23 +264,74 @@ class SharingTests(Harness):
         self.fr.refresh()
         self.assertEqual(self.fr.cache["lists"], {})
 
-    def test_share_toggles(self):
+    def test_switch_off_asks_for_nothing_and_shows_the_empty_state(self):
+        self.befriend(BOB)
+        self.sb.routes[("POST", "rpc/lists_visible")] = lambda q, b: (200, False)
+        out = self.fr.friend_lists(BOB)
+        self.assertEqual((out["shared"], out["favorites"], out["setlists"]), (False, [], []))
+        self.assertEqual(self.sb.calls_to("favorites") + self.sb.calls_to("setlists"), [])      # nothing requested
+        self.assertFalse(self.fr.friend_lists(BOB)["shared"])
+
+    def test_switch_on_requests_and_shows_both_lists(self):
+        self.befriend(BOB)
+        self.sb.routes[("POST", "rpc/lists_visible")] = lambda q, b: (200, True)
+        self.sb.routes[("GET", "favorites")] = lambda q, b: (200, [song("k1", "Muse", "Hysteria", "Someone")])
+        self.sb.routes[("GET", "setlists")] = lambda q, b: (200, [{"id": "s", "name": "A", "updated_at": "x", "setlist_items": []},
+                                                                  {"id": "t", "name": "B", "updated_at": "x", "setlist_items": []}])
+        out = self.fr.friend_lists(BOB)
+        self.assertEqual((out["shared"], len(out["favorites"]), [x["name"] for x in out["setlists"]]), (True, 1, ["A", "B"]))
+
+    def test_older_database_without_lists_visible_falls_back_to_the_rows(self):
+        self.befriend(BOB)                                  # rpc/lists_visible answers 404 (migration 0003 not applied yet)
+        self.sb.routes[("GET", "favorites")] = lambda q, b: (200, [song("k1", "Muse", "Hysteria", "Someone")])
+        out = self.fr.friend_lists(BOB)
+        self.assertEqual((out["shared"], len(out["favorites"])), (True, 1))
+
+    def test_one_switch_writes_lists_shared_only(self):
         self.sb.routes[("POST", "share_settings")] = lambda q, b: (201, None)
-        self.sb.routes[("PATCH", "setlists")] = lambda q, b: (204, None)
-        self.sb.routes[("POST", "rpc/upsert_setlist")] = lambda q, b: (200, "id")
-        self.fr.set_shared("favorites", None, True)
+        self.fr.set_lists_shared(True)
         c = self.sb.calls_to("share_settings", "POST")[0]
-        self.assertEqual((c[2], c[3]), ({"on_conflict": "user_id"}, {"user_id": ME, "favorites_shared": True}))
+        self.assertEqual((c[2], c[3]), ({"on_conflict": "user_id"}, {"user_id": ME, "lists_shared": True}))
+        self.assertEqual(self.fr.sharing(), {"lists": True})
+        self.assertEqual(self.fr.status()["sharing"], {"lists": True})
+        self.fr.set_lists_shared(False)
+        self.assertEqual(self.sb.calls_to("share_settings", "POST")[-1][3], {"user_id": ME, "lists_shared": False})
+        self.assertEqual(self.fr.sharing(), {"lists": False})
+        self.assertEqual(self.sb.calls_to("setlists", "PATCH"), [])      # no per-setlist flags any more
+
+    def test_refresh_reads_the_switch(self):
+        self.sb.routes[("GET", "share_settings")] = lambda q, b: (200, [{"lists_shared": True}])
+        self.assertEqual(self.fr.refresh()["sharing"], {"lists": True})
+        self.assertEqual(self.sb.calls_to("share_settings")[0][2]["select"], "lists_shared")
+
+    def test_switching_on_uploads_every_setlist_now(self):
+        self.sb.routes[("POST", "share_settings")] = lambda q, b: (201, None)
+        up = []
+        self.sb.routes[("POST", "rpc/upsert_setlist")] = lambda q, b: (up.append(b["p_name"]) or (200, "id"))
         setlists.save(self.data, "Night", [("A" * 32, 100)])
-        self.fr.set_shared("setlist", "Night", True)
-        self.assertTrue(self.sb.calls_to("rpc/upsert_setlist"))            # uploaded before it is switched on
-        p = self.sb.calls_to("setlists", "PATCH")[0]
-        self.assertEqual((p[2], p[3]), ({"owner": f"eq.{ME}", "name": "eq.Night"}, {"shared": True}))
-        self.fr.set_shared("setlist", "Night", False)
-        self.assertEqual(self.sb.calls_to("setlists", "PATCH")[-1][3], {"shared": False})
-        self.assertEqual(self.fr.sharing(), {"favorites": True, "setlists": {"Night": False}})
+        setlists.save(self.data, "Morning", [("B" * 32, 100)])
+        with mock.patch.object(self.sync, "schedule"):
+            self.fr.set_lists_shared(True)
+        self.assertEqual(sorted(up), ["Morning", "Night"])
+
+    def test_old_2_3_payload_maps_to_the_single_switch(self):
+        self.sb.routes[("POST", "share_settings")] = lambda q, b: (201, None)
+        with mock.patch.object(self.sync, "schedule"):
+            self.fr.set_shared("setlist", "Night", True)
+        self.assertEqual(self.sb.calls_to("share_settings", "POST")[0][3], {"user_id": ME, "lists_shared": True})
         with self.assertRaises(CloudError):
             self.fr.set_shared("bogus", None, True)
+
+    def test_share_route_takes_new_and_old_payloads(self):
+        self.sb.routes[("POST", "share_settings")] = lambda q, b: (201, None)
+        sent = []
+        h = types.SimpleNamespace(_json=lambda obj, code=200: sent.append((obj, code)))
+        c = types.SimpleNamespace(friends=self.fr, cloud=self.cloud)
+        with mock.patch.object(self.sync, "schedule"):
+            api._friends(h, c, "POST", "/api/friends/share", {}, {"lists_shared": True})
+            api._friends(h, c, "POST", "/api/friends/share", {}, {"kind": "favorites", "shared": False})
+        self.assertEqual([x[0] for x in sent], [{"lists": True}, {"lists": False}])
+        self.assertEqual([c_[3]["lists_shared"] for c_ in self.sb.calls_to("share_settings", "POST")], [True, False])
 
 
 class ListTests(Harness):
@@ -301,7 +354,7 @@ class InstallTests(Harness):
     def companion(self):
         c = types.SimpleNamespace(libmgr=self.lm, jobs=FakeJobs(), friends=self.fr, data_dir=self.data, queued=[],
                                   cloud=self.cloud)
-        c.queue_friend_setlist = lambda name, rows, jobs: c.queued.append((name, rows, jobs))
+        c.queue_friend_setlist = lambda name, rows, jobs, append=False: c.queued.append((name, rows, jobs, append))
         return c
 
     def shared(self, fav=(), lists=None):
@@ -359,7 +412,7 @@ class InstallTests(Harness):
         c = self.companion()
         with mock.patch("chcompanion.cloud.resolve_favourite", side_effect=self.item):
             out = api._install_friend(c, {"friend": BOB, "list": {"kind": "setlist", "name": "Night"}, "setlist": "Night"})
-        name, rows, jobs = c.queued[0]
+        name, rows, jobs, _ap = c.queued[0]
         self.assertEqual((out["setlist"], name, [r["name"] for r in rows], len(jobs)), ("Night", "Night", ["Rockstar", "Hysteria"], 1))
         self.assertEqual(c.jobs.submitted, [])                  # the companion submits them, after registering the setlist
 
@@ -372,12 +425,60 @@ class InstallTests(Harness):
         res.assert_not_called()
         self.assertEqual((out["queued"], c.queued[0][2]), (0, []))
 
-    def test_name_clash_gets_a_number(self):
+    def test_name_clash_appends_the_friends_name(self):
         self.shared(lists={"Night": [self.HERE]})
         setlists.save(self.data, "Night", [])
         c = self.companion()
-        out = api._install_friend(c, {"friend": BOB, "list": {"kind": "setlist", "name": "Night"}, "setlist": "Night", "install": False})
-        self.assertEqual(out["setlist"], "Night (2)")
+        body = {"friend": BOB, "list": {"kind": "setlist", "name": "Night"}, "setlist": "Night", "install": False}
+        self.assertEqual(api._install_friend(c, body)["setlist"], "Night (from Bob)")
+        setlists.save(self.data, "Night (from Bob)", [])
+        self.assertEqual(api._install_friend(c, body)["setlist"], "Night (from Bob) (2)")     # even that is taken
+        self.assertEqual(api._install_friend(c, {**body, "setlist": "Fresh"})["setlist"], "Fresh")   # no clash: same name
+
+    def test_favourites_list_never_overwrites_the_derived_favourites_setlist(self):
+        self.shared(fav=[self.HERE])
+        out = api._install_friend(self.companion(), {"friend": BOB, "list": {"kind": "favorites"}, "setlist": "Favourites", "install": False})
+        self.assertEqual(out["setlist"], "Favourites (from Bob)")
+
+    def test_download_missing_installs_only(self):
+        self.shared(lists={"Night": [self.ROCK, self.HERE]})
+        c = self.companion()
+        with mock.patch("chcompanion.cloud.resolve_favourite", side_effect=self.item):
+            out = api._install_friend(c, {"friend": BOB, "list": {"kind": "setlist", "name": "Night"}, "process": True})
+        self.assertEqual((out["queued"], out["setlist"], c.queued), (1, None, []))
+        j = c.jobs.submitted[0]
+        self.assertEqual((j.kind, j.options["process"], j.options["mark_fav"]), ("download", True, False))
+
+    def test_add_to_my_setlists_installs_then_writes_the_setlist(self):
+        self.shared(lists={"Night": [self.ROCK, self.HERE]})
+        c = self.companion()
+        with mock.patch("chcompanion.cloud.resolve_favourite", side_effect=self.item):
+            out = api._install_friend(c, {"friend": BOB, "list": {"kind": "setlist", "name": "Night"}, "setlist": "Night"})
+        name, rows, jobs, append = c.queued[0]
+        self.assertEqual((out["setlist"], len(jobs), append, c.jobs.submitted), ("Night", 1, False, []))
+
+    def test_add_to_my_favourites_queues_marked_downloads(self):
+        self.shared(fav=[self.ROCK, self.HERE])
+        c = self.companion()
+        with mock.patch("chcompanion.cloud.resolve_favourite", side_effect=self.item):
+            out = api._install_friend(c, {"friend": BOB, "list": {"kind": "favorites"}, "favourite": True})
+        self.assertEqual((out["queued"], c.jobs.submitted[0].options["mark_fav"]), (1, True))
+        self.assertEqual(self.favs(), ["Someone"])
+
+    def test_one_song_into_an_existing_setlist_appends(self):
+        self.shared(fav=[self.ROCK, self.HERE])
+        setlists.save(self.data, "Mine", [("C" * 32, 100)])
+        c = self.companion()
+        with mock.patch("chcompanion.cloud.resolve_favourite", side_effect=self.item):
+            out = api._install_friend(c, {"friend": BOB, "list": {"kind": "favorites"}, "keys": ["r"], "addToSetlist": "Mine"})
+        name, rows, jobs, append = c.queued[0]
+        self.assertEqual((out["setlist"], name, append, [r["song_key"] for r in rows], len(jobs)), ("Mine", "Mine", True, ["r"], 1))
+
+    def test_one_song_into_a_new_setlist_uses_the_name_given(self):
+        self.shared(fav=[self.HERE])
+        c = self.companion()
+        out = api._install_friend(c, {"friend": BOB, "list": {"kind": "favorites"}, "keys": ["h"], "setlist": "Fresh"})
+        self.assertEqual((out["setlist"], c.queued[0][3]), ("Fresh", False))
 
     def test_list_that_is_no_longer_shared(self):
         self.shared(lists={})
@@ -436,6 +537,18 @@ class CompanionSetlistTests(unittest.TestCase):
             self.assertTrue(job.error.startswith("Finding the charts in your library"), job.error)
             self.assertFalse((Path(td) / "Setlists" / "N.setlist").exists())
 
+    def test_append_adds_to_the_existing_setlist_after_the_download(self):
+        with isolated() as td:
+            c = self.make(td)
+            h = c.libmgr.chart_md5(next(x for x in c.library.songs if x.artist == "Muse"), compute=True)
+            setlists.save(c.data_dir, "Mine", [("C" * 32, 100)])
+            c.queue_friend_setlist("Mine", [song("2", "Muse", "B", "Someone")], [], append=True)
+            c._run_job(c.submitted[-1], lambda *_: None)
+            got = [x[0] for x in setlists.decode((Path(td) / "Setlists" / "Mine.setlist").read_bytes())]
+            self.assertEqual(got[0], "C" * 32)
+            self.assertEqual(len(got), 2)
+            self.assertEqual(got[1], h)
+
     def test_no_downloads_goes_straight_to_the_setlist_job(self):
         with isolated() as td:
             c = self.make(td)
@@ -450,6 +563,54 @@ class SetlistSyncTests(Harness):
         self.sb.routes[("GET", "setlists")] = lambda q, b: (200, [{"name": n} for n in self.remote])
         self.sb.routes[("POST", "rpc/upsert_setlist")] = lambda q, b: (self.remote.append(b["p_name"]) or (200, "id"))
         self.sb.routes[("DELETE", "setlists")] = lambda q, b: (204, None)
+        self.sync.set_lists_shared(True)                    # the switch is on unless a test says otherwise
+
+    def test_switch_off_uploads_nothing(self):
+        setlists.save(self.data, "Night", [("A" * 32, 100)])
+        self.sync.set_lists_shared(False)
+        self.assertEqual(self.sync.sync_setlists(), 0)
+        self.assertEqual(self.sb.calls_to("rpc/upsert_setlist"), [])
+        self.sync.set_lists_shared(True)                    # switched on later: the list that was waiting goes up
+        self.assertEqual(self.sync.sync_setlists(), 1)
+
+    def test_switch_is_read_from_the_cloud_once_when_unknown(self):
+        self.sync._shared = None
+        self.sb.routes[("GET", "share_settings")] = lambda q, b: (200, [{"lists_shared": True}])
+        setlists.save(self.data, "Night", [("A" * 32, 100)])
+        self.assertEqual(self.sync.sync_setlists(), 1)
+        self.sync.sync_setlists()
+        self.assertEqual(len(self.sb.calls_to("share_settings")), 1)
+
+    def test_all_setlists_go_up_including_new_ones_but_not_the_derived_favourites(self):
+        for n in ("One", "Two", "Three"):
+            setlists.save(self.data, n, [("A" * 32, 100)])
+        setlists.save(self.data, self.lm.FAV_SETLIST, [("A" * 32, 100)])
+        self.assertEqual(self.sync.sync_setlists(), 3)
+        setlists.save(self.data, "Four", [("B" * 32, 100)])         # created later: no per-list switch needed
+        self.assertEqual(self.sync.sync_setlists(), 1)
+        self.assertEqual(sorted(self.remote), ["Four", "One", "Three", "Two"])
+
+    def test_rename_is_a_delete_and_an_upload(self):
+        setlists.save(self.data, "Old", [("A" * 32, 100)])
+        self.sync.sync_setlists()
+        (setlists.setlists_dir(self.data) / "Old.setlist").rename(setlists.setlists_dir(self.data) / "New.setlist")
+        self.assertEqual(self.sync.sync_setlists(), 1)
+        self.assertEqual(self.sb.calls_to("setlists", "DELETE")[0][2]["name"], "eq.Old")
+
+    def test_watcher_schedules_a_debounced_sync_only_on_change_and_when_on(self):
+        with mock.patch.object(self.sync, "schedule") as sch:
+            last = self.sync.watch_setlists(self.data, None)
+            self.assertEqual(self.sync.watch_setlists(self.data, last), last)
+            sch.assert_not_called()
+            setlists.save(self.data, "Night", [("A" * 32, 100)])
+            last = self.sync.watch_setlists(self.data, last)
+            self.assertEqual(sch.call_count, 1)
+            self.sync.set_lists_shared(False)
+            setlists.save(self.data, "More", [("A" * 32, 100)])
+            self.sync.watch_setlists(self.data, last)
+            self.assertEqual(sch.call_count, 1)
+        from chcompanion.cloud import DEBOUNCE_S
+        self.assertLessEqual(DEBOUNCE_S, 3.0)
 
     def test_uploads_local_lists_with_chart_details_and_only_when_changed(self):
         h = self.lm.chart_md5(self.chart("Someone"), compute=True)
@@ -491,6 +652,88 @@ class SetlistSyncTests(Harness):
         self.sb.calls.clear()
         self.assertFalse(self.sync.sync_all()["ok"])
         self.assertEqual(self.sb.calls, [])
+
+
+class MigrationTests(unittest.TestCase):
+    """0003_share_all.sql cannot run here (no Postgres); check its shape: idempotent, one batch, and the compat rules."""
+    SQL = (Path(__file__).parent.parent / "supabase" / "migrations" / "0003_share_all.sql").read_text("utf-8")
+    CODE = "\n".join(line for line in SQL.splitlines() if not line.lstrip().startswith("--"))
+
+    def test_idempotent_and_batch_safe(self):
+        low = self.CODE.lower()
+        self.assertNotIn("concurrently", low)
+        self.assertNotRegex(low, r"(?m)^\\")           # no psql meta-commands
+        self.assertEqual(low.count("create policy"), low.count("drop policy if exists"))
+        self.assertIn("create or replace function public.lists_visible", low)
+        self.assertIn("drop trigger if exists share_settings_sync_flags", low)
+        self.assertRegex(low, r"if not exists \(select 1 from information_schema\.columns")      # backfill runs once
+
+    def test_helper_is_security_definer_with_empty_search_path(self):
+        seg = self.CODE.split("create or replace function public.lists_visible")[1][:400]
+        self.assertIn("security definer set search_path = ''", seg)
+        self.assertIn("are_friends(auth.uid(), owner)", seg)
+        self.assertIn("lists_shared", seg)
+
+    def test_friend_policies_use_lists_visible_not_the_old_flags(self):
+        for pol in ("friends read shared favorites", "friends read shared setlists", "friends read shared setlist items"):
+            seg = self.CODE.split(f'create policy "{pol}"')[1].split(";")[0]
+            self.assertIn("lists_visible", seg, pol)
+            self.assertNotIn("favorites_shared", seg)
+            self.assertNotRegex(seg, r"\bshared\b")
+        fav = self.CODE.split("create or replace function public.favorites_visible")[1].split("$$;")[0]
+        self.assertIn("lists_visible", fav)
+        self.assertNotIn("favorites_shared", fav)
+
+    def test_old_clients_can_still_turn_sharing_on(self):
+        """Python model of the trigger's rules, asserted against the SQL text so the two cannot drift apart."""
+        def trig(old, new):
+            if old is None:
+                if new["lists"]:
+                    new["fav"] = True
+                elif new["fav"]:
+                    new["lists"] = True
+            elif new["lists"] != old["lists"]:
+                new["fav"] = new["lists"]
+            elif new["fav"] != old["fav"]:
+                new["lists"] = new["fav"]
+            return new
+        self.assertEqual(trig({"lists": False, "fav": False}, {"lists": False, "fav": True}), {"lists": True, "fav": True})
+        self.assertEqual(trig({"lists": True, "fav": True}, {"lists": True, "fav": False}), {"lists": False, "fav": False})
+        self.assertEqual(trig({"lists": False, "fav": False}, {"lists": True, "fav": False}), {"lists": True, "fav": True})
+        self.assertEqual(trig(None, {"lists": False, "fav": True}), {"lists": True, "fav": True})
+        body = self.CODE.split("create or replace function public.share_settings_sync_flags")[1].split("$$;")[0]
+        for needle in ("new.lists_shared := true", "new.favorites_shared := new.lists_shared", "new.lists_shared := new.favorites_shared"):
+            self.assertIn(needle, body)
+        self.assertIn("before insert or update on public.share_settings", self.CODE)
+
+    def test_backfill_is_favourites_or_any_shared_setlist(self):
+        low = self.CODE.lower()
+        self.assertIn("where s.favorites_shared", low)
+        self.assertIn("where l.shared", low)
+        self.assertIn("lists_shared boolean not null default false", low)
+
+
+class FriendPageApiTests(Harness):
+    """/api/friends/list: what the friend page is given, and the empty state when the friend is not sharing."""
+    def call(self, rows_visible):
+        self.befriend(BOB)
+        self.sb.routes[("POST", "rpc/lists_visible")] = lambda q, b: (200, rows_visible)
+        self.sb.routes[("GET", "favorites")] = lambda q, b: (200, [song("a", "Queen", "Bohemian", "Harmonix")])
+        sent = []
+        h = types.SimpleNamespace(_json=lambda obj, code=200: sent.append((obj, code)))
+        api._friends(h, types.SimpleNamespace(friends=self.fr, cloud=self.cloud), "GET", "/api/friends/list", {"friend": BOB}, {})
+        return sent[0][0]
+
+    def test_not_sharing_is_the_empty_state(self):
+        d = self.call(False)
+        self.assertEqual((d["shared"], d["favorites"], d["setlists"], d["friend"]["username"]), (False, [], [], "bob"))
+
+    def test_sharing_annotates_present_and_missing(self):
+        self.chart("Harmonix")
+        d = self.call(True)
+        self.assertTrue(d["shared"])
+        self.assertEqual(len(d["favorites"]), 1)
+        self.assertIn("present", d["favorites"][0])
 
 
 if __name__ == "__main__":

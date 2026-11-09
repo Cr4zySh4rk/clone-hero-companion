@@ -394,9 +394,6 @@ dialog h2 { overflow-wrap: anywhere; line-height: 1.1; }
 @media (max-width: 1060px) { .settings .row2 { grid-template-columns: minmax(0, 1fr); gap: 4px; } .settings .row2 small { grid-column: 1; margin-top: 0; } }
 
 /* ---------- friends and sharing ---------- */
-.favshare { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--line); }
-.favshare[hidden] { display: none; }
-.pill.shared { color: var(--spot-ink); background: var(--spot); border-color: var(--spot); font-weight: 700; }
 .fr-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
 .fr-card h3 { margin: 0 0 8px; }
 .fr-id { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
@@ -421,3 +418,10 @@ dialog h2 { overflow-wrap: anywhere; line-height: 1.1; }
 .fr-add { display: flex; gap: 8px; flex-wrap: wrap; }
 .fr-add input { flex: 1 1 220px; }
 .fr-name { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.fr-card > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.fr-card[open] > summary { margin-bottom: 8px; }
+.fr-song[hidden], .fr-card[hidden] { display: none; }
+.fr-song .t { min-width: 120px; }
+.fr-song { flex-wrap: wrap; }
+#frFilter { width: 100%; max-width: 420px; }
+.fr-share .inline b { font-size: 15px; }

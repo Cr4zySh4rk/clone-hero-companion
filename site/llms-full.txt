@@ -97,7 +97,7 @@ Q: Where is my Clone Hero folder?
 A: The app finds it automatically in most cases. Usually it's ~/Clone Hero on macOS, Documents\Clone Hero on Windows (possibly inside OneDrive), and ~/.clonehero on Linux. Portable installs keep it next to the game. You can point the app anywhere on the Game & folders screen.
 
 Q: Does it send my data anywhere?
-A: No telemetry. The app only talks to the services it gets content from: YouTube (videos), LRCLIB (lyrics), Chorus Encore, RhythmVerse and iTunes (charts and metadata), and Spotify for playlists you paste. An account is optional; see https://cloneherocompanion.com/privacy.html .
+A: No telemetry. The app only talks to the services it gets content from: YouTube (videos), LRCLIB (lyrics), Chorus Encore, RhythmVerse and iTunes (charts and metadata), and Spotify for playlists you paste. An account is optional. If you turn on sharing, all your friends can see your favourites and setlists. See https://cloneherocompanion.com/privacy.html .
 
 Q: Is there a command line?
 A: Yes. CloneHeroCompanion prepare [FILTER...] [--no-video] [--no-lyrics] [--force] [--dry-run]; CloneHeroCompanion restore [FILTER...]; CloneHeroCompanion doctor [--report FILE]; CloneHeroCompanion run [--no-browser] [--host 0.0.0.0] [--port 47823] (background service only). With --host 0.0.0.0 the Now Playing screen can be opened from a TV, phone or OBS at http://<your-computer>:47823/now .

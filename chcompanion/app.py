@@ -26,6 +26,8 @@ from .libmgr import LibraryManager, song_id
 from .library import Library, Song, norm_key
 from .logwatch import ClockState, LogWatcher
 from .lyrics import fetch_lrclib
+
+SETLIST_WATCH_S = 5.0
 from . import i18n
 from .i18n import _, join, msg_of
 from .paths import resource_path
@@ -554,21 +556,21 @@ class Companion:
         return (song_id(self.song) == job.song_id and self.clock.status in ("playing", "paused"))
 
     # ---- a friend's setlist: install what is missing, then write the .setlist from the local copies
-    def queue_friend_setlist(self, name: str, rows: list[dict], jobs: list[Job]):
+    def queue_friend_setlist(self, name: str, rows: list[dict], jobs: list[Job], append: bool = False):
         """Submit the download jobs, then (once they have all finished) a 'setlist' job that writes the Clone
         Hero .setlist from the charts now in the library. With no downloads the setlist job goes straight in."""
         if not jobs:
-            self.submit_setlist_job(name, rows)
+            self.submit_setlist_job(name, rows, append)
             return
         token = uuid.uuid4().hex
         with self._psl_lock:
-            self.pending_setlists[token] = {"name": name, "rows": rows, "jobs": {j.id for j in jobs}}
+            self.pending_setlists[token] = {"name": name, "rows": rows, "append": append, "jobs": {j.id for j in jobs}}
         for j in jobs:
             j.options["fsl"] = token
             self.jobs.submit(j)
 
-    def submit_setlist_job(self, name: str, rows: list[dict]):
-        self.jobs.submit(Job("setlist", _("job.setlist_title", name=name), options={"name": name, "rows": rows},
+    def submit_setlist_job(self, name: str, rows: list[dict], append: bool = False):
+        self.jobs.submit(Job("setlist", _("job.setlist_title", name=name), options={"name": name, "rows": rows, "append": append},
                              priority=PRIO_USER))
 
     def _friend_job_finished(self, job: Job):
@@ -581,7 +583,7 @@ class Companion:
             if p["jobs"]:
                 return
             self.pending_setlists.pop(tok, None)
-        self.submit_setlist_job(p["name"], p["rows"])
+        self.submit_setlist_job(p["name"], p["rows"], p.get("append", False))
 
     def _run_setlist(self, job: Job, progress) -> str:
         from . import setlists as sl
@@ -603,9 +605,21 @@ class Companion:
             raise RuntimeError(_("job.setlist_empty"))
         progress(_("job.setlist_writing"))
         name = sl.safe(o["name"])
-        sl.save(self.data_dir, name, entries)
+        if o.get("append"):
+            sl.add(self.data_dir, name, [h for h, _sp in entries])
+        else:
+            sl.save(self.data_dir, name, entries)
         self.cloudsync.schedule()
         return _("job.setlist_saved", name=name, count=len(entries), missing=missing)
+
+    def _setlist_watch(self):
+        """New, renamed, deleted or edited .setlist files reach the cloud ~3 s later (when sharing is on)."""
+        last = None
+        while not self._stop.wait(SETLIST_WATCH_S):
+            try:
+                last = self.cloudsync.watch_setlists(self.data_dir, last)
+            except Exception as e:
+                log.debug("setlist watch failed: %s", e)
 
     def _friends_poll(self):
         while not self._stop.wait(FRIENDS_POLL_S):
@@ -800,6 +814,7 @@ class Companion:
             threading.Thread(target=self.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
             threading.Thread(target=self.friends.poll, daemon=True, name="friends-poll").start()
         threading.Thread(target=self._friends_poll, daemon=True, name="friends-poll-loop").start()
+        threading.Thread(target=self._setlist_watch, daemon=True, name="setlist-watch").start()
         self.jobs.start()
         threading.Thread(target=hwvideo.capabilities, daemon=True, name="hw-probe").start()
         def scan_then_repair():

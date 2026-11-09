@@ -284,9 +284,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
 
     # ---------------------------------------------------------------- setlists
     if path == "/api/setlists" and method == "GET":
-        shared = c.friends.sharing().get("setlists") or {}
-        return _json(h, {"setlists": [{**x, "shared": bool(shared.get(x["name"]))} for x in lm.setlists()],
-                         "signedIn": c.cloud.signed_in}) or True
+        return _json(h, {"setlists": lm.setlists(), "signedIn": c.cloud.signed_in}) or True
     if path == "/api/setlists" and method == "POST":
         from . import setlists as sl
         act, name = body.get("action"), body.get("name", "")
@@ -302,7 +300,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 sl.save(c.data_dir, name, [])
         except ValueError as e:
             return _json(h, {"error": msg_of(e)}, 400) or True
-        c.cloudsync.schedule()                  # signed in: the change reaches the cloud copy of the list
+        c.cloudsync.schedule()                  # signed in: the change reaches the cloud copy of the list (~3 s debounce)
         return _json(h, {"ok": True}) or True
 
     # ---------------------------------------------------------------- friends and sharing
@@ -677,7 +675,9 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
         if sub == "sharing" and method == "GET":
             return _json(h, f.sharing()) or True
         if sub == "share" and method == "POST":
-            return _json(h, f.set_shared(body.get("kind", ""), body.get("name"), bool(body.get("shared")))) or True
+            if "kind" in body and "lists_shared" not in body:       # 2.3 payload {kind, name, shared}: accepted for one version
+                return _json(h, f.set_shared(body.get("kind", ""), body.get("name"), bool(body.get("shared")))) or True
+            return _json(h, f.set_lists_shared(bool(body.get("lists_shared", body.get("shared"))))) or True
     except CloudError as e:
         return _cloud_err(h, e)
     except ValueError as e:
@@ -685,11 +685,20 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
     return False
 
 
-def _unique_setlist(c, name: str) -> str:
+def _unique_setlist(c, name: str, friend: str = "") -> str:
+    """A free local setlist name. On a collision (a file, or the derived Favourites list) append ' (from <friend>)',
+    then a number if even that is taken."""
     from . import setlists as sl
     base = sl.safe(name)
-    d, n, out = sl.setlists_dir(c.data_dir), 1, base
-    while (d / (out + ".setlist")).exists():
+    d = sl.setlists_dir(c.data_dir)
+
+    def taken(n):
+        return (d / (n + ".setlist")).exists() or n.lower() == "favourites"
+    if not taken(base):
+        return base
+    base = sl.safe(f"{base} ({_('friends.from', name=friend)})") if friend else base
+    out, n = base, 1
+    while taken(out):
         n += 1
         out = f"{base} ({n})"
     return out
@@ -699,6 +708,7 @@ def _install_friend(c, body: dict) -> dict:
     """Install the missing charts of a friend's shared list through the normal pipeline (resolve_favourite:
     recorded source, then Chorus Encore, then RhythmVerse; the charter must match; download_first_working falls
     back to the next candidate) and, if asked, star them and write a Clone Hero .setlist from the local copies.
+    A wanted setlist name that already exists becomes "<name> (from <friend>)". addToSetlist appends to one of mine.
     body: friend, list {kind: favorites|setlist, name}, keys? (a subset), install (default true), process
     (video, lyrics, metadata; default true), favourite (also add to my favourites), setlist (new local name)."""
     from .cloud import CloudError, resolve_favourite
@@ -714,7 +724,10 @@ def _install_friend(c, body: dict) -> dict:
     keys = set(body.get("keys") or [])
     if keys:
         rows = [r for r in rows if r["song_key"] in keys]
-    name = _unique_setlist(c, body["setlist"]) if body.get("setlist") else None
+    fdata = data.get("friend") or {}
+    fname = fdata.get("name") or fdata.get("username") or ""
+    append = str(body.get("addToSetlist") or "")              # per-song: add to one of MY existing setlists
+    name = append or (_unique_setlist(c, body["setlist"], fname) if body.get("setlist") else None)
     process = bool(body.get("process", True))
     want_fav = bool(body.get("favourite"))
     find = c.friends.matcher()
@@ -754,7 +767,7 @@ def _install_friend(c, body: dict) -> dict:
                                          "fav_row": {k: r.get(k) for k in ("artist", "name", "charter", "checksum", "source")}},
                                 priority=PRIO_USER))
     if name:
-        c.queue_friend_setlist(name, list(rows), jobs)
+        c.queue_friend_setlist(name, list(rows), jobs, append=bool(append))
     else:
         for j in jobs:
             c.jobs.submit(j)

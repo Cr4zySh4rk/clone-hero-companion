@@ -42,7 +42,7 @@ class Friends:
         self.path = state_path or cloud.session_path.with_name("friends_cache.json")
         self.lock = threading.RLock()
         self.cache = {"uid": None, "me": {}, "friends": [], "incoming": [], "outgoing": [], "lists": {},
-                      "sharing": {"favorites": False, "setlists": {}}, "at": None}
+                      "sharing": {"lists": False}, "at": None}
         self.offline = False
         try:
             s = json.loads(self.path.read_text("utf-8"))
@@ -71,7 +71,7 @@ class Friends:
         """After sign-out: forget the previous account's friends."""
         with self.lock:
             self.cache.update(uid=None, me={}, friends=[], incoming=[], outgoing=[], lists={},
-                              sharing={"favorites": False, "setlists": {}}, at=None)
+                              sharing={"lists": False}, at=None)
             self.offline = False
             try:
                 self.path.unlink()
@@ -106,8 +106,7 @@ class Friends:
         try:
             prof = c.get_profile() or {}
             rows = c.rest("POST", "rpc/my_friendships", None, {}) or []
-            shared = c.rest("GET", "share_settings", {"select": "favorites_shared", "user_id": f"eq.{self._uid()}"}) or []
-            mine = c.rest("GET", "setlists", {"select": "name,shared", "owner": f"eq.{self._uid()}"}) or []
+            shared = c.rest("GET", "share_settings", {"select": "lists_shared", "user_id": f"eq.{self._uid()}"}) or []
         except CloudError as e:
             if e.offline:
                 self.offline = True
@@ -128,8 +127,8 @@ class Friends:
                 else:
                     out.append(p)
             self.cache.update(friends=fr, incoming=inc, outgoing=out, at=int(time.time()))
-            self.cache["sharing"] = {"favorites": bool(shared and shared[0].get("favorites_shared")),
-                                     "setlists": {x["name"]: bool(x.get("shared")) for x in mine}}
+            self.cache["sharing"] = {"lists": bool(shared and shared[0].get("lists_shared"))}
+            self.cloudsync.set_lists_shared(self.cache["sharing"]["lists"])
             live = {f["id"] for f in fr}
             self.cache["lists"] = {k: v for k, v in self.cache["lists"].items() if k in live}   # unfriended: forget
             self._save()
@@ -247,10 +246,16 @@ class Friends:
             raise CloudError(_("friends.unknown_friend"), 404)
         c = self.cloud
         try:
+            if self._visible(fid) is False:     # the friend has the switch off: ask for nothing else
+                with self.lock:
+                    self.cache["lists"][fid] = {"shared": False, "favorites": [], "setlists": [], "at": int(time.time())}
+                    self._save()
+                self.offline = False
+                return {"friend": f, "shared": False, "favorites": [], "setlists": [], "offline": False, "at": int(time.time())}
             favs = c.rest("GET", "favorites", {"select": "song_key,checksum,artist,name,charter,album,source,added_at",
                                                "user_id": f"eq.{fid}", "order": "added_at.asc"}) or []
             sls = c.rest("GET", "setlists", {"select": "id,name,updated_at,setlist_items(*)", "owner": f"eq.{fid}",
-                                             "shared": "eq.true", "order": "name.asc"}) or []
+                                             "order": "name.asc"}) or []
         except CloudError as e:
             if e.offline:
                 self.offline = True
@@ -261,7 +266,7 @@ class Friends:
                 raise
         else:
             self.offline = False
-        out = {"favorites": [_row(r) for r in favs],
+        out = {"shared": True, "favorites": [_row(r) for r in favs],
                "setlists": [{"name": s.get("name"), "updatedAt": s.get("updated_at"),
                              "items": [_row(i) for i in sorted(s.get("setlist_items") or [], key=lambda i: i.get("position", 0))]}
                             for s in sls]}
@@ -270,37 +275,48 @@ class Friends:
             self._save()
         return {"friend": f, **out, "offline": False, "at": int(time.time())}
 
+    def _visible(self, fid: str):
+        """True/False from the server's lists_visible(); None if it cannot say (older database)."""
+        try:
+            v = self.cloud.rest("POST", "rpc/lists_visible", None, {"owner": fid})
+        except CloudError as e:
+            if e.offline or e.status in (401,):
+                raise
+            return None
+        return bool(v) if isinstance(v, bool) else None
+
     def _cached_list(self, f: dict) -> dict:
         got = self.cache["lists"].get(f["id"]) or {}
-        return {"friend": f, "favorites": got.get("favorites") or [], "setlists": got.get("setlists") or [],
+        return {"friend": f, "shared": got.get("shared", True), "favorites": got.get("favorites") or [], "setlists": got.get("setlists") or [],
                 "offline": True, "at": got.get("at")}
 
-    # ------------------------------------------------------------ my sharing switches
-    def set_shared(self, kind: str, name: str | None, value: bool) -> dict:
+    # ------------------------------------------------------------ my sharing switch
+    def set_lists_shared(self, value: bool) -> dict:
+        """The one switch: all friends see my favourites and ALL my setlists (also later ones), or nothing."""
         self._need_login()
-        uid = self._uid()
         value = bool(value)
-        if kind == "favorites":
-            self.cloudsync.schedule(0.5)        # make sure the favourites a friend will read are up to date
-            self.cloud.rest("POST", "share_settings", {"on_conflict": "user_id"},
-                            {"user_id": uid, "favorites_shared": value}, "resolution=merge-duplicates,return=minimal")
-            self.cache["sharing"]["favorites"] = value
-        elif kind == "setlist":
-            if not name:
-                raise CloudError(_("setlist.need_name"), 400)
-            if value:
-                self.cloudsync.sync_setlists()  # the list must exist in the cloud before it can be switched on
-            self.cloud.rest("PATCH", "setlists", {"owner": f"eq.{uid}", "name": f"eq.{name}"}, {"shared": value},
-                            "return=minimal")
-            self.cache["sharing"].setdefault("setlists", {})[name] = value
-        else:
-            raise CloudError(_("friends.bad_kind"), 400)
+        self.cloud.rest("POST", "share_settings", {"on_conflict": "user_id"},
+                        {"user_id": self._uid(), "lists_shared": value}, "resolution=merge-duplicates,return=minimal")
+        self.cloudsync.set_lists_shared(value)
         with self.lock:
+            self.cache["sharing"] = {"lists": value}
             self._save()
-        return self.cache["sharing"]
+        if value:
+            try:
+                self.cloudsync.sync_setlists()      # every local setlist is in the cloud before a friend looks
+            except CloudError as e:
+                log.info("Setlists will sync later: %s", e)
+            self.cloudsync.schedule(0.5)            # favourites too
+        return self.sharing()
+
+    def set_shared(self, kind: str = "", name: str | None = None, value: bool = False) -> dict:
+        """Deprecated 2.3 payload {kind, name, shared}: any per-list switch now means the single switch."""
+        if kind not in ("favorites", "setlist"):
+            raise CloudError(_("friends.bad_kind"), 400)
+        return self.set_lists_shared(value)
 
     def sharing(self) -> dict:
-        return self.cache.get("sharing") or {"favorites": False, "setlists": {}}
+        return {"lists": bool((self.cache.get("sharing") or {}).get("lists"))}
 
     # ------------------------------------------------------------ what is already in my library
     def matcher(self):

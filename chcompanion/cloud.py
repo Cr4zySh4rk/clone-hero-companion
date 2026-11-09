@@ -283,6 +283,7 @@ class CloudSync:
         self.cloud_only: list[dict] = []     # cloud favourites not in this library
         self.not_found: set[str] = set()     # cloud favourites Chorus Encore doesn't have
         self.syncing = False
+        self._shared: tuple | None = None    # (uid, lists_shared): the "share with friends" switch, read once per account
         self.state = {"tombstones": {}, "synced": [], "plays": {}, "lastSync": None, "lastError": None}
         try:
             s = json.loads(self.state_path.read_text("utf-8"))
@@ -389,6 +390,24 @@ class CloudSync:
                 self.state["tombstones"][k] = int(time.time())
             self._save_state()
         self.schedule()
+
+    def setlists_signature(self, data_dir) -> tuple:
+        """Names, sizes and times of the local .setlist files: a change (new, renamed, deleted, edited in Clone
+        Hero) means the cloud copies are stale."""
+        from . import setlists as sl
+        try:
+            return tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                                for p in sl.setlists_dir(data_dir).glob("*.setlist")))
+        except OSError:
+            return ()
+
+    def watch_setlists(self, data_dir, last: tuple | None) -> tuple:
+        """One poll step: if the local setlists changed since `last` (and sharing is on), sync after the usual ~3 s
+        debounce. Returns the new signature."""
+        sig = self.setlists_signature(data_dir)
+        if last is not None and sig != last and self.cloud.signed_in and self._shared and self._shared[1]:
+            self.schedule()
+        return sig
 
     def schedule(self, delay: float = DEBOUNCE_S):
         if not self.cloud.signed_in:
@@ -532,6 +551,18 @@ class CloudSync:
             st = self.state["setlists"] = {"uid": self._uid(), "sig": {}, "meta": {}}
         return st
 
+    def set_lists_shared(self, value: bool):
+        self._shared = (self._uid(), bool(value))
+
+    def lists_shared(self) -> bool:
+        """The 'share my favourites and setlists with friends' switch (cached; read from the cloud once per account)."""
+        uid = self._uid()
+        if self._shared and self._shared[0] == uid:
+            return self._shared[1]
+        rows = self.cloud.rest("GET", "share_settings", {"select": "lists_shared", "user_id": f"eq.{uid}"}) or []
+        self._shared = (uid, bool(rows and rows[0].get("lists_shared")))
+        return self._shared[1]
+
     def sync_setlists(self) -> int:
         """Upload the local Clone Hero .setlist files (the source of truth for the game) as cloud setlists, with
         each chart's artist, title, charter and source so a friend can find or install it. Only changed lists are
@@ -539,6 +570,8 @@ class CloudSync:
         from the favourites and is not uploaded. Returns the number of lists uploaded."""
         from . import setlists as sl
         lm, c, st = self.lm, self.cloud, self._setlist_state()
+        if not self.lists_shared():             # switch off: nothing is uploaded (friends could not read it anyway)
+            return 0
         local = {x["name"]: x["entries"] for x in sl.list_all(lm.data_dir) if x["name"] != lm.FAV_SETLIST}
         if not local and not st["sig"]:
             return 0
@@ -676,6 +709,7 @@ class CloudSync:
         """After sign-out: forget per-account progress so the next account starts clean."""
         self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, setlists={}, lastSync=None, lastError=None, cloud_only=[])
         self.cloud_only = []
+        self._shared = None
         self.playlog.clear_cloud()
         self._save_state()
 

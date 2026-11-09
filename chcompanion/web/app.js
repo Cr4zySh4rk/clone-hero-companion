@@ -370,20 +370,26 @@ function updateFavCount() {
   const sum = $("#favSummary");
   sum.hidden = !(st.filter === "fav" && currentView === "library");
   sum.textContent = tr("fav.summary", { count: ft.total }) + (ft.notHere ? " · " + tr("fav.not_here", { count: ft.notHere }) : "");
-  paintShare();
+}
+/* The one sharing switch (Friends view and Settings) and its status line. */
+function shareStatusText() {
+  const on = !!(fr.status && fr.status.sharing && fr.status.sharing.lists), n = (fr.status && fr.status.friends) || 0;
+  return on ? (n ? tr("share.status_on", { count: n }) : tr("share.status_nofriends")) : tr("share.status_off");
 }
 function paintShare() {
-  const box = $("#favShare"); if (!box) return;
-  box.hidden = !(st.filter === "fav" && currentView === "library" && cloud.status && cloud.status.signedIn);
-  const on = !!(fr.status && fr.status.sharing && fr.status.sharing.favorites);
-  $("#favShareCb").checked = on; $("#favSharedBadge").hidden = !on;
+  const on = !!(fr.status && fr.status.sharing && fr.status.sharing.lists);
+  $$(".shareSw").forEach((cb) => { cb.checked = on; cb.disabled = false; });
+  $$(".shareStatus").forEach((el) => { el.textContent = shareStatusText(); });
 }
-$("#favShareCb").onchange = async (e) => {
-  e.target.disabled = true;
-  try { await api("/api/friends/share", { kind: "favorites", shared: e.target.checked }); toast(tr(e.target.checked ? "share.on" : "share.off")); }
-  catch (err) { toast(err.message, 4500); }
-  e.target.disabled = false; await pollFriends();
-};
+function bindShare(root) {
+  $$(".shareSw", root).forEach((cb) => cb.onchange = async (e) => {
+    const on = e.target.checked;
+    $$(".shareSw").forEach((x) => x.disabled = true);
+    try { const r = await api("/api/friends/share", { lists_shared: on }); fr.status = { ...(fr.status || {}), sharing: r }; toast(tr(on ? "share.on" : "share.off")); }
+    catch (err) { toast(err.message, 4500); }
+    await pollFriends();
+  });
+}
 async function setFav(ids, value) {
   ids = ids.filter((i) => lib.byId.has(i));
   if (!ids.length) return;
@@ -566,26 +572,19 @@ $("#nowFull").onclick = () => openNowWindow(true);
 let setlists = [], slActive = null;
 async function loadSetlists() {
   try { setlists = (await api("/api/setlists")).setlists; } catch (e) { return toast(e.message); }
-  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}${s.shared ? ` <small class="pill shared">${esc(tr("share.shared"))}</small>` : ""}</span><span>${s.songs.length}</span></li>`).join("") || `<li class="hint">${esc(tr("setlists.none"))}</li>`;
+  $("#slList").innerHTML = setlists.map((s) => `<li data-n="${esc(s.name)}" class="${s.name === slActive ? "on" : ""}"><span>${esc(s.name)}</span><span>${s.songs.length}</span></li>`).join("") || `<li class="hint">${esc(tr("setlists.none"))}</li>`;
   renderSetlist();
 }
 function renderSetlist() {
   const sl = setlists.find((s) => s.name === slActive);
   if (!sl) { $("#slBody").innerHTML = `<p class="hint">${esc(tr("setlists.pick"))}</p>`; return; }
-  const canShare = cloud.status && cloud.status.signedIn && sl.name !== "Favourites";
-  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2>${canShare ? `<label class="inline" title="${esc(tr("share.tip"))}"><input type="checkbox" id="slShare"${sl.shared ? " checked" : ""}> <span>${esc(tr("share.with_friends"))}</span></label>${sl.shared ? `<span class="pill shared">${esc(tr("share.shared"))}</span>` : ""}` : ""}<button class="danger" id="slDel">${esc(tr("setlists.delete"))}</button></div>` +
+  $("#slBody").innerHTML = `<div class="pane-head"><h2>${esc(sl.name)}</h2><button class="danger" id="slDel">${esc(tr("setlists.delete"))}</button></div>` +
     sl.songs.map((x, i) => {
       const s = x.id && lib.byId.get(x.id);
       return `<div class="line"><span class="hint">${i + 1}</span><div class="art"${s && s.art ? ` style="background-image:url('/media/art/${s.id}')"` : ""}></div>
         <div><b>${s ? esc(s.name) : esc(tr("setlists.not_in_library"))}</b><span>${s ? esc(s.artist) : x.hash}</span></div>
         <span class="pill">${x.speed}%</span>${s ? `<button data-rm="${s.id}">${esc(tr("setlists.remove"))}</button>` : "<span></span>"}</div>`;
     }).join("");
-  if ($("#slShare")) $("#slShare").onchange = async (e) => {
-    e.target.disabled = true;
-    try { await api("/api/friends/share", { kind: "setlist", name: sl.name, shared: e.target.checked }); toast(tr(e.target.checked ? "share.on" : "share.off")); }
-    catch (err) { toast(err.message, 4500); }
-    loadSetlists();
-  };
   $("#slDel").onclick = async () => {
     if (!await ask({ title: tr("setlists.delete_title", { name: sl.name }), ok: tr("setlists.delete_ok"), danger: true })) return;
     await api("/api/setlists", { action: "delete", name: sl.name }); slActive = null; loadSetlists();
@@ -724,6 +723,10 @@ async function pollJobs(once) {
     jobsSnap = await api("/api/jobs");
     if (!jobsSeen) jobsSeen = new Set(jobsSnap.jobs.filter((j) => ["done", "failed", "cancelled"].includes(j.status)).map((j) => j.id));
     else if (jobsNewlyFinished(jobsSeen, jobsSnap).length) { loadLibrary(); loadCloud(); }   // charts landed: the "not on this machine" box shrinks
+    if (fr.watch) {          // friend downloads were queued: remind about Scan Songs once every job has finished
+      if (jobsSnap.jobs.some((j) => ["queued", "waiting", "running"].includes(j.status))) fr.watchBusy = true;
+      else if (fr.watchBusy) { fr.watch = fr.watchBusy = false; toast(tr("friends.scan_reminder"), 9000); }
+    }
     renderConvert(); renderDock(); if (currentView === "jobs") renderJobs();
     if (activeId && detail) {
       const j = jobsSnap.jobs.find((x) => x.songId === activeId);
@@ -818,6 +821,9 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.video_format"))}</span><span>${esc(tr("settings.format_webm"))}</span>
         <small>${esc(tr("settings.format_note"))}</small></div>
     </section>
+    ${cloud.status && cloud.status.signedIn ? `<section><h3>${esc(tr("nav.friends"))}</h3>
+      <div class="row2"><span>${esc(tr("share.switch"))}</span><label class="inline"><input type="checkbox" class="shareSw"> <span>${esc(tr("share.switch_help"))}</span></label></div>
+      <div class="row2"><span></span><span class="hint shareStatus"></span></div></section>` : ""}
     <section><h3>${esc(tr("settings.in_game"))}</h3>
       ${chk("in_game", tr("settings.add_media"), tr("settings.add_media_help"))}
       ${chk("prefetch", tr("settings.prefetch"), tr("settings.prefetch_help"))}
@@ -851,6 +857,7 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
   bindLangSelects();
+  bindShare($("#settingsForm")); paintShare();
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
     if (["pref_p", "workers"].includes(k)) v = Number(v);
@@ -1097,7 +1104,10 @@ async function loadFriends(keepPage) {
   const me = v.me || {};
   const offline = v.offline ? `<div class="fr-banner">${esc(tr("friends.offline"))}</div>` : "";
   const dis = v.offline ? " disabled" : "";
+  fr.status = { ...(fr.status || {}), sharing: v.sharing, friends: v.friends.length };
   body.innerHTML = `<h2>${esc(tr("friends.title"))}</h2>${offline}
+    <div class="fr-card fr-share"><label class="inline"><input type="checkbox" class="shareSw"${dis}> <b>${esc(tr("share.switch"))}</b></label>
+      <p class="hint">${esc(tr("share.switch_help"))}</p><p class="hint shareStatus"></p></div>
     ${v.needsUsername ? `<div class="fr-card" id="frUserBox">${usernameBox()}</div>` : ""}
     <div class="fr-card"><h3>${esc(tr("friends.your_id"))}</h3><div class="fr-id">
       <div><small>${esc(tr("friends.username"))}</small><b>${me.username ? "@" + esc(me.username) : esc(tr("friends.no_username"))}</b></div>
@@ -1111,6 +1121,7 @@ async function loadFriends(keepPage) {
       <button data-rm="${esc(p.id)}"${dis}>${esc(tr("friends.cancel"))}</button></div>`).join("")}</div>` : ""}
     <div class="fr-card"><h3>${esc(tr("friends.list_title"))}</h3>${v.friends.length ? v.friends.map((p) => `<div class="fr-row click" data-open="${esc(p.id)}">${avatar(p)}${who(p)}
       <button data-unf="${esc(p.id)}" data-nm="${esc(p.name || p.username || "")}"${dis}>${esc(tr("friends.unfriend"))}</button></div>`).join("") : `<p class="hint">${esc(tr("friends.none"))}</p>`}</div>`;
+  bindShare(body); paintShare();
   if ($("#frUserBox")) bindUsernameBox($("#frUserBox"), () => loadFriends());
   $("#frCopy").onclick = async () => {
     try { await navigator.clipboard.writeText(me.friend_code); toast(tr("friends.copied")); }
@@ -1141,29 +1152,48 @@ async function renderFriendPage() {
   try { d = await api(`/api/friends/list?friend=${encodeURIComponent(fr.page)}`); }
   catch (e) { toast(e.message, 4500); fr.page = null; return loadFriends(); }
   fr.data = d;
-  const p = d.friend, ro = !!d.offline, dis = ro ? " disabled" : "";
-  const list = (key, title, items, setlist) => {
+  const p = d.friend, ro = !!d.offline, dis = ro ? " disabled" : "", fname = p.name || p.username || "";
+  const head = `<div class="fr-tools"><button id="frBack">${esc(tr("friends.back"))}</button></div><div class="fr-row">${avatar(p)}${who(p)}</div>
+    ${ro ? `<div class="fr-banner">${esc(tr("friends.offline"))}</div>` : ""}`;
+  const back = () => { $("#frBack").onclick = () => { fr.page = null; loadFriends(); }; };
+  if (!d.shared || (!d.favorites.length && !d.setlists.length)) {
+    body.innerHTML = head + `<p class="hint">${esc(tr("friends.nothing_shared", { name: fname }))}</p>`;
+    return back();
+  }
+  const list = (key, title, items, isFav) => {
     const miss = items.filter((x) => !x.present).length;
     const sum = `${tr("friends.song_count", { count: items.length })}${miss ? " · " + tr("friends.missing_count", { count: miss }) : ""}`;
-    return `<div class="fr-card" data-list="${esc(key)}"><h3>${esc(title)}</h3><p class="hint">${esc(sum)}</p>
+    return `<details class="fr-card" data-list="${esc(key)}" data-title="${esc(title.toLowerCase())}"><summary><b>${esc(title)}</b> <span class="hint">${esc(sum)}</span></summary>
       <div class="fr-tools"><label class="inline"><input type="checkbox" class="frProc" checked> <span>${esc(tr("charts.then_process"))}</span></label>
         <button data-do="install"${miss && !ro ? "" : " disabled"}>${esc(tr("friends.install_missing"))}</button>
-        ${setlist ? `<button class="primary" data-do="installadd"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.install_add"))}</button><button data-do="copy"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.copy_setlist"))}</button>` : ""}
+        <button class="primary" data-do="setlist"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.copy_setlist"))}</button>
         <button data-do="favs"${ro || !items.length ? " disabled" : ""}>${esc(tr("friends.add_favs"))}</button></div>
-      ${items.map((x) => `<div class="fr-song"><div class="t"><b>${esc(x.name)}</b><span>${esc(x.artist)}${x.artist && x.charter ? " · " : ""}${esc(x.charter)}</span></div>
+      ${items.map((x) => `<div class="fr-song" data-q="${esc((x.name + " " + x.artist + " " + x.charter).toLowerCase())}"><div class="t"><b>${esc(x.name)}</b><span>${esc(x.artist)}${x.artist && x.charter ? " · " : ""}${esc(x.charter)}</span></div>
         <span class="${x.present ? "have" : "miss"}">${esc(tr(x.present ? "friends.in_library" : "friends.not_installed"))}</span>
-        <button data-fav="${esc(x.song_key)}"${dis}>${esc(tr("friends.add_fav"))}</button></div>`).join("")}</div>`;
+        <button data-dl="${esc(x.song_key)}"${x.present || ro ? " disabled" : ""}>${esc(tr("friends.song_download"))}</button>
+        <button data-fav="${esc(x.song_key)}"${dis}>${esc(tr("friends.add_fav"))}</button>
+        <button data-sl="${esc(x.song_key)}"${dis}>${esc(tr("lib.act.setlist"))}</button></div>`).join("")}</details>`;
   };
-  const lists = (d.favorites.length ? list("fav", tr("friends.fav_title"), d.favorites, false) : "") +
-    d.setlists.map((s, i) => list("sl:" + i, tr("friends.setlist_title", { name: s.name }), s.items, true)).join("");
-  body.innerHTML = `<div class="fr-tools"><button id="frBack">${esc(tr("friends.back"))}</button></div>
-    <div class="fr-row">${avatar(p)}${who(p)}</div>
-    ${ro ? `<div class="fr-banner">${esc(tr("friends.offline"))}</div>` : ""}
-    ${lists || `<p class="hint">${esc(tr("friends.nothing_shared", { name: p.name || p.username || "" }))}</p>`}`;
-  $("#frBack").onclick = () => { fr.page = null; loadFriends(); };
-  $$("#friendsBody .fr-card[data-list]").forEach((card) => {
-    const key = card.dataset.list;
-    const spec = key === "fav" ? { kind: "favorites" } : { kind: "setlist", name: d.setlists[Number(key.slice(3))].name };
+  const cards = (d.favorites.length ? list("fav", tr("friends.fav_title"), d.favorites, true) : "") +
+    d.setlists.map((s, i) => list("sl:" + i, s.name, s.items, false)).join("");
+  body.innerHTML = head + `<div class="fr-card"><b>${esc(fname)}</b>
+      <p class="hint">${esc(tr("friends.fav_count", { count: d.favorites.length }))} · ${esc(tr("friends.sets_count", { count: d.setlists.length }))}</p>
+      <input type="search" id="frFilter" placeholder="${esc(tr("friends.filter_ph"))}" autocomplete="off"></div>
+    <div id="frLists">${cards}</div><p class="hint" id="frNoMatch" hidden>${esc(tr("friends.no_match"))}</p>`;
+  back();
+  $("#frFilter").oninput = (e) => {
+    const q = e.target.value.trim().toLowerCase(); let any = false;
+    $$("#frLists .fr-card").forEach((card) => {
+      const t = !q || card.dataset.title.includes(q); let hit = t;
+      $$(".fr-song", card).forEach((r) => { const m = t || r.dataset.q.includes(q); r.hidden = !m; hit = hit || m; });
+      card.hidden = !hit; if (q && hit) card.open = true; any = any || hit;
+    });
+    $("#frNoMatch").hidden = any;
+  };
+  $$("#frLists .fr-card").forEach((card) => {
+    const key = card.dataset.list, isFav = key === "fav";
+    const spec = isFav ? { kind: "favorites" } : { kind: "setlist", name: d.setlists[Number(key.slice(3))].name };
+    const title = isFav ? tr("friends.fav_title") : spec.name;
     const proc = () => card.querySelector(".frProc").checked;
     const go = async (extra, btn) => {
       btn.disabled = true;
@@ -1173,20 +1203,31 @@ async function renderFriendPage() {
         if (r.setlist) m += (m ? " · " : "") + tr("friends.setlist_queued", { name: r.setlist });
         if (r.notFound.length) m += (m ? " · " : "") + tr("toast.not_found_online", { count: r.notFound.length });
         if (r.failed) m += (m ? " · " : "") + tr("cloud.lookup_failed", { count: r.failed });
-        toast(m || tr("friends.nothing_to_do"), 6000, () => show("jobs"));
+        const jobs = r.queued || r.setlist;
+        toast((m || tr("friends.nothing_to_do")) + (jobs ? " · " + tr("friends.view_jobs") : ""), 6000, jobs ? () => show("jobs") : null);
+        if (jobs) { fr.watch = true; fr.watchBusy = true; }
         pollJobs(true); lib.version = -1; loadCloud();
       } catch (e) { toast(e.message, 4500); }
       renderFriendPage();
     };
-    $$("[data-do]", card).forEach((b) => b.onclick = async () => {
+    $$("[data-do]", card).forEach((b) => b.onclick = () => {
       const act = b.dataset.do;
       if (act === "install") return go({}, b);
       if (act === "favs") return go({ favourite: true }, b);
-      const r = await ask({ title: tr("friends.setlist_name_title"), input: spec.name, ok: tr("common.save") });
-      if (!r || !r.input.trim()) return;
-      go({ setlist: r.input.trim(), install: act === "installadd", favourite: false }, b);
+      go({ setlist: title, favourite: false }, b);
     });
+    $$("[data-dl]", card).forEach((b) => b.onclick = () => go({ keys: [b.dataset.dl] }, b));
     $$("[data-fav]", card).forEach((b) => b.onclick = () => go({ keys: [b.dataset.fav], favourite: true }, b));
+    $$("[data-sl]", card).forEach((b) => b.onclick = async () => {
+      let mine = [];
+      try { mine = (await api("/api/setlists")).setlists; } catch (e) { /* new setlist only */ }
+      const r = await ask({ title: tr("setlists.add_title", { count: 1 }), text: tr("setlists.add_text"),
+        select: [{ value: "", label: tr("setlists.new_option") }, ...mine.map((x) => ({ value: x.name, label: x.name }))], input: "", ok: tr("setlists.add") });
+      if (!r) return;
+      const typed = r.input?.trim(), name = typed || r.select;
+      if (!name) return toast(tr("setlists.need_name"));
+      go(mine.some((x) => x.name === name) ? { keys: [b.dataset.sl], addToSetlist: name } : { keys: [b.dataset.sl], setlist: name }, b);
+    });
   });
 }
 
