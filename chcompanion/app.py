@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import __version__, net, youtube
 from . import hwvideo, ingame, metadata, leaderboard
+from .chlink import ChLink
 from .cloud import Cloud, CloudSync
 from .friends import Friends, POLL_S as FRIENDS_POLL_S
 from .playstats import PlayLog, PlayWatcher, candidate_files
@@ -68,6 +69,7 @@ class Companion:
         self.libmgr.on_rekey = self.cloudsync.rekey
         self.libmgr.on_scanned = self.refresh_unplayable
         self.lb = leaderboard.Client()
+        self.chlink = ChLink(self)
         self._score_cache: tuple[float, list[Path]] = (0.0, [])
         self._scoredata_files_cache: tuple[float, list[Path]] = (0.0, [])
         self.scoredata = ScoreDataCache(self._scoredata_files)
@@ -354,7 +356,7 @@ class Companion:
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
-                "ch_username": "", "ch_account_id": 0, "yt_cookies": "none", "yt_cookies_file": "",
+                "ch_username": "", "ch_account_id": 0, "ch_verified": False, "yt_cookies": "none", "yt_cookies_file": "",
                 "language": "auto"}
 
     # ------------------------------------------------------------ videos that don't play everywhere
@@ -457,9 +459,14 @@ class Companion:
             return (s.artist, s.name) if s else None
         return playstats.resolve_scoredata(rows, plays, lookup)
 
+    def ch_account_id(self) -> int:
+        """The VERIFIED CH Leaderboards account id (0 = none). A username saved before 2.7.0 without a CH sign-in does not count."""
+        st = self.settings()
+        return int(st.get("ch_account_id") or 0) if st.get("ch_verified") else 0
+
     def refresh_ch_profile(self) -> None:
-        """Fetch the linked CH Leaderboards profile live (Sync now): the next snapshot and Profile use it."""
-        aid = int(self.settings().get("ch_account_id") or 0)
+        """Fetch the verified CH Leaderboards profile live (Sync now): Profile uses it."""
+        aid = self.ch_account_id()
         if aid:
             try:
                 self.lb.profile(aid, max_age=0)
@@ -467,18 +474,11 @@ class Companion:
                 log.info("CH Leaderboards profile not refreshed: %s", e)
 
     def career_snapshot(self) -> dict:
-        """The unfiltered Profile totals plus the linked CH Leaderboards account, as uploaded for the website."""
+        """The unfiltered Profile totals, as uploaded for the website (CH stats come from the server, not from here)."""
         from . import playstats
         plays = self.playlog.all()
         res = playstats.compute(plays, scoredata=self._scoredata_rows(plays))
-        username, prof = self.settings().get("ch_username") or "", None
-        aid = int(self.settings().get("ch_account_id") or 0)
-        if aid:
-            try:
-                prof = self.lb.profile(aid, max_age=60)
-            except Exception:
-                prof = None
-        return playstats.career_snapshot(res, prof, username, __version__)
+        return playstats.career_snapshot(res, __version__)
 
     def _song_length(self, checksum: str, artist: str, name: str) -> float | None:
         from .library import norm_key
@@ -488,33 +488,20 @@ class Companion:
                 return s.length_s
         return None
 
-    def link_ch_username(self, username: str) -> dict | None:
-        """Link (or with '' unlink) a CH Leaderboards account; also saved in the cloud profile."""
-        username = (username or "").strip()
-        if not username:
-            self.update_settings({"ch_username": "", "ch_account_id": 0})
-            user = None
-        else:
-            user = self.lb.find_user(username)
-            if not user:
-                raise leaderboard.LeaderboardError(_("lb.no_player", name=username))
-            self.update_settings({"ch_username": user["username"], "ch_account_id": int(user["accountId"])})
+    def set_ch_link(self, username: str, account_id: int, verified: bool) -> None:
+        """Remember the CH account linked by a CH sign-in (or, with ('', 0, False), unlinked). Only chlink.py calls this
+        after the server has verified the link; the typed-username path no longer exists."""
+        self.update_settings({"ch_username": username, "ch_account_id": int(account_id), "ch_verified": bool(verified)})
         self.playlog.clear_leaderboard()      # another account (or none): imported scores must be re-fetched
-        if self.cloud.signed_in:
-            try:
-                self.cloud.set_ch_username(user["username"] if user else None)
-            except Exception as e:
-                log.info("Could not save the CH username to the cloud profile: %s", e)
-        return user
 
     def after_login(self):
-        """First sync after signing in; adopts a CH username saved from another machine."""
+        """First sync after signing in; adopts a CH link verified on another machine (server-written, so trustworthy)."""
         self.cloudsync.sync_all()
         self.friends.poll()
         try:
-            name = (self.cloud.get_profile() or {}).get("ch_username")
-            if name and not self.settings().get("ch_username"):
-                self.link_ch_username(name)
+            prof = self.cloud.get_profile() or {}
+            if prof.get("ch_verified_at") and prof.get("ch_account_id") and not self.settings().get("ch_verified"):
+                self.set_ch_link(str(prof.get("ch_username") or ""), int(prof["ch_account_id"]), True)
         except Exception as e:
             log.info("Could not read the cloud profile: %s", e)
 

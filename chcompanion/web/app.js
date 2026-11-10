@@ -1462,7 +1462,7 @@ function renderProfile(body, d, cs, fv, opts) {
   const fid = opts.friendId || "", P = fid ? profF : prof, ro = !!fid;
   const reload = () => loadProfile(opts);
   const T = d.totals, f = d.facets, H = d.heatmap, X = d.extras || {}, R = d.rank || { rank: 1, xp: 0, lo: 0, hi: 500, pct: 0 };
-  const linked = !ro && !!(d.ch && (d.ch.username || d.ch.accountId));
+  const linked = !ro && !!(d.ch && d.ch.verified);      // only a CH account verified by a CH sign-in counts
   // The CH Leaderboards account exactly as its website shows it (stats and ranks verbatim); never merged into the app's own tiles.
   const A = d.account || null, AS = (A && A.stats) || {}, AR = (A && A.ranks) || {};
   const COL = ["var(--green)", "var(--red)", "var(--yellow)", "var(--blue)", "var(--orange)"];
@@ -1656,23 +1656,47 @@ function renderProfile(body, d, cs, fv, opts) {
     };
     $("#pCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pVerify").click(); });
   }
-  loadChAccount();
+  loadChAccount(cs.signedIn);
 }
-async function loadChAccount() {
+let chPoll = null;
+async function loadChAccount(signedIn) {
+  clearTimeout(chPoll);
   const box = $("#chBody"); if (!box) return;
-  const form = (v) => `<div class="d-row"><input type="text" id="chUser" placeholder="${esc(tr("profile.ch_user_ph"))}" value="${esc(v || "")}"><button id="chLink" class="primary">${esc(v ? tr("profile.change") : tr("profile.link"))}</button>${v ? `<button id="chUnlink">${esc(tr("profile.unlink"))}</button>` : ""}</div>
-    <p class="lbnote">${esc(tr("profile.ch_note"))}</p>`;
-  const bind = () => {
-    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast(tr("toast.linked")); profTab = "ch"; loadProfile(); } catch (e) { toast(e.message, 4500); } };
-    const u = $("#chUnlink"); if (u) u.onclick = async () => { await api("/api/lb/link", { username: "" }); profTab = "overview"; loadProfile(); };
+  const done = () => { toast(tr("toast.linked")); profTab = "ch"; loadProfile(); };
+  const busy = (st) => `<p class="hint" role="status">${esc(st.message || "")}</p><div class="d-row"><button id="chCancel">${esc(tr("common.cancel"))}</button></div>`;
+  const signIn = (note, name) => `${name ? `<p class="hint">${esc(name)} · ${esc(tr("profile.ch_unverified"))}</p>` : ""}${note ? `<p class="hint">${esc(note)}</p>` : ""}
+    <div class="d-row"><button id="chSignIn" class="primary"${signedIn ? "" : " disabled"}>${esc(tr("profile.ch_signin"))}</button></div>
+    ${signedIn ? "" : `<p class="hint">${esc(tr("chlink.need_companion"))}</p>`}<p class="lbnote">${esc(tr("profile.ch_signin_note"))}</p><p class="lbnote">${esc(tr("profile.ch_note"))}</p>`;
+  const bind = (render) => {
+    const go = $("#chSignIn"), cx = $("#chCancel"), un = $("#chUnlink");
+    if (go) go.onclick = async () => { try { render(await api("/api/ch/start", {})); } catch (e) { toast(e.message, 4500); } };
+    if (cx) cx.onclick = async () => { try { render(await api("/api/ch/cancel", {})); } catch (e) { toast(e.message, 4500); } };
+    if (un) un.onclick = async () => { try { await api("/api/ch/unlink", {}); profTab = "overview"; loadProfile(); } catch (e) { toast(e.message, 4500); } };
+  };
+  let base = { linked: false };
+  const render = (st) => {
+    clearTimeout(chPoll);
+    if (!$("#chBody")) return;
+    if (st && st.state === "done") return done();
+    if (st && ["waiting", "pendingAccountCreation", "linking"].includes(st.state)) {
+      box.innerHTML = busy(st); bind(render);
+      chPoll = setTimeout(async () => { try { render(await api("/api/ch/status")); } catch (e) { render({ state: "failed", message: e.message }); } }, 1500);
+      return;
+    }
+    const note = st && ["failed", "expired", "cancelled"].includes(st.state) ? st.message : "";
+    box.innerHTML = signIn(note, base.unverifiedUsername); bind(render);
   };
   try {
-    const p = await api("/api/lb/profile");
-    if (!p.linked) { box.innerHTML = form(""); return bind(); }
-    box.innerHTML = form(p.username) + `
-      ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul>` : ""}`;
-    bind();
-  } catch (e) { box.innerHTML = `<p class="hint">${esc(tr("profile.ch_unreachable", { detail: e.message }))}</p>` + form($("#chUser")?.value || ""); bind(); }
+    const [p, st] = await Promise.all([api("/api/lb/profile"), api("/api/ch/status")]);
+    base = p;
+    if (p.linked) {
+      box.innerHTML = `<p class="hint"><b>${esc(tr("profile.ch_verified_as", { name: p.username || "" }))}</b>${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(tr("lb.open_on"))}</a>` : ""}</p>
+        <div class="d-row"><button id="chUnlink">${esc(tr("profile.unlink"))}</button></div>
+        ${(p.recent || []).length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul>` : ""}`;
+      return bind(render);
+    }
+    render(st);
+  } catch (e) { box.innerHTML = `<p class="hint">${esc(tr("profile.ch_unreachable", { detail: e.message }))}</p>`; }
 }
 
 /* ================================================================ global top scores (song detail) */

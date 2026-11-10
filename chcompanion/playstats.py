@@ -736,17 +736,15 @@ def _int(v) -> int:
     return v if isinstance(v, int) and not isinstance(v, bool) else 0
 
 
-def career_snapshot(res: dict, profile: dict | None, username: str, app_version: str) -> dict:
+def career_snapshot(res: dict, app_version: str) -> dict:
     """What the app uploads to profiles.career for the website: the app's own unfiltered totals (plays, scoredata and
-    CH Leaderboards rows, no account merging), plus the linked CH account's `stats` and `ranks` objects unchanged,
-    the CH username and the app version. Contains no timestamp, so equal snapshots compare equal."""
+    CH Leaderboards rows, no account merging) and the app version. CH account stats are NOT part of it since 2.7.0:
+    the website gets them from the server-written, sign-in-verified profiles.ch_profile. Contains no timestamp, so
+    equal snapshots compare equal."""
     t = res.get("totals") or {}
     sc = t.get("starCounts") or {}
-    acct = account_section(profile, username) or {}
-    aid = (profile or {}).get("accountId")
     return {
-        "v": 1, "app": app_version, "ch_username": (profile or {}).get("username") or username or None,
-        "ch_account_id": aid if isinstance(aid, int) and not isinstance(aid, bool) else None,
+        "v": 2, "app": app_version,
         "totals": {
             "plays": _int(t.get("plays")), "hours": t.get("hours", 0), "songs": _int(t.get("songs")),
             "avgAccuracy": t.get("avgAccuracy"), "totalScore": t.get("totalScore", 0), "notesHit": t.get("notesHit", 0),
@@ -754,8 +752,5 @@ def career_snapshot(res: dict, profile: dict | None, username: str, app_version:
             "starCounts": {k: int(sc.get(k, 0)) for k in ("5", "6", "7")},
             "fiveOrMore": _int(t.get("fiveStars")), "streak": _int(t.get("streak")), "longestStreak": _int(t.get("longestStreak")),
         },
-        "createdAt": acct.get("createdAt"), "submissionCount": acct.get("submissionCount"),
-        "stats": acct.get("stats", {}), "ranks": acct.get("ranks", {}),
-        "topArtists": acct.get("topArtists", []), "topInstruments": acct.get("topInstruments", []),
         "sources": res.get("sources") or {},
     }

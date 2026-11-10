@@ -208,10 +208,11 @@
 
   /* ------------------------------------------------------------------ app snapshot (profiles.career)
    * The desktop app uploads its own numbers on each cloud sync: star and FC counts that also use Clone Hero's
-   * scoredata.bin, and the linked CH Leaderboards account's stats and ranks (browsers cannot call that API: no CORS). */
+   * scoredata.bin. The CH Leaderboards account figures are NOT in it (browsers cannot call that API: no CORS): they come
+   * from profiles.ch_profile, written on the server for a CH account verified by a CH sign-in (ch-link / ch-profile). */
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
   function validSnapshot(c) {
-    return c && typeof c === 'object' && c.v === 1 && c.totals && typeof c.totals === 'object' ? c : null;
+    return c && typeof c === 'object' && (c.v === 1 || c.v === 2) && c.totals && typeof c.totals === 'object' ? c : null;
   }
   function rankOf(ranks, names) {
     for (var i = 0; ranks && i < names.length; i++) if (isNum(ranks[names[i]]) && ranks[names[i]] > 0) return ranks[names[i]];
@@ -275,14 +276,15 @@
   }
   function grid(items) { return '<dl class="cr-grid">' + items.join('') + '</dl>'; }
 
-  // One set of cards, no duplicated concepts: when the app's snapshot carries the CH Leaderboards profile, its values
+  // One set of cards, no duplicated concepts: when the account has a VERIFIED CH Leaderboards link, its profile's values
   // (verbatim, with "Rank #n") are the source for every stat CH has; otherwise the numbers computed from the plays.
+  function chProfile(s) { return s.ch && s.ch.verified && s.ch.profile && typeof s.ch.profile === 'object' ? s.ch.profile : null; }
   function chStats(s) {
-    var st = s.snap && s.snap.stats;
+    var st = chProfile(s) && chProfile(s).stats;
     return st && (isNum(st.totalScore) || isNum(st.totalFcs) || isNum(st.notesHit)) ? st : null;
   }
   function overview(s) {
-    var t = s.totals, st = chStats(s), rk = (s.snap && s.snap.ranks) || {};
+    var t = s.totals, st = chStats(s), rk = (chProfile(s) && chProfile(s).ranks) || {};
     function sub(names) { var r = rankOf(rk, names); return r ? 'Rank #' + n(r) : ''; }
     function card(v, chLabel, appValue, appLabel, c, names, appSub) {
       return st && isNum(v) ? stat(chLabel, n(v), { c: c, sub: sub(names) }) : stat(appLabel, appValue, { c: c, sub: appSub });
@@ -299,7 +301,7 @@
       card(st && st.notesHit, 'Notes hit', n(t.notesHit), 'Notes hit', COLORS[1], ['notesHit']),
       chOnly(st && st.totalStarsEarned, 'Stars earned', COLORS[2], ['starsEarned', 'totalStarsEarned']),
       chOnly(st && st.highestCombo, 'Highest combo', COLORS[1], []),
-      chOnly(s.snap && s.snap.submissionCount, 'Submissions', COLORS[4], ['submissions']),
+      chOnly(chProfile(s) && chProfile(s).submissionCount, 'Submissions', COLORS[4], ['submissions']),
       stat('Plays', n(t.plays), { c: COLORS[1] }), stat('Average accuracy', pct(t.avgAccuracy), { c: COLORS[3] }),
       stat('5-star songs', n(sc[5]), { c: COLORS[2], sub: 'best result, distinct charts' }), stat('6-star songs', n(sc[6]), { c: COLORS[4], sub: 'gold stars' }),
       stat('7-star songs', n(sc[7]), { c: COLORS[1], sub: 'best result, distinct charts' }),
@@ -412,28 +414,29 @@
     if (img) img.addEventListener('error', function () { img.remove(); });
     initTabs(el);
   }
-  // CH Leaderboards' API sends no CORS headers (checked), so browsers cannot call it. The desktop app uploads the linked
-  // account's stats and ranks with its career snapshot; without one, link out.
+  // CH Leaderboards' API sends no CORS headers (checked), so browsers cannot call it. A verified account's profile comes
+  // from the ch-profile Edge Function; without a verified link there are no CH numbers, only a pointer to the app.
   function lbCard(profile, s) {
-    var snap = s.snap, u = (snap && snap.ch_username) || (profile && profile.ch_username);
-    if (!u) return '';
-    var link = snap && isNum(snap.ch_account_id) ? LB_SITE + '/users/' + Math.floor(snap.ch_account_id) : LB_SITE;
-    if (!chStats(s)) {
-      return '<p class="cr-lb">Linked CH Leaderboards account: <b>' + esc(u) + '</b>. Its figures are not available on this page yet; open the Clone Hero Companion app once while signed in to sync them here, or <a href="' + link + '" rel="noopener">open CH Leaderboards</a> and search for your name.</p>';
+    var ch = s.ch;
+    if (!ch || !ch.verified) {
+      return '<p class="cr-lb">Link and verify your CH account in the app: open Clone Hero Companion, go to Profile and choose <b>Sign in with CH Leaderboards</b>.</p>';
     }
-    var since = snap.createdAt && !isNaN(new Date(snap.createdAt).getTime()) ? ' &middot; Since ' + esc(dfs.format(new Date(snap.createdAt))) : '';
+    var p = chProfile(s) || {}, u = p.username || ch.username || '';
+    var link = isNum(ch.accountId) ? LB_SITE + '/users/' + Math.floor(ch.accountId) : LB_SITE;
+    var since = p.createdAt && !isNaN(new Date(p.createdAt).getTime()) ? ' &middot; Since ' + esc(dfs.format(new Date(p.createdAt))) : '';
     function top(title, rows, key, fmt) {
       if (!rows || !rows.length) return '';
       return '<p class="cr-note"><b>' + title + ':</b> ' + rows.slice(0, 5).map(function (r) { return esc(fmt(r[key])) + ' (' + n(r.plays) + ')'; }).join(' &middot; ') + '</p>';
     }
-    return '<p class="cr-note cr-chline">CH Leaderboards: <b>' + esc(u) + '</b>' + since + ' &middot; ' + esc(chAsOf(s)) +
+    return '<p class="cr-note cr-chline"><span class="cr-verified">Verified CH Leaderboards account &#10003;</span> <b>' + esc(u) + '</b>' + since +
+      (chProfile(s) ? ' &middot; ' + esc(chAsOf(s)) : ' &middot; CH data is not available right now') +
       ' &middot; <a href="' + link + '" rel="noopener">View on CH Leaderboards</a></p>' +
-      top('Top artists played', snap.topArtists, 'artist', function (a) { return a; }) +
-      top('Top instruments', snap.topInstruments, 'instrument', instName);
+      top('Top artists played', p.topArtists, 'artist', function (a) { return a; }) +
+      top('Top instruments', p.topInstruments, 'instrument', instName);
   }
   function chAsOf(s) {
-    var d = s.snapAt ? new Date(s.snapAt) : null;
-    return d && !isNaN(d.getTime()) ? 'CH data as of ' + dfs.format(d) + ', ' + tf.format(d) : 'CH data from the app\u2019s last sync';
+    var d = s.ch && s.ch.at ? new Date(s.ch.at) : null;
+    return d && !isNaN(d.getTime()) ? 'CH data as of ' + dfs.format(d) + ', ' + tf.format(d) : 'CH data as of the last refresh';
   }
   function initTabs(el) {
     var tabs = Array.prototype.slice.call(el.querySelectorAll('[role=tab]'));
@@ -474,6 +477,15 @@
     }
     return page(0);
   }
+  // Live profile from the ch-profile Edge Function (at most one CH fetch per minute on the server). A failure keeps the
+  // stored copy from the profile row, which is shown with its own "as of" time.
+  function fetchChProfile(session, ch) {
+    return fetch(SUPABASE_URL + '/functions/v1/ch-profile', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + session.access_token, apikey: SUPABASE_KEY }
+    }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (d && d.profile) { ch.profile = d.profile; ch.at = d.at; }
+    }).catch(function () { /* keep the stored copy */ });
+  }
   function show(which) {
     ['cr-loading', 'cr-out', 'cr-in'].forEach(function (id) { $(id).hidden = id !== which; });
   }
@@ -492,13 +504,20 @@
       client.from('profiles').select('display_name,avatar_url,ch_username').eq('id', uid).maybeSingle(),
       fetchAllPlays(uid),
       // the app's snapshot; a failure here (column not there yet) only means "no snapshot"
-      client.from('profiles').select('career,career_at,ch_username').eq('id', uid).maybeSingle()
+      client.from('profiles').select('career,career_at,ch_username,ch_account_id,ch_verified_at,ch_profile,ch_profile_at').eq('id', uid).maybeSingle()
         .then(function (r) { return r; }, function () { return { error: true }; })
     ]).then(function (res) {
       if (res[0].error) res[0] = { data: null };
       var snapRow = res[2] && !res[2].error ? res[2].data : null, stats = computeStats(res[1], new Date());
       stats.snap = applySnapshot(stats, snapRow && snapRow.career);
       stats.snapAt = stats.snap && snapRow.career_at ? snapRow.career_at : null;
+      // CH Leaderboards: only an account verified by a CH sign-in in the app counts (server-written ch_verified_at).
+      var verified = !!(snapRow && snapRow.ch_verified_at && snapRow.ch_account_id);
+      stats.ch = { verified: verified, username: verified ? snapRow.ch_username : null, accountId: verified ? snapRow.ch_account_id : null,
+        profile: verified ? snapRow.ch_profile : null, at: verified ? snapRow.ch_profile_at : null };
+      return (verified ? fetchChProfile(session, stats.ch) : Promise.resolve()).then(function () { return [res, stats]; });
+    }).then(function (pair) {
+      var res = pair[0], stats = pair[1];
       renderCareer($('cr-in'), res[0].data, session.user, stats);
       show('cr-in');
       $('cr-signout').addEventListener('click', signOut);

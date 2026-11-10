@@ -129,7 +129,7 @@ class MergeTests(unittest.TestCase):
         self.assertEqual((t["streak"], t["longestStreak"]), (3, 3))
         for k, v in t.items():
             self.assertTrue(isinstance(v, (int, float, dict)) and not isinstance(v, bool) or v is None, (k, v))
-        snap = playstats.career_snapshot(res, None, "", "x")["totals"]
+        snap = playstats.career_snapshot(res, "x")["totals"]
         self.assertEqual((snap["streak"], snap["longestStreak"]), (3, 3))
         self.assertTrue(all(isinstance(snap[k], int) for k in ("plays", "songs", "fcs", "streak", "longestStreak", "fiveOrMore")))
 
@@ -183,21 +183,20 @@ class MergeTests(unittest.TestCase):
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_snapshot_shape_and_verbatim_account(self):
+    def test_snapshot_shape_has_no_ch_account_data(self):
         res = playstats.compute([play("1")])
         stats = {"totalPfcs": 8, "totalFcs": 8, "totalScore": 8927958, "songsPlayed": 118, "totalTimePlayedMs": 45605411,
                  "notesHit": 56487, "totalStarsEarned": 581, "highestCombo": 327}
         ranks = {"totalScore": 15109, "submissions": 6928, "totalFcs": 5879, "totalPfcs": 5764, "hoursPlayed": 6647,
                  "starsEarned": 6574, "notesHit": 15201}
-        prof = {"accountId": 83556, "username": "me", "stats": stats, "ranks": ranks,
-                "topArtists": [{"artist": "AC/DC", "plays": 13}], "topInstruments": [{"instrument": "guitar", "plays": 171}]}
-        s = playstats.career_snapshot(res, prof, "me", "2.6.4")
-        self.assertEqual((s["ch_username"], s["ch_account_id"], s["app"]), ("me", 83556, "2.6.4"))
-        self.assertEqual((s["stats"], s["ranks"]), (stats, ranks))             # unchanged
-        self.assertEqual(s["totals"]["fcs"], 0)                                 # the app's own count, not the account's
+        s = playstats.career_snapshot(res, "2.7.0")
+        self.assertEqual(s["app"], "2.7.0")
+        for k in ("stats", "ranks", "ch_username", "ch_account_id", "topArtists", "topInstruments"):
+            self.assertNotIn(k, s)                                             # CH data comes from the server (ch_profile)
+        self.assertEqual(s["totals"]["fcs"], 0)
         self.assertEqual(set(s["totals"]["starCounts"]), {"5", "6", "7"})
-        self.assertEqual(s["topArtists"][0]["artist"], "AC/DC")
         json.dumps(s)
+        prof = {"accountId": 83556, "username": "me", "stats": stats, "ranks": ranks}
         self.assertEqual(playstats.account_section(prof)["stats"], stats)
         self.assertIsNone(playstats.account_section({"stats": {}}))
 

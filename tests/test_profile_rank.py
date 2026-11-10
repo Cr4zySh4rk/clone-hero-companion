@@ -93,6 +93,7 @@ class ProfileFreshnessTests(unittest.TestCase):
     def test_account_section_carries_fetched_at_but_the_snapshot_stays_timestamp_free(self):
         prof = {"accountId": 7, "username": "me", "fetchedAt": 5.0, "stats": {"totalFcs": 8}, "ranks": {}}
         self.assertEqual(playstats.account_section(prof)["fetchedAt"], 5.0)
-        snap = playstats.career_snapshot(playstats.compute([], now=NOW), prof, "me", "x")
+        snap = playstats.career_snapshot(playstats.compute([], now=NOW), "x")
         self.assertNotIn("fetchedAt", snap)
-        self.assertEqual(snap["stats"], {"totalFcs": 8})
+        for k in ("stats", "ranks", "ch_username", "ch_account_id", "topArtists"):     # 2.7.0: CH data is server-written, not uploaded
+            self.assertNotIn(k, snap)

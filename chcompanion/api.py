@@ -362,7 +362,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower(),
                                 scoredata=c._scoredata_rows(plays))
         _link_songs(lm, res)
-        aid = int(c.settings().get("ch_account_id") or 0)
+        aid = c.ch_account_id()                                          # verified accounts only
         if aid:
             from .leaderboard import LeaderboardError
             try:
@@ -370,13 +370,31 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             except LeaderboardError:
                 prof = None
             res["account"] = playstats.account_section(prof, c.settings().get("ch_username") or "")
-            _push_career_if_fresh(c, prof)
         n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
         res["sources"].update({"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
                                "leaderboardRefreshing": c.playlog.lb_refreshing})
         res["cloud"] = {"signedIn": c.cloud.signed_in}
-        res["ch"] = {"username": c.settings().get("ch_username") or "", "accountId": c.settings().get("ch_account_id") or 0}
+        st = c.settings()
+        res["ch"] = {"username": st.get("ch_username") or "", "accountId": st.get("ch_account_id") or 0,
+                     "verified": bool(aid), "unverified": bool(st.get("ch_username") and not aid)}
         return _json(h, res) or True
+
+    # ---------------------------------------------------------------- link a CH Leaderboards account by signing in to CH
+    if path.startswith("/api/ch/"):
+        from .chlink import ChLinkError
+        from .cloud import CloudError
+        try:
+            if path == "/api/ch/status" and method == "GET":
+                return _json(h, c.chlink.status()) or True
+            if path == "/api/ch/start" and method == "POST":
+                return _json(h, c.chlink.start()) or True
+            if path == "/api/ch/cancel" and method == "POST":
+                return _json(h, c.chlink.cancel()) or True
+            if path == "/api/ch/unlink" and method == "POST":
+                c.chlink.unlink()
+                return _json(h, {"ok": True}) or True
+        except (ChLinkError, CloudError) as e:
+            return _json(h, {"error": msg_of(e)}, 400) or True
 
     # ---------------------------------------------------------------- CH Leaderboards (read-only)
     if path.startswith("/api/lb/"):
@@ -408,7 +426,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                          "minP": youtube.MIN_P, "youtube": youtube.GATE.status(),
                          "ytdlpInfo": ytupdate.active_info()}) or True
     if path == "/api/settings" and method == "POST":
-        s = body.get("settings") or {}
+        s = {k: v for k, v in (body.get("settings") or {}).items()
+             if k not in ("ch_username", "ch_account_id", "ch_verified")}       # only a CH sign-in (chlink.py) may link an account
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
         return _json(h, {"settings": c.update_settings(s), "youtube": youtube.GATE.status()}) or True
@@ -989,21 +1008,11 @@ def _install_cloud_favs(c, body: dict) -> dict:
 PROFILE_MAX_AGE_S = 30          # the Profile shows the CH Leaderboards account at most this stale
 
 
-def _push_career_if_fresh(c, prof):
-    """Right after a fresh CH profile arrived (a new fetch, not a cached answer), upload the career snapshot for the
-    website; push_career() skips the upload when nothing changed."""
-    at = (prof or {}).get("fetchedAt")
-    if not at or not c.cloud.signed_in or at == getattr(c, "_ch_pushed_at", None):
-        return
-    c._ch_pushed_at = at
-    threading.Thread(target=c.cloudsync.push_career, daemon=True, name="career-push").start()
-
-
 def _refresh_lb_plays(c):
     """Import the linked CH Leaderboards account's public scores as source 'leaderboard' plays, in the
     background, at most every 10 minutes. They stay local: never uploaded to the cloud plays table."""
     from . import playstats
-    aid = int(c.settings().get("ch_account_id") or 0)
+    aid = c.ch_account_id()
     pl = c.playlog
     if not aid:
         if pl.leaderboard():
@@ -1075,9 +1084,10 @@ def _lb(h, c, lm, path: str, method: str, q: dict, body: dict):
             if s else (q.get("artist", ""), q.get("name", ""), q.get("charter", ""))
         inst, diff = _lb_default(c, lm, sid, artist, name, charter, q.get("instrument"), q.get("difficulty"))
         song = _lb_song(c, artist, name, charter)
-        out = {"instrument": inst, "difficulty": diff, "found": bool(song), "ch": c.settings().get("ch_username") or ""}
+        out = {"instrument": inst, "difficulty": diff, "found": bool(song),
+               "ch": (c.settings().get("ch_username") or "") if c.ch_account_id() else ""}
         if song:
-            acct = int(c.settings().get("ch_account_id") or 0) or None
+            acct = c.ch_account_id() or None
             out.update(lb.top_scores(song["songHash"], inst, diff, acct))
             out["song"] = song
         return _json(h, out)
@@ -1088,11 +1098,8 @@ def _lb(h, c, lm, path: str, method: str, q: dict, body: dict):
                "latest": lb.latest(), "site": "https://leaderboards.clonehero.net/"}
         return _json(h, out)
     if path == "/api/lb/profile":
-        aid = int(c.settings().get("ch_account_id") or 0)
-        if not aid:
-            return _json(h, {"linked": False})
-        return _json(h, {"linked": True, **lb.profile(aid)})
-    if path == "/api/lb/link" and method == "POST":
-        user = c.link_ch_username(body.get("username", ""))
-        return _json(h, {"ok": True, "username": user["username"] if user else ""})
+        aid = c.ch_account_id()
+        if not aid:         # nothing linked, or a username saved before 2.7.0 that was never verified: no stats until verified
+            return _json(h, {"linked": False, "unverifiedUsername": c.settings().get("ch_username") or ""})
+        return _json(h, {"linked": True, "verified": True, **lb.profile(aid)})
     return _json(h, {"error": _("api.not_found")}, 404)

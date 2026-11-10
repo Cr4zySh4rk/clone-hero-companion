@@ -245,6 +245,7 @@ picture>.shot{display:block;width:100%;height:auto}
 .cr-stat dd{margin:4px 0 0;font:800 clamp(1.6rem,6vw,2.3rem)/1.05 var(--disp);overflow-wrap:break-word;word-break:normal}
 .cr-sub{display:block;margin-top:6px;color:var(--mute);font-size:.82rem;overflow-wrap:anywhere}
 .cr-lb{margin:18px 0 0;padding:14px 18px;border-radius:12px;border:1px dashed #3d3a52;color:var(--mute);font-size:.95rem}
+.cr-verified{color:var(--green);font-weight:700}
 .cr-h{margin:30px 0 12px;font-size:1.5rem}
 .cr-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:14px}
 .cr-card{background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--c);border-radius:12px;padding:18px}

@@ -261,10 +261,25 @@ class Cloud:
         return None
 
     # ------------------------------------------------------------ profile
-    def set_ch_username(self, name: str | None):
-        uid = self.user().get("id")
-        if uid:
-            self.rest("PATCH", "profiles", {"id": f"eq.{uid}"}, {"ch_username": name or None}, "return=minimal")
+    def call_function(self, name: str, body: dict) -> tuple[int, dict]:
+        """POST {URL}/functions/v1/<name> as the signed-in user (an Edge Function); returns (status, JSON dict).
+        The body is never logged. Raises CloudError when signed out or offline."""
+        for attempt in (0, 1):
+            headers = {"apikey": self.key, "Authorization": "Bearer " + self.access_token(),
+                       "Content-Type": "application/json", "Accept": "application/json"}
+            status, raw = self.http("POST", f"{self.url}/functions/v1/{name}", headers, json.dumps(body).encode())
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except ValueError:
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            if status == 401 and attempt == 0 and "error" not in data:     # the gateway's expired-JWT answer, not the function's own
+                with self.lock:
+                    if not self.refresh():
+                        raise CloudError(_("cloud.not_signed_in"), 401)
+                continue
+            return status, data
+        return 401, {}
 
     def get_profile(self) -> dict:
         uid = self.user().get("id")

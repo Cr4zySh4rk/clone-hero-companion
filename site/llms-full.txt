@@ -36,7 +36,7 @@ Star songs with one click (or press F). The app keeps a Favourites setlist in sy
 - Optional account. Sign in from the Profile page with Google, or with a 6-digit code sent to your email. Everything keeps working signed out and offline.
 - Favourites sync both ways between computers. The Favourites view lists "In your cloud, not on this machine" with Install all, which finds each chart and downloads it.
 - Play stats. After every song Clone Hero writes scorestats.json; the app records each play on your computer and, when signed in, merges plays from all your machines. Profile shows plays, hours, accuracy, full combos, streaks, a 26-week activity map, most played / best / needs practice lists and personal bests, filterable by instrument and difficulty.
-- CH Leaderboards (read-only). Song panels and the Now playing screen show the global top scores, plus your rank once you link your CH Leaderboards username. Scores cannot be submitted from this app.
+- CH Leaderboards (read-only). Song panels and the Now playing screen show the global top scores, plus your rank once you link your CH Leaderboards account by signing in to CH. Scores cannot be submitted from this app.
 
 ### Fast, parallel batch processing
 A pool of worker threads processes songs in parallel; you choose how many. YouTube requests are paced across all workers, and the app backs off and retries on its own when YouTube pushes back.
