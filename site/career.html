@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b0a10"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Hanken+Grotesk:wght@400;600;700&display=swap"><link rel="stylesheet" href="/styles.css">
+<title>Your Clone Hero Career | Clone Hero Companion</title>
+<meta name="description" content="Sign in to see your Clone Hero career: rank, plays, full combos, accuracy and streaks from plays synced by Clone Hero Companion.">
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://cloneherocompanion.com/career.html">
+</head><body>
+<a class="skip" href="#main">Skip to content</a><header class="top"><div class="wrap"><a class="brand" href="/"><img src="/assets/icon-68.png" alt="Clone Hero Companion logo" width="34" height="34">Clone Hero Companion</a><nav aria-label="Main"><a href="/#features">Features</a><a href="/#whats-new">What&rsquo;s new</a><a href="/#install">Install</a><a href="/guide.html">Guide</a><a href="/career.html" aria-current="page">Career</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion">GitHub</a><a class="cta" href="/#download">Download</a></nav></div></header>
+<main id="main" class="cr"><div class="wrap">
+<div id="cr-loading"><p class="cr-load" id="cr-load-msg" role="status">Loading&hellip;</p><noscript><p>The Career page needs JavaScript.</p></noscript></div>
+<div id="cr-out" hidden>
+<div class="cr-pitch">
+<p class="cr-eyebrow">Career</p>
+<h1>Your Clone Hero career</h1>
+<p class="lede">See your rank, time played, full combos, accuracy, streaks and a 26-week heatmap, plus your best and weakest songs, all from the plays the app has synced.</p>
+<ul class="cr-bul"><li>A big rank header with XP, like a career screen</li><li>Stats by instrument and difficulty</li><li>Your daily streaks and favourite play times</li></ul>
+</div>
+<div class="cr-signin">
+<button type="button" class="cr-btn" id="cr-google"><span class="cr-g" aria-hidden="true">G</span>Sign in with Google</button>
+<p class="cr-or"><span>or</span></p>
+<form id="cr-email-form" novalidate><label for="cr-email">Email address</label><div class="cr-row"><input id="cr-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required><button type="submit" class="cr-btn alt" id="cr-send">Email me a code</button></div></form>
+<form id="cr-code-form" novalidate hidden><label for="cr-code">6-digit code sent to <b id="cr-sent-to"></b></label><div class="cr-row"><input id="cr-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9 ]*" placeholder="123456" required><button type="submit" class="cr-btn alt" id="cr-verify">Verify</button></div><button type="button" class="cr-link" id="cr-back">Use a different email</button></form>
+<p class="cr-msg" id="cr-msg" role="status" aria-live="polite"></p>
+<p class="cr-note">Use the same account as in the app; stats come from plays the app has synced.</p>
+</div>
+</div>
+<div id="cr-in" hidden></div>
+</div></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.79.0/dist/umd/supabase.js" crossorigin="anonymous"></script>
+<script src="/career.js"></script>
+
+<footer><div class="wrap"><nav aria-label="Footer"><a href="https://github.com/Cr4zySh4rk/clone-hero-companion">GitHub</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/issues">Issues</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/releases">Releases</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/LICENSE">GPL-3.0 licence</a><a href="/guide.html">Guide</a><a href="/career.html">Career</a><a href="/privacy.html">Privacy</a></nav><p>Clone Hero Companion is free and open source software under the GPL-3.0 licence. It is an independent community project and is <strong>not affiliated with, endorsed by or sponsored by Clone Hero</strong> or its developers. Clone Hero is a trademark of its respective owners.</p></div></footer>
+</body></html>
