@@ -9,6 +9,7 @@ Clone Hero Companion runs on your own computer. Signing in is optional; everythi
 - Your favourite songs (artist, title, charter, chart checksum and where the chart can be downloaded from).
 - Your play history read from Clone Hero's `scorestats.json` after each song: song, instrument, difficulty, score, stars, accuracy, notes hit and streak, the time played, and your computer's name.
 - An optional CH Leaderboards username you choose to link.
+- A career snapshot on your profile row (your totals, star and full combo counts, and the public stats and ranks of your linked CH Leaderboards account), uploaded by the app so the Career page can show them. Only your own account can read it.
 - A username and a short friend code, your friend requests, and, if you turn on sharing, your favourites and setlists as seen by your friends.
 
 This data is stored in a Supabase database (hosted in the United States). Row-level security makes every row readable and writable only by the account that owns it, apart from the friends feature described next. It is used only to sync your favourites and stats between your own computers. It is never sold, shared, or used for advertising.

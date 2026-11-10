@@ -21,6 +21,7 @@ from . import hwvideo, ingame, metadata, leaderboard
 from .cloud import Cloud, CloudSync
 from .friends import Friends, POLL_S as FRIENDS_POLL_S
 from .playstats import PlayLog, PlayWatcher, candidate_files
+from .scoredata import ScoreDataCache, candidate_files as scoredata_candidates
 from .jobs import Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
 from .libmgr import LibraryManager, song_id
 from .library import Library, Song, norm_key
@@ -68,6 +69,9 @@ class Companion:
         self.libmgr.on_scanned = self.refresh_unplayable
         self.lb = leaderboard.Client()
         self._score_cache: tuple[float, list[Path]] = (0.0, [])
+        self._scoredata_files_cache: tuple[float, list[Path]] = (0.0, [])
+        self.scoredata = ScoreDataCache(self._scoredata_files)
+        self.cloudsync.career = self.career_snapshot
         self.playwatcher = PlayWatcher(self.playlog, self._score_files, self._song_length,
                                        on_new=self.cloudsync.on_new_plays)
         self.jobs = JobManager(self._run_job, workers=int(self.settings().get("workers") or 0) or None,
@@ -423,6 +427,49 @@ class Companion:
             files = candidate_files(game_dir(game) if game else None, self.data_dir)
             self._score_cache = (time.time(), files)
         return files
+
+    def _scoredata_files(self) -> list[Path]:
+        """Where Clone Hero keeps scoredata.bin (looked up at most once a minute)."""
+        t, files = self._scoredata_files_cache
+        if time.time() - t > 60:
+            from .libmgr import find_game
+            from .paths import game_dir
+            try:
+                game = find_game(self.data_dir, self.settings().get("game_path"))
+            except Exception:
+                game = None
+            files = scoredata_candidates(self.data_dir, game_dir(game) if game else None)
+            self._scoredata_files_cache = (time.time(), files)
+        return files
+
+    def _scoredata_rows(self, plays: list[dict]) -> list[dict]:
+        """scoredata.bin rows with song identities (from recorded plays, else the library), or []."""
+        from . import playstats
+        rows = self.scoredata.read()
+        if not rows:
+            return []
+        lm = self.libmgr
+        idx = lm.hash_to_id()
+        by_id = lm.by_id
+
+        def lookup(checksum):
+            s = by_id.get(idx.get(checksum))
+            return (s.artist, s.name) if s else None
+        return playstats.resolve_scoredata(rows, plays, lookup)
+
+    def career_snapshot(self) -> dict:
+        """The unfiltered Profile totals plus the linked CH Leaderboards account, as uploaded for the website."""
+        from . import playstats
+        plays = self.playlog.all()
+        res = playstats.compute(plays, scoredata=self._scoredata_rows(plays))
+        username, prof = self.settings().get("ch_username") or "", None
+        aid = int(self.settings().get("ch_account_id") or 0)
+        if aid:
+            try:
+                prof = self.lb.profile(aid)
+            except Exception:
+                prof = None
+        return playstats.career_snapshot(res, prof, username, __version__)
 
     def _song_length(self, checksum: str, artist: str, name: str) -> float | None:
         from .library import norm_key

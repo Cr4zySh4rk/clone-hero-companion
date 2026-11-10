@@ -206,7 +206,32 @@
     };
   }
 
-  var api = { computeStats: computeStats, xpTotal: xpTotal, xpForRank: xpForRank, rankInfo: rankInfo, normKey: normKey };
+  /* ------------------------------------------------------------------ app snapshot (profiles.career)
+   * The desktop app uploads its own numbers on each cloud sync: star and FC counts that also use Clone Hero's
+   * scoredata.bin, and the linked CH Leaderboards account's stats and ranks (browsers cannot call that API: no CORS). */
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  function validSnapshot(c) {
+    return c && typeof c === 'object' && c.v === 1 && c.totals && typeof c.totals === 'object' ? c : null;
+  }
+  function rankOf(ranks, names) {
+    for (var i = 0; ranks && i < names.length; i++) if (isNum(ranks[names[i]]) && ranks[names[i]] > 0) return ranks[names[i]];
+    return null;
+  }
+  // The app's own full combo and 5/6/7-star counts (plays, CH Leaderboards rows and Clone Hero's scoredata.bin) come from
+  // the snapshot: it sees more than the synced plays do. The CH Leaderboards account figures are shown separately, verbatim.
+  // FCs keep the app's rule: never lower than what the plays here show.
+  function applySnapshot(s, snap) {
+    snap = validSnapshot(snap);
+    if (!snap) return null;
+    var t = s.totals, st = snap.totals;
+    if (isNum(st.fcs)) t.fcs = Math.max(t.fcs, st.fcs);
+    if (isNum(st.fiveOrMore)) t.fiveStars = Math.max(t.fiveStars, st.fiveOrMore);
+    if (st.starCounts) ['5', '6', '7'].forEach(function (k) { if (isNum(st.starCounts[k])) t.starCounts[k] = st.starCounts[k]; });
+    return snap;
+  }
+
+  var api = { computeStats: computeStats, xpTotal: xpTotal, xpForRank: xpForRank, rankInfo: rankInfo, normKey: normKey,
+    applySnapshot: applySnapshot, rankOf: rankOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof document === 'undefined') return;
 
@@ -234,7 +259,7 @@
   function weekdayName(i) { return wdf.format(new Date(2024, 0, 1 + i)); } // 2024-01-01 is a Monday
   function hourName(h) { return hf.format(new Date(2024, 0, 1, h)); }
   function cap(s) { s = str(s); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-  var INSTR = { guitar: 'Lead guitar', bass: 'Bass', rhythm: 'Rhythm guitar', drums: 'Drums', keys: 'Keys', vocals: 'Vocals',
+  var INSTR = { guitar: 'Lead Guitar', bass: 'Bass Guitar', rhythm: 'Rhythm guitar', drums: 'Drums', keys: 'Keys', vocals: 'Vocals',
     guitarghl: 'GHL guitar', bassghl: 'GHL bass', unknown: 'Other' };
   function instName(i) { return INSTR[i] || cap(i) || 'Other'; }
   var COLORS = ['var(--green)', 'var(--red)', 'var(--yellow)', 'var(--blue)', 'var(--orange)'];
@@ -259,7 +284,7 @@
   }
   function performance(s) {
     var t = s.totals, x = s.extras, g = [];
-    g.push(stat('Full combos', n(t.fcs), { c: COLORS[0], sub: 'distinct charts' }));
+    g.push(stat('Full combos', n(t.fcs), { c: COLORS[0], sub: s.snap ? 'distinct charts, from the app' : 'distinct charts' }));
     g.push(stat('5 stars or gold', n(t.fiveStars), { c: COLORS[2], sub: 'distinct charts' }));
     g.push(stat('5-star songs', n(t.starCounts[5]), { c: COLORS[2], sub: 'best result, distinct charts' }));
     g.push(stat('6-star songs', n(t.starCounts[6]), { c: COLORS[4], sub: 'gold stars' }));
@@ -268,7 +293,7 @@
     g.push(stat('Highest score', x.highestScore ? n(x.highestScore.score) : '–', { c: COLORS[4], sub: x.highestScore ? title(x.highestScore) : '' }));
     g.push(stat('Longest note streak', x.longestNoteStreak ? n(x.longestNoteStreak.streak) : '–', { c: COLORS[1], sub: x.longestNoteStreak ? title(x.longestNoteStreak) : '' }));
     g.push(stat('Average stars', x.avgStars == null ? '–' : nf1.format(x.avgStars), { c: COLORS[2], sub: 'per play' }));
-    return grid(g);
+    return grid(g) + (s.snap ? '<p class="cr-note">' + esc(snapNote(s)) + '. Full combos and star counts are the app&rsquo;s own, which also use the scores Clone Hero keeps in its save file. They can differ from the CH Leaderboards account figures.</p>' : '');
   }
   function instruments(s) {
     var total = s.totals.plays || 1;
@@ -356,7 +381,7 @@
         return '<button type="button" role="tab" id="cr-tab-' + t[0] + '" aria-controls="cr-panel-' + t[0] + '" aria-selected="' + (i === 0) + '" tabindex="' + (i === 0 ? 0 : -1) + '">' + t[1] + '</button>';
       }).join('') + '</div>' + TABS.map(function (t, i) {
         return '<div class="tabpanel" role="tabpanel" id="cr-panel-' + t[0] + '" aria-labelledby="cr-tab-' + t[0] + '" tabindex="0"' + (i ? ' hidden' : '') + '>' +
-          (t[0] === 'overview' ? t[2](s) + lbCard(profile) : t[2](s)) + '</div>';
+          (t[0] === 'overview' ? t[2](s) + lbCard(profile, s) : t[2](s)) + '</div>';
       }).join('');
     }
     body += '<details class="cr-how"><summary>How rank works</summary><p>XP = notes hit &divide; 20 + 50 for every play. Reaching rank <i>R</i> takes 500 &times; (<i>R</i>&minus;1)<sup>1.7</sup> XP, so every rank costs more than the one before: rank 2 is 500 XP, rank 10 about 21,000, rank 50 about 390,000. It is just for fun and is not a CH Leaderboards rank.</p></details>';
@@ -365,11 +390,46 @@
     if (img) img.addEventListener('error', function () { img.remove(); });
     initTabs(el);
   }
-  // CH Leaderboards' API sends no CORS headers (checked), so browsers cannot call it: link out instead.
-  function lbCard(profile) {
-    var u = profile && profile.ch_username;
+  // CH Leaderboards' API sends no CORS headers (checked), so browsers cannot call it. The desktop app uploads the linked
+  // account's stats and ranks with its career snapshot; without one, link out.
+  function snapNote(s) {
+    var d = s.snapAt ? dateOf(s.snapAt) : '';
+    return 'From the app, as of ' + (d || 'its last sync');
+  }
+  function lbCard(profile, s) {
+    var snap = s.snap, u = (snap && snap.ch_username) || (profile && profile.ch_username);
     if (!u) return '';
-    return '<p class="cr-lb">Linked CH Leaderboards account: <b>' + esc(u) + '</b>. Its ranks are not available on this page; <a href="' + LB_SITE + '" rel="noopener">open CH Leaderboards</a> and search for your name.</p>';
+    var link = snap && isNum(snap.ch_account_id) ? LB_SITE + '/users/' + Math.floor(snap.ch_account_id) : LB_SITE;
+    var st = (snap && snap.stats) || {}, rk = (snap && snap.ranks) || {};
+    if (!isNum(st.totalScore) && !isNum(st.totalFcs) && !isNum(st.notesHit)) {
+      return '<p class="cr-lb">Linked CH Leaderboards account: <b>' + esc(u) + '</b>. Its ranks are not available on this page yet; open the Clone Hero Companion app once while signed in to sync them here, or <a href="' + link + '" rel="noopener">open CH Leaderboards</a> and search for your name.</p>';
+    }
+    // Values exactly as leaderboards.clonehero.net/users/<id> shows them, in its order; ranks are extra sub-labels.
+    function tile(label, v, ranks, c, fmt) {
+      if (!isNum(v)) return '';
+      var r = rankOf(rk, ranks);
+      return stat(label, fmt ? fmt(v) : n(v), { c: c, sub: r ? 'Rank #' + n(r) : '' });
+    }
+    var tiles = [
+      tile('Total PFCs', st.totalPfcs, ['totalPfcs'], COLORS[3]),
+      tile('Total FCs', st.totalFcs, ['totalFcs'], COLORS[0]),
+      tile('Total score', st.totalScore, ['totalScore'], COLORS[4]),
+      tile('Songs played', st.songsPlayed, [], COLORS[3]),
+      tile('Total hours played', isNum(st.totalTimePlayedMs) ? Math.round(st.totalTimePlayedMs / 3600000) : null, ['hoursPlayed'], COLORS[0]),
+      tile('Notes hit', st.notesHit, ['notesHit'], COLORS[1]),
+      tile('Total stars earned', st.totalStarsEarned, ['starsEarned', 'totalStarsEarned'], COLORS[2]),
+      tile('Highest combo', st.highestCombo, [], COLORS[1]),
+      tile('Submissions', snap.submissionCount, ['submissions'], COLORS[4])
+    ].filter(Boolean);
+    var since = snap.createdAt && !isNaN(new Date(snap.createdAt).getTime()) ? ' &middot; Since ' + esc(dfs.format(new Date(snap.createdAt))) : '';
+    function top(title, rows, key, fmt) {
+      if (!rows || !rows.length) return '';
+      return '<p class="cr-note"><b>' + title + ':</b> ' + rows.slice(0, 5).map(function (r) { return esc(fmt(r[key])) + ' (' + n(r.plays) + ')'; }).join(' &middot; ') + '</p>';
+    }
+    return '<h3 class="cr-h">CH Leaderboards account</h3><p class="cr-note">' + esc(u) + since + ' &middot; ' + esc(snapNote(s)) +
+      ' &middot; <a href="' + link + '" rel="noopener">View on CH Leaderboards</a></p>' + grid(tiles) +
+      top('Top artists played', snap.topArtists, 'artist', function (a) { return a; }) +
+      top('Top instruments', snap.topInstruments, 'instrument', instName);
   }
   function initTabs(el) {
     var tabs = Array.prototype.slice.call(el.querySelectorAll('[role=tab]'));
@@ -426,10 +486,16 @@
     msg('cr-load-msg', 'Loading your stats…');
     Promise.all([
       client.from('profiles').select('display_name,avatar_url,ch_username').eq('id', uid).maybeSingle(),
-      fetchAllPlays(uid)
+      fetchAllPlays(uid),
+      // the app's snapshot; a failure here (column not there yet) only means "no snapshot"
+      client.from('profiles').select('career,career_at,ch_username').eq('id', uid).maybeSingle()
+        .then(function (r) { return r; }, function () { return { error: true }; })
     ]).then(function (res) {
       if (res[0].error) res[0] = { data: null };
-      renderCareer($('cr-in'), res[0].data, session.user, computeStats(res[1], new Date()));
+      var snapRow = res[2] && !res[2].error ? res[2].data : null, stats = computeStats(res[1], new Date());
+      stats.snap = applySnapshot(stats, snapRow && snapRow.career);
+      stats.snapAt = stats.snap && snapRow.career_at ? snapRow.career_at : null;
+      renderCareer($('cr-in'), res[0].data, session.user, stats);
       show('cr-in');
       $('cr-signout').addEventListener('click', signOut);
       $('cr-in').querySelector('h1').focus && $('cr-in').querySelector('h1').setAttribute('tabindex', '-1');

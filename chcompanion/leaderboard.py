@@ -174,6 +174,7 @@ class Client:
     def profile(self, account_id: int) -> dict:
         d = self.get(f"account/{int(account_id)}/profile") or {}
         return {"accountId": d.get("accountId"), "username": d.get("username"),
+                "createdAt": d.get("createdAt"), "submissionCount": d.get("submissionCount"),
                 "avatar": d.get("profilePictureUrl"), "stats": d.get("stats") or {}, "ranks": d.get("ranks") or {},
                 "topArtists": d.get("topArtists") or [], "topInstruments": d.get("topInstruments") or [],
                 "recent": [self.slim(r) for r in (d.get("latestSubmissions") or [])][:10],

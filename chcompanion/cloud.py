@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -659,6 +660,30 @@ class CloudSync:
         self._save_state()
         return added
 
+    def push_career(self) -> int:
+        """Upload the career snapshot (profiles.career) when it differs from the last one uploaded for this account.
+        Quiet on failure: the next sync tries again."""
+        build = getattr(self, "career", None)
+        uid = self._uid()
+        if not build or not uid:
+            return 0
+        try:
+            snap = build()
+            if not snap:
+                return 0
+            digest = hashlib.sha1(json.dumps(snap, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            st = self.state.setdefault("career", {})
+            if st.get("uid") == uid and st.get("hash") == digest:
+                return 0
+            at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.cloud.rest("PATCH", "profiles", {"id": f"eq.{uid}"}, {"career": snap, "career_at": at}, "return=minimal")
+            st.update(uid=uid, hash=digest)
+            self._save_state()
+            return 1
+        except Exception as e:      # no column yet (migration not applied), offline, signed out: try again next sync
+            log.info("Career snapshot not uploaded: %s", e)
+            return 0
+
     def on_new_plays(self, _records):
         self.schedule()
 
@@ -673,7 +698,8 @@ class CloudSync:
             self.syncing = True
         try:
             for name, fn in (("favorites", self.sync_favorites), ("setlists", self.sync_setlists),
-                             ("pushed", self.push_plays), ("pulled", self.pull_plays)):
+                             ("pushed", self.push_plays), ("pulled", self.pull_plays),
+                             ("career", self.push_career)):
                 res[name] = fn()
             self.state["lastSync"] = int(time.time())
             self.state["lastError"] = None
@@ -709,7 +735,7 @@ class CloudSync:
 
     def reset_account_state(self):
         """After sign-out: forget per-account progress so the next account starts clean."""
-        self.state.update(tombstones={}, synced=[], plays={}, pull={}, aliases={}, setlists={}, lastSync=None, lastError=None, cloud_only=[])
+        self.state.update(tombstones={}, synced=[], plays={}, pull={}, career={}, aliases={}, setlists={}, lastSync=None, lastError=None, cloud_only=[])
         self.cloud_only = []
         self._shared = None
         self.playlog.clear_cloud()

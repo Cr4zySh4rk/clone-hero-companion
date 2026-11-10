@@ -356,7 +356,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         from . import playstats
         _refresh_lb_plays(c)
         plays = c.playlog.all()
-        res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
+        res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower(),
+                                scoredata=c._scoredata_rows(plays))
         _link_songs(lm, res)
         aid = int(c.settings().get("ch_account_id") or 0)
         if aid:
@@ -365,10 +366,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 prof = c.lb.profile(aid)
             except LeaderboardError:
                 prof = None
-            playstats.merge_account(res, prof, c.settings().get("ch_username") or "")
+            res["account"] = playstats.account_section(prof, c.settings().get("ch_username") or "")
         n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
-        res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
-                          "leaderboardRefreshing": c.playlog.lb_refreshing}
+        res["sources"].update({"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
+                               "leaderboardRefreshing": c.playlog.lb_refreshing})
         res["cloud"] = {"signedIn": c.cloud.signed_in}
         res["ch"] = {"username": c.settings().get("ch_username") or "", "accountId": c.settings().get("ch_account_id") or 0}
         return _json(h, res) or True

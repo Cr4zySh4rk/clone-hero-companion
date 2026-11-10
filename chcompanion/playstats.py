@@ -451,8 +451,36 @@ def accomplishments(dts: list[tuple[dict, datetime]], limit: int = 6) -> list[di
     return [e for _, _, e in out[:limit]]
 
 
-def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: datetime | None = None) -> dict:
-    """All Profile numbers for the given plays (already merged across machines)."""
+def resolve_scoredata(rows: list[dict], plays: list[dict], lookup: Callable[[str], tuple[str, str] | None] | None = None) -> list[dict]:
+    """Attach the song identity to scoredata.bin rows: by checksum from recorded plays first, then `lookup`
+    (checksum -> (artist, title), e.g. the library). Rows that match nothing keep no identity."""
+    known: dict[str, str] = {}
+    for p in plays:
+        if p.get("checksum"):
+            known.setdefault(str(p["checksum"]).upper(), song_ident(p))
+    out = []
+    for r in rows:
+        ident = known.get(r["checksum"])
+        if not ident and lookup:
+            try:
+                hit = lookup(r["checksum"])
+            except Exception:
+                hit = None
+            if hit:
+                ident = norm_key(f"{hit[0]} - {hit[1]}")
+        out.append({**r, "_ident": ident} if ident else r)
+    return out
+
+
+def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: datetime | None = None,
+            scoredata: list[dict] | None = None) -> dict:
+    """All Profile numbers for the given plays (already merged across machines).
+
+    `scoredata` (scoredata.parse() rows, optionally through resolve_scoredata) adds the game's own per-chart bests:
+    star counts and FCs are taken per distinct chart (song + instrument + difficulty) as the best over the recorded
+    plays, the CH Leaderboards rows and the scoredata rows. Rows whose song is unknown (not in plays or the library)
+    count by checksum, but only when no CH Leaderboards scores are present (those are matched by artist and title,
+    so the same chart could otherwise count twice)."""
     now = (now or datetime.now()).astimezone()
     plays = split_chart_versions(plays)
     fac = facets(plays)
@@ -526,23 +554,39 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
             "stars": p.get("stars") or 0, "accuracy": _acc(p), "difficulty": p.get("difficulty"),
             "instrument": p.get("instrument"), "fc": bool(p.get("fc"))}
            for p in sorted(pb.values(), key=lambda p: p.get("score") or 0, reverse=True)[:15]]
-    # FCs and 5-star charts count distinct charts (song + instrument + difficulty) ever achieved,
-    # the way CH Leaderboards' totalFcs does, not plays.
+    # FCs and star counts are per distinct chart (song + instrument + difficulty) ever achieved, the way CH
+    # Leaderboards' totalFcs does, not plays. Each chart's best stars and FC come from every source.
     charts: dict[tuple, list[dict]] = defaultdict(list)
     for p, _ in dts:
         charts[(song_ident(p), p.get("instrument"), p.get("difficulty"))].append(p)
+    best_of: dict[tuple, list] = {k: [max(int(p.get("stars") or 0) for p in ps), any(p.get("fc") for p in ps)]
+                                  for k, ps in charts.items()}
+    has_lb = any(p.get("source") == LB_SOURCE for p, _ in dts)
+    sd_used: set[str] = set()
+    for e in scoredata or []:
+        inst, diff = e.get("instrument"), e.get("difficulty")
+        if inst in ("band", "crowd", "none") or (instrument and inst != instrument) or (difficulty and diff != difficulty):
+            continue
+        ident = e.get("_ident")
+        if not ident:
+            if has_lb:
+                continue
+            ident = "cs:" + str(e.get("checksum"))
+        cur = best_of.setdefault((ident, inst, diff), [0, False])
+        cur[0] = max(cur[0], int(e.get("stars") or 0))
+        cur[1] = cur[1] or bool(e.get("fc"))
+        sd_used.add(e.get("checksum"))
     # Distinct charts whose best (highest) stars is exactly 5, 6 (gold) or 7.
     star_counts = {"5": 0, "6": 0, "7": 0}
-    for ps in charts.values():
-        best_stars = max((p.get("stars") or 0) for p in ps)
+    for best_stars, _fc in best_of.values():
         if str(best_stars) in star_counts:
             star_counts[str(best_stars)] += 1
     n_lb = sum(1 for p, _ in dts if p.get("source") == LB_SOURCE)
     return {
         "totals": {"plays": len(dts), "hours": round(total_s / 3600, 1), "songs": len(by_song),
                    "avgAccuracy": round(sum(accs) / len(accs), 4) if accs else None,
-                   "fcs": sum(1 for ps in charts.values() if any(p.get("fc") for p in ps)),
-                   "fiveStars": sum(1 for ps in charts.values() if any((p.get("stars") or 0) >= 5 for p in ps)),
+                   "fcs": sum(1 for _s, fc in best_of.values() if fc),
+                   "fiveStars": sum(1 for st, _fc in best_of.values() if st >= 5),
                    "starCounts": star_counts,
                    "totalScore": int(sum(p.get("score") or 0 for p, _ in dts)),
                    "notesHit": int(sum(p.get("notes_hit") or 0 for p, _ in dts)),
@@ -551,6 +595,7 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
         "weekday": weekday, "hour": hour,
         "mostPlayed": most, "best": best, "needsPractice": needs, "recent": recent, "personalBests": pbs,
         "playSources": {"app": len(dts) - n_lb, "leaderboard": n_lb},
+        "sources": {"plays": len(dts) - n_lb, "lbScores": n_lb, "scoredataSongs": len(sd_used)},
         "accomplishments": accomplishments(dts),
         "facets": fac, "instrument": instrument, "difficulty": difficulty,
     }
@@ -569,6 +614,16 @@ def merge_account(res: dict, profile: dict | None, username: str = "") -> dict:
     ranks = (profile or {}).get("ranks") or {}
     out = {"username": (profile or {}).get("username") or username, "used": False, "fields": [],
            "ranks": {"totalScore": ranks.get("totalScore"), "totalFcs": ranks.get("totalFcs")}}
+    # More account figures for the Profile tiles (perfect FCs, stars earned, highest combo) with their ranks.
+    def _n(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    out["stats"] = {k: _n(stats.get(src)) for k, src in (("totalPfcs", "totalPfcs"), ("starsEarned", "totalStarsEarned"),
+                                                         ("highestCombo", "highestCombo")) if _n(stats.get(src)) is not None}
+    for k, names in (("totalPfcs", ("totalPfcs",)), ("starsEarned", ("totalStarsEarned", "starsEarned")),
+                     ("highestCombo", ("highestCombo",))):
+        v = next((_n(ranks.get(n)) for n in names if _n(ranks.get(n)) is not None), None)
+        if v is not None:
+            out["ranks"][k] = v
     res["account"] = out
     if not stats or res.get("instrument") or res.get("difficulty"):
         return res
@@ -583,3 +638,41 @@ def merge_account(res: dict, profile: dict | None, username: str = "") -> dict:
         out["fields"].append("fcs")
     out["used"] = bool(out["fields"])
     return res
+
+
+def account_section(profile: dict | None, username: str = "") -> dict | None:
+    """The linked CH Leaderboards account exactly as leaderboards.clonehero.net/users/<id> shows it: the profile's
+    `stats` and `ranks` verbatim (no merging with computed numbers), plus top artists and instruments."""
+    stats = (profile or {}).get("stats") or {}
+    if not stats:
+        return None
+    return {"username": (profile or {}).get("username") or username, "accountId": (profile or {}).get("accountId"),
+            "createdAt": (profile or {}).get("createdAt"), "submissionCount": (profile or {}).get("submissionCount"),
+            "stats": dict(stats), "ranks": dict((profile or {}).get("ranks") or {}),
+            "topArtists": list((profile or {}).get("topArtists") or [])[:5],
+            "topInstruments": list((profile or {}).get("topInstruments") or [])[:5]}
+
+
+def career_snapshot(res: dict, profile: dict | None, username: str, app_version: str) -> dict:
+    """What the app uploads to profiles.career for the website: the app's own unfiltered totals (plays, scoredata and
+    CH Leaderboards rows, no account merging), plus the linked CH account's `stats` and `ranks` objects unchanged,
+    the CH username and the app version. Contains no timestamp, so equal snapshots compare equal."""
+    t = res.get("totals") or {}
+    sc = t.get("starCounts") or {}
+    acct = account_section(profile, username) or {}
+    aid = (profile or {}).get("accountId")
+    return {
+        "v": 1, "app": app_version, "ch_username": (profile or {}).get("username") or username or None,
+        "ch_account_id": aid if isinstance(aid, int) and not isinstance(aid, bool) else None,
+        "totals": {
+            "plays": t.get("plays", 0), "hours": t.get("hours", 0), "songs": t.get("songs", 0),
+            "avgAccuracy": t.get("avgAccuracy"), "totalScore": t.get("totalScore", 0), "notesHit": t.get("notesHit", 0),
+            "fcs": t.get("fcs", 0), "pfcs": None,
+            "starCounts": {k: int(sc.get(k, 0)) for k in ("5", "6", "7")},
+            "fiveOrMore": t.get("fiveStars", 0), "streak": t.get("streak", 0), "longestStreak": t.get("longestStreak", 0),
+        },
+        "createdAt": acct.get("createdAt"), "submissionCount": acct.get("submissionCount"),
+        "stats": acct.get("stats", {}), "ranks": acct.get("ranks", {}),
+        "topArtists": acct.get("topArtists", []), "topInstruments": acct.get("topInstruments", []),
+        "sources": res.get("sources") or {},
+    }

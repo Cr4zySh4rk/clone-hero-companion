@@ -1464,8 +1464,15 @@ function renderProfile(body, d, cs, fv, opts) {
   const fid = opts.friendId || "", P = fid ? profF : prof, ro = !!fid;
   const reload = () => loadProfile(opts);
   const T = d.totals, f = d.facets, H = d.heatmap;
-  const A = d.account && d.account.used ? d.account : null, AR = (A && A.ranks) || {};
-  const rk = (k) => (A && AR[k] ? " · #" + nf(AR[k]) : "");
+  // The CH Leaderboards account exactly as its website shows it (stats and ranks verbatim); never merged into the app's own tiles.
+  const A = d.account || null, AS = (A && A.stats) || {}, AR = (A && A.ranks) || {};
+  const chTile = (v, label, ...rkeys) => { const r = rkeys.map((k) => AR[k]).find((x) => typeof x === "number" && x > 0); return v == null ? "" : `<div class="tile"><b>${nf(v)}</b><span>${esc(tr(label))}${r ? " · #" + nf(r) : ""}</span></div>`; };
+  const chUrl = A && A.accountId != null ? `https://leaderboards.clonehero.net/users/${encodeURIComponent(A.accountId)}` : "";
+  const chSince = A && A.createdAt && !isNaN(new Date(A.createdAt)) ? " · " + tr("profile.ch_since", { date: new Date(A.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) }) : "";
+  const chList = (rows, key, fmt) => (rows && rows.length ? `<p class="hint">${rows.map((x) => esc(fmt(x[key]) + " (" + nf(x.plays) + ")")).join(" · ")}</p>` : "");
+  const chSection = !ro && A ? `<section><h3>${esc(tr("profile.ch_section"))} · ${esc(A.username || "")}${esc(chSince)}${chUrl ? ` <a class="hint" href="${esc(chUrl)}" target="_blank" rel="noopener">${esc(tr("lb.open_on"))}</a>` : ""}</h3>
+      <div class="tiles">${chTile(AS.totalPfcs, "profile.tile.pfcs", "totalPfcs")}${chTile(AS.totalFcs, "profile.tile.fcs", "totalFcs")}${chTile(AS.totalScore, "profile.tile.score", "totalScore")}${chTile(AS.songsPlayed, "profile.tile.songs")}${chTile(AS.totalTimePlayedMs == null ? null : Math.round(AS.totalTimePlayedMs / 3600000), "profile.tile.hours", "hoursPlayed")}${chTile(AS.notesHit, "profile.tile.notes", "notesHit")}${chTile(AS.totalStarsEarned, "profile.tile.stars_earned", "starsEarned", "totalStarsEarned")}${chTile(AS.highestCombo, "profile.tile.combo")}${chTile(A.submissionCount, "profile.tile.submissions", "submissions")}</div>
+      ${chList(A.topArtists, "artist", (x) => x)}${chList(A.topInstruments, "instrument", inn)}</section>` : "";
   const max = Math.max(1, ...H.days.map((x) => x.n));
   const lvl = (n) => (n ? Math.min(4, 1 + Math.floor((n / max) * 3.999)) : 0);
   const bars = (arr, labels) => { const m = Math.max(1, ...arr); return `<div class="bars">${arr.map((v, i) => `<div title="${labels[i]}: ${v}"><i style="height:${Math.round((v / m) * 52)}px"></i>${labels[i]}</div>`).join("")}</div>`; };
@@ -1489,14 +1496,15 @@ function renderProfile(body, d, cs, fv, opts) {
   body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}${!ro && cs.signedIn && fv && fv.needsUsername ? `<div class="fr-card" id="pUserBox">${usernameBox()}</div>` : ""}
     <div class="p-filter">${sel("pInst", f.instruments, P.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, P.diff, tr("profile.all_difficulties"), dn)}
       ${ro ? "" : `<span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span>`}</div>
-    ${ro ? "" : `<p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end") + (A ? " " + tr("profile.src_account", { name: A.username }) : ""))}</p>`}
+    ${ro ? "" : `<p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + (d.sources.scoredataSongs ? tr("profile.src_scoredata", { count: nf(d.sources.scoredataSongs) }) : "") + ". " + tr("profile.src_end"))}</p>`}
     <div class="tiles">
       <div class="tile"><b>${nf(T.plays)}</b><span>${esc(tr("profile.tile.plays"))}</span></div><div class="tile"><b>${T.hours}</b><span>${esc(tr("profile.tile.hours"))}</span></div>
       <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("profile.tile.songs"))}</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>${esc(tr("profile.tile.accuracy"))}</span></div>
-      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}${esc(rk("totalFcs"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[5] || 0)}</b><span>${esc(tr("profile.tile.stars5"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[6] || 0)}</b><span>${esc(tr("profile.tile.stars6"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[7] || 0)}</b><span>${esc(tr("profile.tile.stars7"))}</span></div>
-      <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}${esc(rk("totalScore"))}</span></div>
+      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[5] || 0)}</b><span>${esc(tr("profile.tile.stars5"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[6] || 0)}</b><span>${esc(tr("profile.tile.stars6"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[7] || 0)}</b><span>${esc(tr("profile.tile.stars7"))}</span></div>
+      <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}</span></div>
       ${ro ? "" : `<div class="tile"><b>${nf(T.notesHit)}</b><span>${esc(tr("profile.tile.notes"))}</span></div>`}
       <div class="tile"><b>${T.streak}</b><span>${esc(tr("profile.tile.streak"))}</span></div><div class="tile"><b>${T.longestStreak}</b><span>${esc(tr("profile.tile.longest"))}</span></div></div>
+    ${chSection}
     <section><h3>${esc(tr("profile.activity"))}</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${esc(tr("profile.heat_tip", { date: x.d, count: x.n }))}"></i>`).join("")}</div></section>
     <div class="p-cols"><section><h3>${esc(tr("profile.by_weekday"))}</h3>${bars(d.weekday, I18N.weekdays())}</section>
       <section><h3>${esc(tr("profile.by_hour"))}</h3>${bars(d.hour, d.hour.map((_, h) => (h % 3 === 0 ? String(h) : "")))}</section></div>
