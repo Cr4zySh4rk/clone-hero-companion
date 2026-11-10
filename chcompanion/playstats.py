@@ -538,6 +538,7 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
                    "fcs": sum(1 for ps in charts.values() if any(p.get("fc") for p in ps)),
                    "fiveStars": sum(1 for ps in charts.values() if any((p.get("stars") or 0) >= 5 for p in ps)),
                    "totalScore": int(sum(p.get("score") or 0 for p, _ in dts)),
+                   "notesHit": int(sum(p.get("notes_hit") or 0 for p, _ in dts)),
                    "streak": cur, "longestStreak": longest},
         "heatmap": {"start": start.isoformat(), "days": heat},
         "weekday": weekday, "hour": hour,
@@ -546,3 +547,32 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
         "accomplishments": accomplishments(dts),
         "facets": fac, "instrument": instrument, "difficulty": difficulty,
     }
+
+
+def merge_account(res: dict, profile: dict | None, username: str = "") -> dict:
+    """Fold the linked CH Leaderboards account's own figures into compute()'s result (in place).
+
+    The public API cannot list an account's scores (only its latest ones plus its best on its most-played
+    songs are reachable), so the imported plays usually cover fewer charts than the account really has and the
+    computed Full combos / Songs played / Total score undershoot the account's. With no instrument or difficulty
+    filter the account figures are authoritative: Total score, Songs played and Notes hit take them, Full combos
+    takes the larger of the computed and account counts (never lower than the account's). With a filter active the
+    computed values stay. Sets res["account"] = {username, ranks, used, fields} for the UI (used False = computed)."""
+    stats = (profile or {}).get("stats") or {}
+    ranks = (profile or {}).get("ranks") or {}
+    out = {"username": (profile or {}).get("username") or username, "used": False, "fields": [],
+           "ranks": {"totalScore": ranks.get("totalScore"), "totalFcs": ranks.get("totalFcs")}}
+    res["account"] = out
+    if not stats or res.get("instrument") or res.get("difficulty"):
+        return res
+    t = res["totals"]
+    for field, key in (("totalScore", "totalScore"), ("songs", "songsPlayed"), ("notesHit", "notesHit")):
+        if stats.get(key) is not None and _num(stats[key], -1) >= 0:
+            t[field] = _num(stats[key], 0)
+            out["fields"].append(field)
+    fcs = stats.get("totalFcs")
+    if fcs is not None:
+        t["fcs"] = max(t["fcs"], _num(fcs, 0))
+        out["fields"].append("fcs")
+    out["used"] = bool(out["fields"])
+    return res

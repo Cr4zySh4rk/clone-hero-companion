@@ -33,6 +33,42 @@ class FCCountTests(unittest.TestCase):
         self.assertEqual(playstats.compute(plays, difficulty="hard")["totals"]["fcs"], 1)
 
 
+class AccountMergeTests(unittest.TestCase):
+    """Root cause of 'app shows 3 FCs, CH shows 8': the public API lists only the latest scores plus the best on
+    the most-played songs, so the imported plays cover a fraction of the account; the account's own stats win."""
+    PROFILE = {"username": "me", "stats": {"totalFcs": 8, "songsPlayed": 118, "totalScore": 8927958, "notesHit": 56487},
+               "ranks": {"totalFcs": 5878, "totalScore": 15109}}
+
+    def computed(self, **kw):
+        plays = [playstats.lb_row_to_play(lb_row(i, name=f"S{i}", fc=i < 3)) for i in range(1, 6)]
+        return playstats.compute([p for p in plays if p], **kw)
+
+    def test_lb_fc_flag_counts_distinct_charts(self):
+        res = self.computed()
+        self.assertEqual((res["totals"]["fcs"], res["totals"]["songs"]), (2, 5))     # rows 1 and 2 are FCs
+
+    def test_unfiltered_uses_account_figures_and_ranks(self):
+        res = playstats.merge_account(self.computed(), self.PROFILE, "me")
+        t = res["totals"]
+        self.assertEqual((t["fcs"], t["songs"], t["totalScore"], t["notesHit"]), (8, 118, 8927958, 56487))
+        self.assertTrue(res["account"]["used"])
+        self.assertEqual(res["account"]["ranks"], {"totalScore": 15109, "totalFcs": 5878})
+
+    def test_fcs_never_below_account_but_may_exceed_it(self):
+        res = playstats.merge_account(self.computed(), {"stats": {"totalFcs": 1}}, "me")
+        self.assertEqual(res["totals"]["fcs"], 2)
+
+    def test_filter_keeps_computed_values(self):
+        res = playstats.merge_account(self.computed(instrument="guitar"), self.PROFILE, "me")
+        self.assertEqual((res["totals"]["fcs"], res["totals"]["songs"]), (2, 5))
+        self.assertFalse(res["account"]["used"])
+
+    def test_unreachable_account_keeps_computed(self):
+        res = playstats.merge_account(self.computed(), None, "me")
+        self.assertFalse(res["account"]["used"])
+        self.assertEqual(res["totals"]["fcs"], 2)
+
+
 class ImportTests(unittest.TestCase):
     def setUp(self):
         d = Path(tempfile.mkdtemp())

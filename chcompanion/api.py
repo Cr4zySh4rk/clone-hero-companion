@@ -356,6 +356,14 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         plays = c.playlog.all()
         res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
         _link_songs(lm, res)
+        aid = int(c.settings().get("ch_account_id") or 0)
+        if aid:
+            from .leaderboard import LeaderboardError
+            try:
+                prof = c.lb.profile(aid)
+            except LeaderboardError:
+                prof = None
+            playstats.merge_account(res, prof, c.settings().get("ch_username") or "")
         n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
         res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
                           "leaderboardRefreshing": c.playlog.lb_refreshing}

@@ -1464,6 +1464,8 @@ function renderProfile(body, d, cs, fv, opts) {
   const fid = opts.friendId || "", P = fid ? profF : prof, ro = !!fid;
   const reload = () => loadProfile(opts);
   const T = d.totals, f = d.facets, H = d.heatmap;
+  const A = d.account && d.account.used ? d.account : null, AR = (A && A.ranks) || {};
+  const rk = (k) => (A && AR[k] ? " · #" + nf(AR[k]) : "");
   const max = Math.max(1, ...H.days.map((x) => x.n));
   const lvl = (n) => (n ? Math.min(4, 1 + Math.floor((n / max) * 3.999)) : 0);
   const bars = (arr, labels) => { const m = Math.max(1, ...arr); return `<div class="bars">${arr.map((v, i) => `<div title="${labels[i]}: ${v}"><i style="height:${Math.round((v / m) * 52)}px"></i>${labels[i]}</div>`).join("")}</div>`; };
@@ -1487,12 +1489,13 @@ function renderProfile(body, d, cs, fv, opts) {
   body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}${!ro && cs.signedIn && fv && fv.needsUsername ? `<div class="fr-card" id="pUserBox">${usernameBox()}</div>` : ""}
     <div class="p-filter">${sel("pInst", f.instruments, P.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, P.diff, tr("profile.all_difficulties"), dn)}
       ${ro ? "" : `<span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span>`}</div>
-    ${ro ? "" : `<p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end"))}</p>`}
+    ${ro ? "" : `<p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end") + (A ? " " + tr("profile.src_account", { name: A.username }) : ""))}</p>`}
     <div class="tiles">
       <div class="tile"><b>${nf(T.plays)}</b><span>${esc(tr("profile.tile.plays"))}</span></div><div class="tile"><b>${T.hours}</b><span>${esc(tr("profile.tile.hours"))}</span></div>
       <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("profile.tile.songs"))}</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>${esc(tr("profile.tile.accuracy"))}</span></div>
-      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>${esc(tr("profile.tile.stars"))}</span></div>
-      <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}</span></div>
+      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}${esc(rk("totalFcs"))}</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>${esc(tr("profile.tile.stars"))}</span></div>
+      <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}${esc(rk("totalScore"))}</span></div>
+      ${ro ? "" : `<div class="tile"><b>${nf(T.notesHit)}</b><span>${esc(tr("profile.tile.notes"))}</span></div>`}
       <div class="tile"><b>${T.streak}</b><span>${esc(tr("profile.tile.streak"))}</span></div><div class="tile"><b>${T.longestStreak}</b><span>${esc(tr("profile.tile.longest"))}</span></div></div>
     <section><h3>${esc(tr("profile.activity"))}</h3><div class="heat">${H.days.map((x) => `<i class="l${lvl(x.n)}" title="${esc(tr("profile.heat_tip", { date: x.d, count: x.n }))}"></i>`).join("")}</div></section>
     <div class="p-cols"><section><h3>${esc(tr("profile.by_weekday"))}</h3>${bars(d.weekday, I18N.weekdays())}</section>
@@ -1558,19 +1561,13 @@ async function loadChAccount() {
   const form = (v) => `<div class="d-row"><input type="text" id="chUser" placeholder="${esc(tr("profile.ch_user_ph"))}" value="${esc(v || "")}"><button id="chLink" class="primary">${esc(v ? tr("profile.change") : tr("profile.link"))}</button>${v ? `<button id="chUnlink">${esc(tr("profile.unlink"))}</button>` : ""}</div>
     <p class="lbnote">${esc(tr("profile.ch_note"))}</p>`;
   const bind = () => {
-    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast(tr("toast.linked")); loadChAccount(); } catch (e) { toast(e.message, 4500); } };
-    const u = $("#chUnlink"); if (u) u.onclick = async () => { await api("/api/lb/link", { username: "" }); loadChAccount(); };
+    $("#chLink").onclick = async () => { try { await api("/api/lb/link", { username: $("#chUser").value }); toast(tr("toast.linked")); loadProfile(); } catch (e) { toast(e.message, 4500); } };
+    const u = $("#chUnlink"); if (u) u.onclick = async () => { await api("/api/lb/link", { username: "" }); loadProfile(); };
   };
   try {
     const p = await api("/api/lb/profile");
     if (!p.linked) { box.innerHTML = form(""); return bind(); }
-    const S = p.stats || {}, R = p.ranks || {};
-    box.innerHTML = form(p.username) + `<div class="tiles">
-      <div class="tile"><b>${nf(S.totalScore)}</b><span>${esc(tr("profile.ch_total_score"))}${R.totalScore ? " · #" + nf(R.totalScore) : ""}</span></div>
-      <div class="tile"><b>${nf(p.stats.songsPlayed)}</b><span>${esc(tr("profile.ch_songs"))}</span></div>
-      <div class="tile"><b>${nf(S.totalFcs)}</b><span>${esc(tr("profile.ch_fcs"))}${R.totalFcs ? " · #" + nf(R.totalFcs) : ""}</span></div>
-      <div class="tile"><b>${nf(S.notesHit)}</b><span>${esc(tr("profile.ch_notes"))}</span></div></div>
-      <p class="hint">${esc(tr("profile.ch_from"))}</p>
+    box.innerHTML = form(p.username) + `
       <p><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(tr("profile.ch_open", { name: p.username }))}</a></p>
       ${p.recent.length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul>` : ""}`;
     bind();
