@@ -355,12 +355,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         _refresh_lb_plays(c)
         plays = c.playlog.all()
         res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
-        idx, keyidx = lm.hash_to_id(), lm.key_to_id()
-        for lst in ("mostPlayed", "best", "needsPractice", "recent", "personalBests"):
-            for it in res[lst]:
-                sid = idx.get((it.get("checksum") or "").upper()) or keyidx.get(
-                    norm_key(f"{it.get('artist', '')} - {it.get('name', '')}"))
-                it["songId"] = sid
+        _link_songs(lm, res)
         n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
         res["sources"] = {"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
                           "leaderboardRefreshing": c.playlog.lb_refreshing}
@@ -502,12 +497,74 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             return _json(h, {"error": _("api.game_not_found")}, 404) or True
         launch_game(game)
         return _json(h, {"ok": True}) or True
+    if path == "/api/share/save" and method == "POST":
+        try:
+            out = _save_share_image(c, body)
+        except ValueError as e:
+            return _json(h, {"error": msg_of(e)}, 400) or True
+        if body.get("reveal", True):
+            reveal(out)
+        return _json(h, {"path": str(out)}) or True
     if path == "/api/open" and method == "POST":
+        url = str(body.get("url") or "")
+        if url:        # an external link (the Share buttons) in the system browser; only the known share hosts
+            import urllib.parse
+            import webbrowser
+            u = urllib.parse.urlparse(url)
+            if u.scheme != "https" or u.hostname not in SHARE_HOSTS:
+                return _json(h, {"error": _("api.not_found")}, 400) or True
+            webbrowser.open(url)
+            return _json(h, {"ok": True}) or True
         target = Path(body.get("path") or c.data_dir)
         if target.exists():
             reveal(target)
         return _json(h, {"ok": True}) or True
     return False
+
+
+def _link_songs(lm, res: dict):
+    """Set songId on every song row of a stats result that is in my library (checksum, else artist + title)."""
+    idx, keyidx = lm.hash_to_id(), lm.key_to_id()
+    for lst in ("mostPlayed", "best", "needsPractice", "recent", "personalBests"):
+        for it in res[lst]:
+            it["songId"] = idx.get((it.get("checksum") or "").upper()) or keyidx.get(
+                norm_key(f"{it.get('artist', '')} - {it.get('name', '')}"))
+
+
+SHARE_MAX_BYTES = 10 * 1024 * 1024
+SHARE_HOSTS = {"wa.me", "www.reddit.com", "www.facebook.com", "www.instagram.com", "www.snapchat.com"}
+
+
+def _save_share_image(c, body: dict) -> Path:
+    """Write the stats card PNG (base64 or a data URL) to ~/Downloads (else the data folder)."""
+    import base64
+    import binascii
+    from datetime import datetime
+    from .paths import config_dir
+    raw = str(body.get("png_base64") or "")
+    if raw.startswith("data:"):
+        raw = raw.partition(",")[2]
+    if len(raw) > SHARE_MAX_BYTES * 4 // 3 + 8:
+        raise ValueError(_("share.err_too_big"))
+    try:
+        png = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError(_("share.err_bad_image"))
+    if len(png) > SHARE_MAX_BYTES:
+        raise ValueError(_("share.err_too_big"))
+    if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(_("share.err_bad_image"))
+    name = f"CloneHeroCompanion-stats-{datetime.now():%Y%m%d-%H%M%S}.png"
+    downloads = Path.home() / "Downloads"
+    for folder in ([downloads] if downloads.is_dir() else []) + [config_dir()]:
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            out = folder / name
+            out.write_bytes(png)
+            return out
+        except OSError as e:
+            log.warning("share image: could not write to %s: %s", folder, e)
+    raise ValueError(_("share.err_write"))
 
 
 def _safe_res(c, vid: str) -> int:
@@ -688,6 +745,17 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
             d["favorites"] = f.annotate(d["favorites"])
             d["setlists"] = [{**x, "items": f.annotate(x["items"])} for x in d["setlists"]]
             return _json(h, d) or True
+        if sub == "stats" and method == "GET":
+            from . import playstats
+            fid = q.get("id", "")
+            plays = f.friend_plays(fid) if f.friend(fid) else []
+            if not plays:       # not a friend, or the friend switched stats sharing off (RLS returns no rows)
+                return _json(h, {"error": "not_shared"}, 403) or True
+            res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
+            _link_songs(c.libmgr, res)
+            p = f.friend(fid)
+            res["friend"] = {"username": p.get("username"), "name": p.get("name"), "avatar": p.get("avatar")}
+            return _json(h, res) or True
         if sub == "install" and method == "POST":
             return _json(h, _install_friend(c, body)) or True
         if sub == "sharing" and method == "GET":
@@ -695,6 +763,10 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
         if sub == "share" and method == "POST":
             if "kind" in body and "lists_shared" not in body:       # 2.3 payload {kind, name, shared}: accepted for one version
                 return _json(h, f.set_shared(body.get("kind", ""), body.get("name"), bool(body.get("shared")))) or True
+            if "stats_shared" in body:
+                f.set_stats_shared(bool(body["stats_shared"]))
+                if "lists_shared" not in body and "shared" not in body:
+                    return _json(h, f.sharing()) or True
             return _json(h, f.set_lists_shared(bool(body.get("lists_shared", body.get("shared"))))) or True
     except CloudError as e:
         return _cloud_err(h, e)

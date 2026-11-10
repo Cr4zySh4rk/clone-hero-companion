@@ -42,7 +42,8 @@ class Friends:
         self.path = state_path or cloud.session_path.with_name("friends_cache.json")
         self.lock = threading.RLock()
         self.cache = {"uid": None, "me": {}, "friends": [], "incoming": [], "outgoing": [], "lists": {},
-                      "sharing": {"lists": False}, "at": None}
+                      "sharing": {"lists": False, "stats": True}, "at": None}
+        self.plays: dict[str, tuple[float, list]] = {}      # friend id -> (fetched at, plays); memory only
         self.offline = False
         try:
             s = json.loads(self.path.read_text("utf-8"))
@@ -71,7 +72,8 @@ class Friends:
         """After sign-out: forget the previous account's friends."""
         with self.lock:
             self.cache.update(uid=None, me={}, friends=[], incoming=[], outgoing=[], lists={},
-                              sharing={"lists": False}, at=None)
+                              sharing={"lists": False, "stats": True}, at=None)
+            self.plays.clear()
             self.offline = False
             try:
                 self.path.unlink()
@@ -106,7 +108,7 @@ class Friends:
         try:
             prof = c.get_profile() or {}
             rows = c.rest("POST", "rpc/my_friendships", None, {}) or []
-            shared = c.rest("GET", "share_settings", {"select": "lists_shared", "user_id": f"eq.{self._uid()}"}) or []
+            shared = c.rest("GET", "share_settings", {"select": "lists_shared,stats_shared", "user_id": f"eq.{self._uid()}"}) or []
         except CloudError as e:
             if e.offline:
                 self.offline = True
@@ -127,10 +129,12 @@ class Friends:
                 else:
                     out.append(p)
             self.cache.update(friends=fr, incoming=inc, outgoing=out, at=int(time.time()))
-            self.cache["sharing"] = {"lists": bool(shared and shared[0].get("lists_shared"))}
+            self.cache["sharing"] = {"lists": bool(shared and shared[0].get("lists_shared")),
+                                     "stats": not shared or shared[0].get("stats_shared") is not False}   # no row = on
             self.cloudsync.set_lists_shared(self.cache["sharing"]["lists"])
             live = {f["id"] for f in fr}
             self.cache["lists"] = {k: v for k, v in self.cache["lists"].items() if k in live}   # unfriended: forget
+            self.plays = {k: v for k, v in self.plays.items() if k in live}
             self._save()
         return self.view()
 
@@ -231,6 +235,7 @@ class Friends:
                         prefer="return=minimal")
         with self.lock:
             self.cache["lists"].pop(other_id, None)
+            self.plays.pop(other_id, None)
         return self.refresh()
 
     # ------------------------------------------------------------ a friend's shared lists
@@ -299,7 +304,7 @@ class Friends:
                         {"user_id": self._uid(), "lists_shared": value}, "resolution=merge-duplicates,return=minimal")
         self.cloudsync.set_lists_shared(value)
         with self.lock:
-            self.cache["sharing"] = {"lists": value}
+            self.cache["sharing"] = {**self.sharing(), "lists": value}
             self._save()
         if value:
             try:
@@ -315,8 +320,48 @@ class Friends:
             raise CloudError(_("friends.bad_kind"), 400)
         return self.set_lists_shared(value)
 
+    def set_stats_shared(self, value: bool) -> dict:
+        """Friends may (default) or may not see my profile statistics (RLS: stats_visible, migration 0004)."""
+        self._need_login()
+        value = bool(value)
+        self.cloud.rest("POST", "share_settings", {"on_conflict": "user_id"},
+                        {"user_id": self._uid(), "stats_shared": value}, "resolution=merge-duplicates,return=minimal")
+        with self.lock:
+            self.cache["sharing"] = {**self.sharing(), "stats": value}
+            self._save()
+        return self.sharing()
+
     def sharing(self) -> dict:
-        return {"lists": bool((self.cache.get("sharing") or {}).get("lists"))}
+        s = self.cache.get("sharing") or {}
+        return {"lists": bool(s.get("lists")), "stats": s.get("stats") is not False}
+
+    # ------------------------------------------------------------ a friend's play statistics
+    PLAY_COLS = ("client_id,played_at,checksum,artist,name,charter,instrument,difficulty,speed,score,stars,accuracy,"
+                 "notes_hit,total_notes,max_streak,fc,completed,duration_s")
+    PLAYS_TTL_S = 600.0
+
+    def friend_plays(self, fid: str) -> list[dict]:
+        """A friend's plays (explicit columns only, never `raw`), 1000 per page, cached in memory for 10 minutes.
+        Only accepted friends are asked for; RLS returns [] when they switched stats sharing off."""
+        self._need_login()
+        if not self.friend(fid):
+            raise CloudError(_("friends.unknown_friend"), 404)
+        now = time.monotonic()
+        with self.lock:
+            hit = self.plays.get(fid)
+        if hit and now - hit[0] < self.PLAYS_TTL_S:
+            return hit[1]
+        rows, offset = [], 0
+        while True:
+            page = self.cloud.rest("GET", "plays", {"select": self.PLAY_COLS, "user_id": f"eq.{fid}",
+                                                    "order": "played_at.asc,id.asc", "limit": 1000, "offset": offset}) or []
+            rows += page
+            if len(page) < 1000:
+                break
+            offset += 1000
+        with self.lock:
+            self.plays[fid] = (now, rows)
+        return rows
 
     # ------------------------------------------------------------ what is already in my library
     def matcher(self):

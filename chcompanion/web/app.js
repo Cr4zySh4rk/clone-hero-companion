@@ -70,7 +70,7 @@ function show(view) {
   if (view === "setup") loadSetup();
   if (view === "jobs") renderJobs();
   if (view === "charts" && !charts.loaded) searchCharts(1);
-  if (view === "profile") loadProfile();
+  if (view === "profile") { const o = profNext; profNext = null; loadProfile(o || {}); }
   if (view === "friends") { fr.page = null; loadFriends(); }
   if (view === "leaderboards") loadLeaderboards();
 }
@@ -380,9 +380,17 @@ function shareStatusText() {
 function paintShare() {
   const on = !!(fr.status && fr.status.sharing && fr.status.sharing.lists);
   $$(".shareSw").forEach((cb) => { cb.checked = on; cb.disabled = false; });
+  const sw = $("#statsSw"); if (sw) sw.checked = !(fr.status && fr.status.sharing && fr.status.sharing.stats === false);
   $$(".shareStatus").forEach((el) => { el.textContent = shareStatusText(); });
 }
 function bindShare(root) {
+  const sw = $("#statsSw", root);
+  if (sw) sw.onchange = async (e) => {
+    const on = e.target.checked; sw.disabled = true;
+    try { const r = await api("/api/friends/share", { stats_shared: on }); fr.status = { ...(fr.status || {}), sharing: r }; toast(tr(on ? "share.stats_on" : "share.stats_off")); }
+    catch (err) { toast(err.message, 4500); }
+    sw.disabled = false; await pollFriends();
+  };
   $$(".shareSw", root).forEach((cb) => cb.onchange = async (e) => {
     const on = e.target.checked;
     $$(".shareSw").forEach((x) => x.disabled = true);
@@ -1120,7 +1128,9 @@ async function loadFriends(keepPage) {
   fr.status = { ...(fr.status || {}), sharing: v.sharing, friends: v.friends.length };
   body.innerHTML = `<h2>${esc(tr("friends.title"))}</h2>${offline}
     <div class="fr-card fr-share"><label class="inline"><input type="checkbox" class="shareSw"${dis}> <b>${esc(tr("share.switch"))}</b></label>
-      <p class="hint">${esc(tr("share.switch_help"))}</p><p class="hint shareStatus"></p></div>
+      <p class="hint">${esc(tr("share.switch_help"))}</p><p class="hint shareStatus"></p>
+      <label class="inline"><input type="checkbox" id="statsSw"${dis}> <b>${esc(tr("share.stats_switch"))}</b></label>
+      <p class="hint">${esc(tr("share.stats_help"))}</p></div>
     ${v.needsUsername ? `<div class="fr-card" id="frUserBox">${usernameBox()}</div>` : ""}
     <div class="fr-card"><h3>${esc(tr("friends.your_id"))}</h3><div class="fr-id">
       <div><small>${esc(tr("friends.username"))}</small><b>${me.username ? "@" + esc(me.username) : esc(tr("friends.no_username"))}</b></div>
@@ -1133,8 +1143,9 @@ async function loadFriends(keepPage) {
     ${v.outgoing.length ? `<div class="fr-card"><h3>${esc(tr("friends.outgoing"))}</h3>${v.outgoing.map((p) => `<div class="fr-row">${avatar(p)}${who(p)}
       <button data-rm="${esc(p.id)}"${dis}>${esc(tr("friends.cancel"))}</button></div>`).join("")}</div>` : ""}
     <div class="fr-card"><h3>${esc(tr("friends.list_title"))}</h3>${v.friends.length ? v.friends.map((p) => `<div class="fr-row click" data-open="${esc(p.id)}">${avatar(p)}${who(p)}
-      <button data-unf="${esc(p.id)}" data-nm="${esc(p.name || p.username || "")}"${dis}>${esc(tr("friends.unfriend"))}</button></div>`).join("") : `<p class="hint">${esc(tr("friends.none"))}</p>`}</div>`;
+      <button data-prof="${esc(p.id)}">${esc(tr("friends.view_profile"))}</button><button data-unf="${esc(p.id)}" data-nm="${esc(p.name || p.username || "")}"${dis}>${esc(tr("friends.unfriend"))}</button></div>`).join("") : `<p class="hint">${esc(tr("friends.none"))}</p>`}</div>`;
   bindShare(body); paintShare();
+  $$("#friendsBody [data-prof]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); profNext = { friendId: b.dataset.prof }; show("profile"); });
   if ($("#frUserBox")) bindUsernameBox($("#frUserBox"), () => loadFriends());
   $("#frCopy").onclick = async () => {
     try { await navigator.clipboard.writeText(me.friend_code); toast(tr("friends.copied")); }
@@ -1244,8 +1255,176 @@ async function renderFriendPage() {
   });
 }
 
+/* ================================================================ share your stats (card image + social buttons) */
+const SITE = "cloneherocompanion.com";
+const CARD_W = 1080, CARD_H = 1350;
+/* A highlight from /api/stats (catalog keys + raw vars) as translated { title, detail }. */
+function accText(a) {
+  const v = { ...(a.vars || {}) };
+  if (v.diff != null) v.diff = dn(v.diff);
+  if (v.inst != null) v.inst = inn(v.inst);
+  return { title: tr(a.title, v), detail: tr(a.detail, v) };
+}
+/* Text drawn on the canvas always fits its box: shrink the font down to minPx, then cut with an ellipsis. */
+function fitText(ctx, text, maxW, px, weight, family, minPx = 0.6) {
+  let size = px;
+  const set = () => { ctx.font = `${weight} ${size}px ${family}`; };
+  set();
+  while (size > px * minPx && ctx.measureText(text).width > maxW) { size -= 1; set(); }
+  let t = String(text);
+  if (ctx.measureText(t).width > maxW) {
+    const chars = Array.from(t);
+    while (chars.length > 1 && ctx.measureText(chars.join("") + "…").width > maxW) chars.pop();
+    t = chars.join("") + "…";
+  }
+  return t;
+}
+function loadAvatar(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve(null);
+    const img = new Image();
+    const done = (v) => { clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => done(null), 3500);
+    img.crossOrigin = "anonymous";        // not CORS-safe -> onerror -> initials (a tainted canvas could not be exported)
+    img.onload = () => done(img);
+    img.onerror = () => done(null);
+    img.src = url;
+  });
+}
+function drawStatsCard(canvas, c) {
+  const ctx = canvas.getContext("2d"), css = getComputedStyle(document.documentElement);
+  const col = (n, d) => css.getPropertyValue(n).trim() || d;
+  const stage = col("--stage", "#160d2b"), panel = col("--panel", "#1e1338"), panel3 = col("--panel-3", "#352460"),
+    ink = col("--ink", "#f6f1e7"), dim = "rgba(246,241,231,.62)", spot = col("--spot", "#ffb52e"), spotInk = col("--spot-ink", "#241500");
+  const UI = col("--ui", "sans-serif"), DISP = col("--display", "sans-serif");
+  const M = 72, W = CARD_W, H = CARD_H;
+  canvas.width = W; canvas.height = H;
+  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+  ctx.fillStyle = stage; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createLinearGradient(0, 0, 0, 420); g.addColorStop(0, panel3); g.addColorStop(1, stage);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 420);
+  const text = (s, x, y, maxW, px, weight, family, color, align = "left") => {
+    const t = fitText(ctx, s, maxW, px, weight, family);
+    ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(t, x, y); ctx.textAlign = "left";
+  };
+  // brand: the five fret dots of the sidebar logo + the app name
+  ["--green", "--red", "--yellow", "--blue", "--orange"].forEach((n, i) => {
+    ctx.fillStyle = col(n, ["#3cc85a", "#e8413a", "#f2d23a", "#3a8ee8", "#f08a2a"][i]);
+    ctx.beginPath(); ctx.arc(M + 14 + i * 34, M + 8, 14, 0, Math.PI * 2); ctx.fill();
+  });
+  text("Clone Hero Companion", M + 5 * 34 + 14, M + 22, W - M * 2 - 5 * 34 - 14, 46, 800, DISP, ink);
+  // identity
+  const R = 84, cx = M + R, cy = 270;
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+  if (c.avatar) ctx.drawImage(c.avatar, cx - R, cy - R, R * 2, R * 2);
+  else { ctx.fillStyle = panel3; ctx.fillRect(cx - R, cy - R, R * 2, R * 2); }
+  ctx.restore();
+  if (!c.avatar) {
+    ctx.fillStyle = spot; ctx.textAlign = "center"; ctx.font = `900 96px ${DISP}`;
+    ctx.fillText(Array.from(c.name || "?")[0].toUpperCase(), cx, cy + 32); ctx.textAlign = "left";
+  }
+  const tx = M + R * 2 + 36, tw = W - M - tx;
+  text(c.name, tx, cy + 6, tw, 84, 900, DISP, ink);
+  text(c.sub, tx, cy + 56, tw, 34, 500, UI, dim);
+  // headline tiles (2 x 2)
+  const gap = 24, tw2 = (W - M * 2 - gap) / 2, th = 190, ty0 = 410;
+  c.tiles.forEach((t, i) => {
+    const x = M + (i % 2) * (tw2 + gap), y = ty0 + Math.floor(i / 2) * (th + gap);
+    ctx.fillStyle = panel; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, tw2, th, 24); else ctx.rect(x, y, tw2, th); ctx.fill();
+    ctx.strokeStyle = "rgba(246,241,231,.09)"; ctx.lineWidth = 2; ctx.stroke();
+    text(t.value, x + 32, y + 108, tw2 - 64, 100, 900, DISP, ink);
+    text(t.label, x + 32, y + 158, tw2 - 64, 34, 500, UI, dim);
+  });
+  // highlights
+  let y = ty0 + th * 2 + gap + 78;
+  text(c.accTitle, M, y, W - M * 2, 38, 800, DISP, spot);
+  y += 18;
+  const kindColor = { fc: "#3cc85a", five_star: "#f2d23a", pb: "#3a8ee8", streak: "#f08a2a", milestone: "#e8413a" };
+  if (!c.acc.length) text(c.accNone, M, y + 60, W - M * 2, 32, 500, UI, dim);
+  c.acc.slice(0, 3).forEach((a, i) => {
+    const ry = y + i * 108;
+    ctx.fillStyle = kindColor[a.kind] || spot; ctx.beginPath(); ctx.arc(M + 14, ry + 54, 14, 0, Math.PI * 2); ctx.fill();
+    text(a.title, M + 48, ry + 52, W - M * 2 - 48, 38, 700, UI, ink);
+    text(a.detail, M + 48, ry + 92, W - M * 2 - 48, 30, 500, UI, dim);
+  });
+  // footer
+  ctx.fillStyle = spot; ctx.fillRect(M, H - 100, W - M * 2, 3);
+  text(SITE, W / 2, H - 42, W - M * 2, 42, 700, UI, spot, "center");
+  void spotInk;
+}
+function shareData(d, cs) {
+  const T = d.totals, name = (cs && cs.signedIn && (cs.name || cs.email)) || tr("share.card_player");
+  const inst = d.instrument ? inn(d.instrument) : "", diff = d.difficulty ? dn(d.difficulty) : "";
+  const acc = (d.accomplishments || []).map((a) => ({ kind: a.kind, ...accText(a) }));
+  const latest = acc[0] ? acc[0].title : "";
+  const text = [tr("share.text", { plays: nf(T.plays), hours: T.hours, fcs: nf(T.fcs), streak: T.streak }),
+    latest ? tr("share.text_latest", { what: latest }) : "", tr("share.text_end")].filter(Boolean).join(" ");
+  return {
+    name, avatarUrl: cs && cs.signedIn ? cs.avatar : "", acc, text,
+    sub: [inst, diff].filter(Boolean).join(" · ") || tr("share.card_sub"),
+    tiles: [{ value: nf(T.plays), label: tr("profile.tile.plays") }, { value: String(T.hours), label: tr("profile.tile.hours") },
+      { value: nf(T.fcs), label: tr("profile.tile.fcs") }, { value: String(T.streak), label: tr("profile.tile.streak") }],
+    accTitle: tr("share.card_highlights"), accNone: tr("share.card_none"),
+  };
+}
+async function openShare(d, cs) {
+  let dlg = $("#shareDlg"); const form = $("#shareForm");
+  const c = shareData(d, cs);
+  form.innerHTML = `<h2>${esc(tr("share.title"))}</h2>
+    <div class="shareBox"><div class="sharePrev"><canvas id="shareCanvas" role="img" aria-label="${esc(tr("share.preview_alt"))}"></canvas></div>
+      <div class="shareBtns" id="shareBtns"><p class="hint">${esc(tr("common.loading"))}</p></div></div>
+    <div class="btns"><button value="close" class="ghost">${esc(tr("common.close"))}</button></div>`;
+  dlg.showModal();
+  const canvas = $("#shareCanvas");
+  c.avatar = await loadAvatar(c.avatarUrl);
+  drawStatsCard(canvas, c);
+  const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+  const file = blob ? new File([blob], "CloneHeroCompanion-stats.png", { type: "image/png" }) : null;
+  const dataUrl = () => canvas.toDataURL("image/png");
+  const saveImage = async (reveal) => { const r = await api("/api/share/save", { png_base64: dataUrl(), reveal }); return r.path; };
+  const folderOf = (p) => (p.split(/[\\/]/).slice(-2, -1)[0] || "");
+  const copyText = async () => { try { await navigator.clipboard.writeText(c.text); return true; } catch (e) { return false; } };
+  const guard = (fn) => async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try { await fn(); } catch (err) { toast(err.message || String(err), 4500); }
+    b.disabled = false;
+  };
+  const open = (url) => api("/api/open", { url });
+  const platforms = [
+    { id: "whatsapp", label: "WhatsApp", url: () => `https://wa.me/?text=${encodeURIComponent(c.text)}` },
+    { id: "reddit", label: "Reddit", url: () => `https://www.reddit.com/submit?title=${encodeURIComponent(tr("share.reddit_title"))}&url=https://${SITE}` },
+    { id: "facebook", label: "Facebook", url: () => `https://www.facebook.com/sharer/sharer.php?u=https://${SITE}&quote=${encodeURIComponent(c.text)}` },
+    { id: "instagram", label: "Instagram", url: () => "https://www.instagram.com/", story: true },
+    { id: "snapchat", label: "Snapchat", url: () => "https://www.snapchat.com/", story: true },
+  ];
+  const canCopyImg = !!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write);
+  const canSys = !!(file && navigator.canShare && navigator.canShare({ files: [file] }));
+  $("#shareBtns").innerHTML = `<button class="primary" data-a="save">${esc(tr("share.save"))}</button>
+    ${canCopyImg ? `<button data-a="copy">${esc(tr("share.copy"))}</button>` : ""}
+    ${canSys ? `<button data-a="sys">${esc(tr("share.system"))}</button>` : ""}
+    <p class="hint">${esc(tr("share.platforms"))}</p>
+    ${platforms.map((p) => `<button data-p="${p.id}">${esc(p.label)}</button>`).join("")}`;
+  $("[data-a=save]", dlg).onclick = guard(async () => { const p = await saveImage(true); toast(tr("share.saved", { folder: folderOf(p) || p }), 4500); });
+  const cp = $("[data-a=copy]", dlg);
+  if (cp) cp.onclick = guard(async () => {
+    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); toast(tr("share.copied")); }
+    catch (e) { toast(tr("share.copy_unsupported"), 4500); cp.hidden = true; }
+  });
+  const sys = $("[data-a=sys]", dlg);
+  if (sys) sys.onclick = guard(async () => { try { await navigator.share({ files: [file], text: c.text }); } catch (e) { if (e.name !== "AbortError") throw e; } });
+  platforms.forEach((p) => {
+    $(`[data-p=${p.id}]`, dlg).onclick = guard(async () => {
+      const path = await saveImage(!!p.story);       // every platform button saves the image and copies the text first
+      await copyText();
+      await open(p.url());
+      toast(p.story ? tr("share.story_hint", { folder: folderOf(path) || path }) : tr("share.attach_hint", { folder: folderOf(path) || path }), 6000);
+    });
+  });
+}
+
 /* ================================================================ profile */
-const prof = { inst: "", diff: "" };
+const prof = { inst: "", diff: "" }, profF = { inst: "", diff: "" };      // own filter, a friend's filter
+let profNext = null, profCur = {};        // one-shot options for the next show("profile"): { friendId }
 function openSong(it) {
   if (it.songId && lib.byId.has(it.songId)) {
     show("library"); setFilter("all"); st.q = ""; $("#libSearch").value = ""; applyFilters();
@@ -1261,30 +1440,54 @@ function songList(items, right, empty) {
   if (!items.length) return `<p class="hint">${esc(empty)}</p>`;
   return `<ul class="plist">${items.map((it, i) => `<li data-i="${i}"><div class="t">${esc(it.name)}<small>${esc(it.artist)}</small></div><div class="v">${right(it)}</div></li>`).join("")}</ul>`;
 }
-async function loadProfile() {
-  const body = $("#profileBody");
-  const [cs, d, fv] = await Promise.all([loadCloud(), api(`/api/stats?instrument=${encodeURIComponent(prof.inst)}&difficulty=${encodeURIComponent(prof.diff)}`),
-    api("/api/friends").catch(() => null)]);
+/* The Profile view. opts.friendId shows that friend's shared stats read-only (no sign-in, CH account, share or edit controls). */
+async function loadProfile(opts = {}) {
+  const body = $("#profileBody"), fid = opts.friendId || "", P = fid ? profF : prof;
+  profCur = opts;
+  const q = `instrument=${encodeURIComponent(P.inst)}&difficulty=${encodeURIComponent(P.diff)}`;
+  if (fid) {
+    let d;
+    try { d = await api(`/api/friends/stats?id=${encodeURIComponent(fid)}&${q}`); }
+    catch (e) {
+      const fp = (fr.view && fr.view.friends || []).find((x) => x.id === fid) || {};
+      body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2><div class="fr-tools"><button id="pBack">${esc(tr("friends.back"))}</button></div>
+        <p class="hint">${esc(e.message === "not_shared" ? tr("friends.stats_not_shared", { name: fp.name || fp.username || "?" }) : e.message)}</p>`;
+      $("#pBack").onclick = () => show("friends");
+      return;
+    }
+    return renderProfile(body, d, null, null, opts);
+  }
+  const [cs, d, fv] = await Promise.all([loadCloud(), api(`/api/stats?${q}`), api("/api/friends").catch(() => null)]);
+  return renderProfile(body, d, cs, fv, opts);
+}
+function renderProfile(body, d, cs, fv, opts) {
+  const fid = opts.friendId || "", P = fid ? profF : prof, ro = !!fid;
+  const reload = () => loadProfile(opts);
   const T = d.totals, f = d.facets, H = d.heatmap;
   const max = Math.max(1, ...H.days.map((x) => x.n));
   const lvl = (n) => (n ? Math.min(4, 1 + Math.floor((n / max) * 3.999)) : 0);
   const bars = (arr, labels) => { const m = Math.max(1, ...arr); return `<div class="bars">${arr.map((v, i) => `<div title="${labels[i]}: ${v}"><i style="height:${Math.round((v / m) * 52)}px"></i>${labels[i]}</div>`).join("")}</div>`; };
-  const head = cs.signedIn
+  const fp = ro ? d.friend || {} : null;
+  const head = ro
+    ? `<div class="fr-tools"><button id="pBack">${esc(tr("friends.back"))}</button></div>
+      <div class="p-head"><div class="ava"${fp.avatar ? ` style="background-image:url('${esc(fp.avatar)}')"` : ""}>${fp.avatar ? "" : esc((fp.name || fp.username || "?")[0].toUpperCase())}</div>
+        <div class="who"><b>${esc(fp.name || fp.username || "?")}</b><span>${fp.username ? "@" + esc(fp.username) : ""}</span></div></div>`
+    : cs.signedIn
     ? `<div class="p-head"><div class="ava"${cs.avatar ? ` style="background-image:url('${esc(cs.avatar)}')"` : ""}>${cs.avatar ? "" : esc((cs.name || cs.email || "?")[0].toUpperCase())}</div>
         <div class="who"><b>${esc(cs.name || cs.email)}</b><span>${esc(cs.email || "")} · <a href="#" id="pRename">${esc(tr("profile.edit_name"))}</a></span>
         <span>${esc(tr("profile.sync_line", { ago: ago(cs.lastSync) }))}${cs.pending ? ` · ${esc(tr("profile.pending", { count: cs.pending }))}` : ""}${cs.error ? ` · ${esc(tr("profile.offline"))}` : ""}</span></div>
-        <div class="actions"><button id="pSync">${esc(tr("profile.sync_now"))}</button><button id="pOut">${esc(tr("profile.sign_out"))}</button></div></div>`
+        <div class="actions"><button class="primary" id="pShare">${esc(tr("share.btn"))}</button><button id="pSync">${esc(tr("profile.sync_now"))}</button><button id="pOut">${esc(tr("profile.sign_out"))}</button></div></div>`
     : `<div class="p-head cta"><div class="ava">♪</div><div class="who"><b>${esc(tr("profile.sign_in"))}</b><span>${esc(tr("profile.sign_in_text"))}</span>
-        <div class="actions" style="margin-top:8px"><button class="primary" id="pIn">${esc(tr("profile.google"))}</button></div>
+        <div class="actions" style="margin-top:8px"><button class="primary" id="pIn">${esc(tr("profile.google"))}</button><button id="pShare">${esc(tr("share.btn"))}</button></div>
         <span style="margin-top:8px">${esc(tr("profile.or_email"))}</span>
         <div class="d-row"><input type="email" id="pEmail" placeholder="${esc(tr("profile.email_ph"))}" autocomplete="email"><button id="pSend">${esc(tr("profile.send_code"))}</button></div>
         <div class="d-row" id="pCodeRow" hidden><input type="text" id="pCode" inputmode="numeric" maxlength="6" placeholder="${esc(tr("profile.code_ph"))}" autocomplete="one-time-code"><button class="primary" id="pVerify">${esc(tr("profile.verify"))}</button></div>
         <span id="pMsg" class="hint"></span></div></div>`;
   const sel = (id, vals, cur, any, label) => `<select id="${id}"><option value="">${esc(any)}</option>${vals.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label(v))}</option>`).join("")}</select>`;
-  body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}${cs.signedIn && fv && fv.needsUsername ? `<div class="fr-card" id="pUserBox">${usernameBox()}</div>` : ""}
-    <div class="p-filter">${sel("pInst", f.instruments, prof.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, prof.diff, tr("profile.all_difficulties"), dn)}
-      <span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span></div>
-    <p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end"))}</p>
+  body.innerHTML = `<h2>${esc(tr("profile.title"))}</h2>${head}${!ro && cs.signedIn && fv && fv.needsUsername ? `<div class="fr-card" id="pUserBox">${usernameBox()}</div>` : ""}
+    <div class="p-filter">${sel("pInst", f.instruments, P.inst, tr("profile.all_instruments"), inn)}${sel("pDiff", f.difficulties, P.diff, tr("profile.all_difficulties"), dn)}
+      ${ro ? "" : `<span class="hint">${esc(tr("profile.plays_here", { local: nf(d.sources.local) }) + (d.sources.cloud ? tr("profile.plays_cloud", { cloud: nf(d.sources.cloud) }) : "") + ". " + tr("profile.plays_note"))}</span>`}</div>
+    ${ro ? "" : `<p class="hint" id="pSrc" title="${esc(tr("profile.src_tip"))}">${esc(tr("profile.src_line", { plays: nf(d.sources.local + d.sources.cloud) }) + (d.ch.accountId || d.sources.leaderboard ? tr("profile.src_lb", { count: nf(d.sources.leaderboard) }) + (d.sources.leaderboardRefreshing ? tr("profile.src_loading") : "") : "") + ". " + tr("profile.src_end"))}</p>`}
     <div class="tiles">
       <div class="tile"><b>${nf(T.plays)}</b><span>${esc(tr("profile.tile.plays"))}</span></div><div class="tile"><b>${T.hours}</b><span>${esc(tr("profile.tile.hours"))}</span></div>
       <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("profile.tile.songs"))}</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>${esc(tr("profile.tile.accuracy"))}</span></div>
@@ -1297,7 +1500,7 @@ async function loadProfile() {
     <div class="p-cols"><section><h3>${esc(tr("profile.most_played"))}</h3><div id="lMost"></div></section><section><h3>${esc(tr("profile.best"))}</h3><div id="lBest"></div></section>
       <section><h3>${esc(tr("profile.needs"))}</h3><div id="lNeeds"></div></section><section><h3>${esc(tr("profile.pbs"))}</h3><div id="lPb"></div></section></div>
     <section><h3>${esc(tr("profile.recent"))}</h3><div id="lRecent"></div></section>
-    <section id="chAcct"><h3>${esc(tr("profile.ch_account"))}</h3><div id="chBody"><p class="hint">${esc(tr("common.loading"))}</p></div></section>`;
+    ${ro ? "" : `<section id="chAcct"><h3>${esc(tr("profile.ch_account"))}</h3><div id="chBody"><p class="hint">${esc(tr("common.loading"))}</p></div></section>`}`;
   const fill = (id, items, right, empty) => {
     const el = $(id); el.innerHTML = songList(items, right, empty);
     $$("li", el).forEach((li) => li.onclick = () => openSong(items[Number(li.dataset.i)]));
@@ -1309,6 +1512,10 @@ async function loadProfile() {
   fill("#lNeeds", d.needsPractice, (it) => `${esc(tr("profile.best_pct", { pct: pct(it.bestAccuracy) }))}<small>${it.plays}×</small>`, tr("profile.empty.needs"));
   fill("#lPb", d.personalBests, (it) => `${nf(it.score)}<small>${tags(it)}</small>`, tr("profile.empty.pbs"));
   fill("#lRecent", d.recent, (it) => `${nf(it.score)} · ${"★".repeat(Math.min(5, it.stars || 0))}${(it.stars || 0) > 5 ? "+" : ""} · ${pct(it.accuracy)}<small>${tags(it)} · ${when(it.playedAt)}</small>`, tr("profile.empty.recent"));
+  $("#pInst").onchange = (e) => { P.inst = e.target.value; reload(); };
+  $("#pDiff").onchange = (e) => { P.diff = e.target.value; reload(); };
+  if (ro) { $("#pBack").onclick = () => show("friends"); return; }
+  $("#pShare").onclick = () => openShare(d, cs);
   if ($("#pUserBox")) bindUsernameBox($("#pUserBox"), () => loadProfile());
   if (cs.signedIn) {
     $("#pOut").onclick = signOut; $("#pSync").onclick = syncNow;
@@ -1344,8 +1551,6 @@ async function loadProfile() {
     $("#pCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pVerify").click(); });
   }
   if (d.sources.leaderboardRefreshing) setTimeout(() => { if ($("#pSrc")) loadProfile(); }, 4000);
-  $("#pInst").onchange = (e) => { prof.inst = e.target.value; loadProfile(); };
-  $("#pDiff").onchange = (e) => { prof.diff = e.target.value; loadProfile(); };
   loadChAccount();
 }
 async function loadChAccount() {
@@ -1455,7 +1660,7 @@ function refreshView() {
   switch (currentView) {
     case "settings": loadSettings(); break;
     case "setup": loadSetup(); break;
-    case "profile": loadProfile(); break;
+    case "profile": loadProfile(profCur); break;
     case "friends": loadFriends(true); break;
     case "leaderboards": loadLeaderboards(); break;
     case "setlists": loadSetlists(); break;

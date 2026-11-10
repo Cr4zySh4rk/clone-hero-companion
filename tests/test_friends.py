@@ -292,17 +292,17 @@ class SharingTests(Harness):
         self.fr.set_lists_shared(True)
         c = self.sb.calls_to("share_settings", "POST")[0]
         self.assertEqual((c[2], c[3]), ({"on_conflict": "user_id"}, {"user_id": ME, "lists_shared": True}))
-        self.assertEqual(self.fr.sharing(), {"lists": True})
-        self.assertEqual(self.fr.status()["sharing"], {"lists": True})
+        self.assertEqual(self.fr.sharing(), {"lists": True, "stats": True})
+        self.assertEqual(self.fr.status()["sharing"], {"lists": True, "stats": True})
         self.fr.set_lists_shared(False)
         self.assertEqual(self.sb.calls_to("share_settings", "POST")[-1][3], {"user_id": ME, "lists_shared": False})
-        self.assertEqual(self.fr.sharing(), {"lists": False})
+        self.assertEqual(self.fr.sharing(), {"lists": False, "stats": True})
         self.assertEqual(self.sb.calls_to("setlists", "PATCH"), [])      # no per-setlist flags any more
 
     def test_refresh_reads_the_switch(self):
         self.sb.routes[("GET", "share_settings")] = lambda q, b: (200, [{"lists_shared": True}])
-        self.assertEqual(self.fr.refresh()["sharing"], {"lists": True})
-        self.assertEqual(self.sb.calls_to("share_settings")[0][2]["select"], "lists_shared")
+        self.assertEqual(self.fr.refresh()["sharing"], {"lists": True, "stats": True})
+        self.assertEqual(self.sb.calls_to("share_settings")[0][2]["select"], "lists_shared,stats_shared")
 
     def test_switching_on_uploads_every_setlist_now(self):
         self.sb.routes[("POST", "share_settings")] = lambda q, b: (201, None)
@@ -330,7 +330,7 @@ class SharingTests(Harness):
         with mock.patch.object(self.sync, "schedule"):
             api._friends(h, c, "POST", "/api/friends/share", {}, {"lists_shared": True})
             api._friends(h, c, "POST", "/api/friends/share", {}, {"kind": "favorites", "shared": False})
-        self.assertEqual([x[0] for x in sent], [{"lists": True}, {"lists": False}])
+        self.assertEqual([x[0] for x in sent], [{"lists": True, "stats": True}, {"lists": False, "stats": True}])
         self.assertEqual([c_[3]["lists_shared"] for c_ in self.sb.calls_to("share_settings", "POST")], [True, False])
 
 

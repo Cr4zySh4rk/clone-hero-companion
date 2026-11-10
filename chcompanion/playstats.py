@@ -400,6 +400,57 @@ def facets(plays: list[dict]) -> dict:
             "difficulties": [d for d in DIFFICULTIES if any(p.get("difficulty") == d for p in plays)]}
 
 
+STREAK_MILESTONES = (3, 7, 14, 30, 60, 100)
+PLAY_MILESTONES = (10, 50, 100, 250, 500, 1000)
+_ACC_ORDER = {"fc": 5, "five_star": 4, "pb": 3, "streak": 2, "milestone": 1}
+
+
+def accomplishments(dts: list[tuple[dict, datetime]], limit: int = 6) -> list[dict]:
+    """Up to `limit` recent highlights, newest first: {kind, title, detail, ts, vars}.
+    `title` and `detail` are catalog keys (profile.acc.*) and `vars` their raw variables (difficulty and instrument
+    as raw ids, counts and scores as numbers): the UI translates them, so switching language re-translates.
+    One highlight per play for fc > five_star > pb (the first FC / 5 stars of a chart, a score beating an earlier one
+    on the same song + instrument + difficulty), plus streak and total-play milestones."""
+    ordered = sorted(dts, key=lambda t: t[0].get("played_at") or "")
+    out: list[tuple[float, int, dict]] = []
+
+    def add(kind: str, p: dict, d: datetime, **vars):
+        out.append((d.timestamp(), _ACC_ORDER[kind],
+                    {"kind": kind, "title": f"profile.acc.{kind}", "detail": f"profile.acc.{kind}_detail",
+                     "ts": p.get("played_at"), "vars": vars}))
+    seen_fc, seen_star, best = set(), set(), {}
+    for n, (p, d) in enumerate(ordered, 1):
+        k = (song_ident(p), p.get("instrument"), p.get("difficulty"))
+        score = int(p.get("score") or 0)
+        song = {"artist": p.get("artist") or "", "name": p.get("name") or "", "diff": p.get("difficulty") or "",
+                "inst": p.get("instrument") or "", "score": score}
+        if p.get("fc") and k not in seen_fc:
+            add("fc", p, d, **song)
+        elif (p.get("stars") or 0) >= 5 and k not in seen_star:
+            add("five_star", p, d, **song)
+        elif k in best and score > best[k]:
+            add("pb", p, d, **song)
+        if p.get("fc"):
+            seen_fc.add(k)
+        if (p.get("stars") or 0) >= 5:
+            seen_star.add(k)
+        best[k] = max(best.get(k, 0), score)
+        if n in PLAY_MILESTONES:
+            add("milestone", p, d, count=n)
+    last_of_day: dict = {}
+    for p, d in ordered:
+        last_of_day[d.date()] = (p, d)
+    run, prev = 0, None
+    for day in sorted(last_of_day):
+        run = run + 1 if prev and day - prev == timedelta(days=1) else 1
+        prev = day
+        if run in STREAK_MILESTONES:
+            p, d = last_of_day[day]
+            add("streak", p, d, count=run)
+    out.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [e for _, _, e in out[:limit]]
+
+
 def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: datetime | None = None) -> dict:
     """All Profile numbers for the given plays (already merged across machines)."""
     now = (now or datetime.now()).astimezone()
@@ -492,5 +543,6 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
         "weekday": weekday, "hour": hour,
         "mostPlayed": most, "best": best, "needsPractice": needs, "recent": recent, "personalBests": pbs,
         "playSources": {"app": len(dts) - n_lb, "leaderboard": n_lb},
+        "accomplishments": accomplishments(dts),
         "facets": fac, "instrument": instrument, "difficulty": difficulty,
     }

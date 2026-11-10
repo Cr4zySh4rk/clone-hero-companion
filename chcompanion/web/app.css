@@ -425,3 +425,12 @@ dialog h2 { overflow-wrap: anywhere; line-height: 1.1; }
 .fr-song { flex-wrap: wrap; }
 #frFilter { width: 100%; max-width: 420px; }
 .fr-share .inline b { font-size: 15px; }
+
+/* share your stats */
+dialog.shareDlg { width: min(720px, 94vw); max-width: 94vw; max-height: 94vh; overflow: auto; }
+.shareBox { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; min-width: 0; }
+.sharePrev { flex: 0 1 270px; min-width: 0; }
+.sharePrev canvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 52vh; border-radius: 8px; border: 1px solid var(--line); }
+.shareBtns { flex: 1 1 210px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.shareBtns button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.shareBtns .hint { margin: 4px 0 0; }

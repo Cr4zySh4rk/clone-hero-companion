@@ -641,6 +641,8 @@ class CloudSync:
             st["uid"] = uid
         added, offset = 0, 0
         params = {"select": "*", "order": "played_at.asc,id.asc", "limit": 1000}
+        if uid:     # friends may read my friends' plays too (0004): ask for my own rows only
+            params["user_id"] = f"eq.{uid}"
         if st.get("since"):
             params["played_at"] = f"gte.{st['since']}"
         while True:
