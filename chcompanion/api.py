@@ -338,7 +338,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/sync" and method == "POST":
         if c.cloud.signed_in:
-            threading.Thread(target=c.cloudsync.sync_all, daemon=True, name="cloud-sync").start()
+            def run():
+                c.refresh_ch_profile()      # Sync now: fetch the CH Leaderboards profile live first, so the snapshot is current
+                c.cloudsync.sync_all()
+            threading.Thread(target=run, daemon=True, name="cloud-sync").start()
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/favorites" and method == "GET":
         rows = _missing_favs(c)
@@ -363,10 +366,11 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if aid:
             from .leaderboard import LeaderboardError
             try:
-                prof = c.lb.profile(aid)
+                prof = c.lb.profile(aid, max_age=PROFILE_MAX_AGE_S)      # live: never the 10-minute response cache
             except LeaderboardError:
                 prof = None
             res["account"] = playstats.account_section(prof, c.settings().get("ch_username") or "")
+            _push_career_if_fresh(c, prof)
         n_lb = len(playstats.dedupe_leaderboard(c.playlog.leaderboard(), c.playlog.all(False)))
         res["sources"].update({"local": len(c.playlog.local()), "cloud": len(c.playlog.cloud()), "leaderboard": n_lb,
                                "leaderboardRefreshing": c.playlog.lb_refreshing})
@@ -980,6 +984,19 @@ def _install_cloud_favs(c, body: dict) -> dict:
                                   priority=PRIO_USER))
                 queued += 1
     return {"queued": queued, "notFound": missing, "failed": failed, "alreadyHave": have}
+
+
+PROFILE_MAX_AGE_S = 30          # the Profile shows the CH Leaderboards account at most this stale
+
+
+def _push_career_if_fresh(c, prof):
+    """Right after a fresh CH profile arrived (a new fetch, not a cached answer), upload the career snapshot for the
+    website; push_career() skips the upload when nothing changed."""
+    at = (prof or {}).get("fetchedAt")
+    if not at or not c.cloud.signed_in or at == getattr(c, "_ch_pushed_at", None):
+        return
+    c._ch_pushed_at = at
+    threading.Thread(target=c.cloudsync.push_career, daemon=True, name="career-push").start()
 
 
 def _refresh_lb_plays(c):

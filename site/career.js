@@ -241,6 +241,7 @@
   var pf = new Intl.NumberFormat(undefined, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
   var df = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   var dfs = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  var tf = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
   var wdf = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
   var hf = new Intl.DateTimeFormat(undefined, { hour: 'numeric' });
   function esc(v) {
@@ -274,26 +275,47 @@
   }
   function grid(items) { return '<dl class="cr-grid">' + items.join('') + '</dl>'; }
 
+  // One set of cards, no duplicated concepts: when the app's snapshot carries the CH Leaderboards profile, its values
+  // (verbatim, with "Rank #n") are the source for every stat CH has; otherwise the numbers computed from the plays.
+  function chStats(s) {
+    var st = s.snap && s.snap.stats;
+    return st && (isNum(st.totalScore) || isNum(st.totalFcs) || isNum(st.notesHit)) ? st : null;
+  }
   function overview(s) {
-    var t = s.totals;
-    return grid([
-      stat('Time played', dur(t.seconds), { c: COLORS[0] }), stat('Plays', n(t.plays), { c: COLORS[1] }),
-      stat('Songs', n(t.songs), { c: COLORS[2] }), stat('Average accuracy', pct(t.avgAccuracy), { c: COLORS[3] }),
-      stat('Total score', n(t.totalScore), { c: COLORS[4] }), stat('Notes hit', n(t.notesHit), { c: COLORS[0] })
-    ]);
+    var t = s.totals, st = chStats(s), rk = (s.snap && s.snap.ranks) || {};
+    function sub(names) { var r = rankOf(rk, names); return r ? 'Rank #' + n(r) : ''; }
+    function card(v, chLabel, appValue, appLabel, c, names, appSub) {
+      return st && isNum(v) ? stat(chLabel, n(v), { c: c, sub: sub(names) }) : stat(appLabel, appValue, { c: c, sub: appSub });
+    }
+    function chOnly(v, label, c, names) { return st && isNum(v) ? stat(label, n(v), { c: c, sub: sub(names) }) : ''; }
+    var hrs = st && isNum(st.totalTimePlayedMs) ? Math.round(st.totalTimePlayedMs / 3600000) : null;
+    var sc = t.starCounts || {};
+    var cards = [
+      card(st && st.totalFcs, 'Full combos', n(t.fcs), 'Full combos', COLORS[0], ['totalFcs'], 'distinct charts'),
+      chOnly(st && st.totalPfcs, 'Perfect FCs', COLORS[3], ['totalPfcs']),
+      card(st && st.totalScore, 'Total score', n(t.totalScore), 'Total score', COLORS[4], ['totalScore']),
+      card(st && st.songsPlayed, 'Songs played', n(t.songs), 'Songs', COLORS[2], []),
+      card(hrs, 'Hours played', dur(t.seconds), 'Time played', COLORS[0], ['hoursPlayed']),
+      card(st && st.notesHit, 'Notes hit', n(t.notesHit), 'Notes hit', COLORS[1], ['notesHit']),
+      chOnly(st && st.totalStarsEarned, 'Stars earned', COLORS[2], ['starsEarned', 'totalStarsEarned']),
+      chOnly(st && st.highestCombo, 'Highest combo', COLORS[1], []),
+      chOnly(s.snap && s.snap.submissionCount, 'Submissions', COLORS[4], ['submissions']),
+      stat('Plays', n(t.plays), { c: COLORS[1] }), stat('Average accuracy', pct(t.avgAccuracy), { c: COLORS[3] }),
+      stat('5-star songs', n(sc[5]), { c: COLORS[2], sub: 'best result, distinct charts' }), stat('6-star songs', n(sc[6]), { c: COLORS[4], sub: 'gold stars' }),
+      stat('7-star songs', n(sc[7]), { c: COLORS[1], sub: 'best result, distinct charts' }),
+      stat('Current streak', n(t.streak) + (t.streak === 1 ? ' day' : ' days'), { c: COLORS[4] }),
+      stat('Longest streak', n(t.longestStreak) + (t.longestStreak === 1 ? ' day' : ' days'), { c: COLORS[2] })
+    ].filter(Boolean);
+    return grid(cards);
   }
   function performance(s) {
     var t = s.totals, x = s.extras, g = [];
-    g.push(stat('Full combos', n(t.fcs), { c: COLORS[0], sub: s.snap ? 'distinct charts, from the app' : 'distinct charts' }));
     g.push(stat('5 stars or gold', n(t.fiveStars), { c: COLORS[2], sub: 'distinct charts' }));
-    g.push(stat('5-star songs', n(t.starCounts[5]), { c: COLORS[2], sub: 'best result, distinct charts' }));
-    g.push(stat('6-star songs', n(t.starCounts[6]), { c: COLORS[4], sub: 'gold stars' }));
-    g.push(stat('7-star songs', n(t.starCounts[7]), { c: COLORS[1], sub: 'best result, distinct charts' }));
     g.push(stat('Best accuracy run', x.bestAccuracyRun ? pct(x.bestAccuracyRun.accuracy) : '–', { c: COLORS[3], sub: x.bestAccuracyRun ? title(x.bestAccuracyRun) : '' }));
     g.push(stat('Highest score', x.highestScore ? n(x.highestScore.score) : '–', { c: COLORS[4], sub: x.highestScore ? title(x.highestScore) : '' }));
     g.push(stat('Longest note streak', x.longestNoteStreak ? n(x.longestNoteStreak.streak) : '–', { c: COLORS[1], sub: x.longestNoteStreak ? title(x.longestNoteStreak) : '' }));
     g.push(stat('Average stars', x.avgStars == null ? '–' : nf1.format(x.avgStars), { c: COLORS[2], sub: 'per play' }));
-    return grid(g) + (s.snap ? '<p class="cr-note">' + esc(snapNote(s)) + '. Full combos and star counts are the app&rsquo;s own, which also use the scores Clone Hero keeps in its save file. They can differ from the CH Leaderboards account figures.</p>' : '');
+    return grid(g);
   }
   function instruments(s) {
     var total = s.totals.plays || 1;
@@ -381,7 +403,7 @@
         return '<button type="button" role="tab" id="cr-tab-' + t[0] + '" aria-controls="cr-panel-' + t[0] + '" aria-selected="' + (i === 0) + '" tabindex="' + (i === 0 ? 0 : -1) + '">' + t[1] + '</button>';
       }).join('') + '</div>' + TABS.map(function (t, i) {
         return '<div class="tabpanel" role="tabpanel" id="cr-panel-' + t[0] + '" aria-labelledby="cr-tab-' + t[0] + '" tabindex="0"' + (i ? ' hidden' : '') + '>' +
-          (t[0] === 'overview' ? t[2](s) + lbCard(profile, s) : t[2](s)) + '</div>';
+          (t[0] === 'overview' ? lbCard(profile, s) + t[2](s) : t[2](s)) + '</div>';
       }).join('');
     }
     body += '<details class="cr-how"><summary>How rank works</summary><p>XP = notes hit &divide; 20 + 50 for every play. Reaching rank <i>R</i> takes 500 &times; (<i>R</i>&minus;1)<sup>1.7</sup> XP, so every rank costs more than the one before: rank 2 is 500 XP, rank 10 about 21,000, rank 50 about 390,000. It is just for fun and is not a CH Leaderboards rank.</p></details>';
@@ -392,44 +414,26 @@
   }
   // CH Leaderboards' API sends no CORS headers (checked), so browsers cannot call it. The desktop app uploads the linked
   // account's stats and ranks with its career snapshot; without one, link out.
-  function snapNote(s) {
-    var d = s.snapAt ? dateOf(s.snapAt) : '';
-    return 'From the app, as of ' + (d || 'its last sync');
-  }
   function lbCard(profile, s) {
     var snap = s.snap, u = (snap && snap.ch_username) || (profile && profile.ch_username);
     if (!u) return '';
     var link = snap && isNum(snap.ch_account_id) ? LB_SITE + '/users/' + Math.floor(snap.ch_account_id) : LB_SITE;
-    var st = (snap && snap.stats) || {}, rk = (snap && snap.ranks) || {};
-    if (!isNum(st.totalScore) && !isNum(st.totalFcs) && !isNum(st.notesHit)) {
-      return '<p class="cr-lb">Linked CH Leaderboards account: <b>' + esc(u) + '</b>. Its ranks are not available on this page yet; open the Clone Hero Companion app once while signed in to sync them here, or <a href="' + link + '" rel="noopener">open CH Leaderboards</a> and search for your name.</p>';
+    if (!chStats(s)) {
+      return '<p class="cr-lb">Linked CH Leaderboards account: <b>' + esc(u) + '</b>. Its figures are not available on this page yet; open the Clone Hero Companion app once while signed in to sync them here, or <a href="' + link + '" rel="noopener">open CH Leaderboards</a> and search for your name.</p>';
     }
-    // Values exactly as leaderboards.clonehero.net/users/<id> shows them, in its order; ranks are extra sub-labels.
-    function tile(label, v, ranks, c, fmt) {
-      if (!isNum(v)) return '';
-      var r = rankOf(rk, ranks);
-      return stat(label, fmt ? fmt(v) : n(v), { c: c, sub: r ? 'Rank #' + n(r) : '' });
-    }
-    var tiles = [
-      tile('Total PFCs', st.totalPfcs, ['totalPfcs'], COLORS[3]),
-      tile('Total FCs', st.totalFcs, ['totalFcs'], COLORS[0]),
-      tile('Total score', st.totalScore, ['totalScore'], COLORS[4]),
-      tile('Songs played', st.songsPlayed, [], COLORS[3]),
-      tile('Total hours played', isNum(st.totalTimePlayedMs) ? Math.round(st.totalTimePlayedMs / 3600000) : null, ['hoursPlayed'], COLORS[0]),
-      tile('Notes hit', st.notesHit, ['notesHit'], COLORS[1]),
-      tile('Total stars earned', st.totalStarsEarned, ['starsEarned', 'totalStarsEarned'], COLORS[2]),
-      tile('Highest combo', st.highestCombo, [], COLORS[1]),
-      tile('Submissions', snap.submissionCount, ['submissions'], COLORS[4])
-    ].filter(Boolean);
     var since = snap.createdAt && !isNaN(new Date(snap.createdAt).getTime()) ? ' &middot; Since ' + esc(dfs.format(new Date(snap.createdAt))) : '';
     function top(title, rows, key, fmt) {
       if (!rows || !rows.length) return '';
       return '<p class="cr-note"><b>' + title + ':</b> ' + rows.slice(0, 5).map(function (r) { return esc(fmt(r[key])) + ' (' + n(r.plays) + ')'; }).join(' &middot; ') + '</p>';
     }
-    return '<h3 class="cr-h">CH Leaderboards account</h3><p class="cr-note">' + esc(u) + since + ' &middot; ' + esc(snapNote(s)) +
-      ' &middot; <a href="' + link + '" rel="noopener">View on CH Leaderboards</a></p>' + grid(tiles) +
+    return '<p class="cr-note cr-chline">CH Leaderboards: <b>' + esc(u) + '</b>' + since + ' &middot; ' + esc(chAsOf(s)) +
+      ' &middot; <a href="' + link + '" rel="noopener">View on CH Leaderboards</a></p>' +
       top('Top artists played', snap.topArtists, 'artist', function (a) { return a; }) +
       top('Top instruments', snap.topInstruments, 'instrument', instName);
+  }
+  function chAsOf(s) {
+    var d = s.snapAt ? new Date(s.snapAt) : null;
+    return d && !isNaN(d.getTime()) ? 'CH data as of ' + dfs.format(d) + ', ' + tf.format(d) : 'CH data from the app\u2019s last sync';
   }
   function initTabs(el) {
     var tabs = Array.prototype.slice.call(el.querySelectorAll('[role=tab]'));

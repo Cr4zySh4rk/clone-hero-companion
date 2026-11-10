@@ -77,12 +77,13 @@ class Client:
         except Exception as e:
             raise LeaderboardError(_("lb.unreachable", detail=e))
 
-    def get(self, path: str, params: dict | None = None):
+    def get(self, path: str, params: dict | None = None, max_age: float | None = None):
+        """GET with a response cache (CACHE_S); `max_age` seconds overrides it (0 = always fetch)."""
         q = urllib.parse.urlencode([(k, v) for k, v in (params or {}).items() if v not in (None, "")])
         url = f"{API}/{path}" + (f"?{q}" if q else "")
         with self.lock:
             hit = self.cache.get(url)
-            if hit and self.now() - hit[0] < CACHE_S:
+            if hit and self.now() - hit[0] < (CACHE_S if max_age is None else max_age):
                 return hit[1]
             gap = MIN_GAP_S - (self.now() - self._last)
             if gap > 0:
@@ -171,9 +172,11 @@ class Client:
                 "players": s.get("totalPlayerCount"), "url": song_url(song_hash)}
 
     # ------------------------------------------------------------ accounts
-    def profile(self, account_id: int) -> dict:
-        d = self.get(f"account/{int(account_id)}/profile") or {}
-        return {"accountId": d.get("accountId"), "username": d.get("username"),
+    def profile(self, account_id: int, max_age: float | None = None) -> dict:
+        """The account's public profile. `max_age` (seconds) bounds how stale a cached answer may be; fetchedAt says when it was fetched."""
+        url_key = f"{API}/account/{int(account_id)}/profile"
+        d = self.get(f"account/{int(account_id)}/profile", None, max_age) or {}
+        return {"fetchedAt": (self.cache.get(url_key) or (self.now(),))[0], "accountId": d.get("accountId"), "username": d.get("username"),
                 "createdAt": d.get("createdAt"), "submissionCount": d.get("submissionCount"),
                 "avatar": d.get("profilePictureUrl"), "stats": d.get("stats") or {}, "ranks": d.get("ranks") or {},
                 "topArtists": d.get("topArtists") or [], "topInstruments": d.get("topInstruments") or [],

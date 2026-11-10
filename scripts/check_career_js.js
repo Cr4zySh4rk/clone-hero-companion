@@ -6,7 +6,7 @@ process.env.TZ = 'UTC';
 const { execFileSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path');
 const root = path.resolve(__dirname, '..');
-const { computeStats } = require(path.join(root, 'site', 'career.js'));
+const { computeStats, xpTotal, rankInfo } = require(path.join(root, 'site', 'career.js'));
 const NOW = '2026-11-10T12:00:00+00:00';
 
 let s = 42; const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -32,7 +32,8 @@ plays = json.load(open(sys.argv[1]))
 r = playstats.compute(plays, now=datetime.fromisoformat(sys.argv[2]))
 print(json.dumps({"totals": r["totals"], "weekday": r["weekday"], "hour": r["hour"],
   "starCounts": r.get("starCounts") or r["totals"].get("starCounts"), "heat": sum(d["n"] for d in r["heatmap"]["days"]), "most": [c["ident"] for c in r["mostPlayed"]][:5],
-  "best": [c["ident"] for c in r["best"]][:5], "pbs": [p["score"] for p in r["personalBests"]]}))`;
+  "best": [c["ident"] for c in r["best"]][:5], "rank": r["rank"], "extras": r["extras"],
+  "inst": [[i["instrument"], i["plays"], i["fcs"], i["favDifficulty"]] for i in r["instruments"]], "pbs": [p["score"] for p in r["personalBests"]]}))`;
 const ref = JSON.parse(execFileSync('python3', ['-c', py, file, NOW], { cwd: root, env: { ...process.env, TZ: 'UTC' } }));
 const js = computeStats(plays, new Date(NOW));
 
@@ -47,6 +48,14 @@ eq('heatmap total', js.heatmap.days.reduce((t, d) => t + d.n, 0), ref.heat);
 eq('mostPlayed', js.mostPlayed.map(c => c.ident).slice(0, 5), ref.most);
 eq('best', js.best.map(c => c.ident).slice(0, 5), ref.best);
 eq('personalBests', js.personalBests.map(p => p.score), ref.pbs);
+// Rank / XP: the app's Profile shows the same rank as the website.
+const ri = rankInfo(xpTotal(js.totals));
+for (const k of ['rank', 'xp', 'lo', 'hi']) eq('rank.' + k, ri[k], ref.rank[k]);
+eq('rank.pct', Math.round(ri.pct * 1e9), Math.round(ref.rank.pct * 1e9));
+eq('extras.topWeekday', js.extras.topWeekday, ref.extras.topWeekday); eq('extras.topHour', js.extras.topHour, ref.extras.topHour);
+eq('extras.playsPerWeek', js.extras.playsPerWeek, ref.extras.playsPerWeek);
+eq('extras.highestScore', js.extras.highestScore && js.extras.highestScore.score, ref.extras.highestScore && ref.extras.highestScore.score);
+eq('instruments', js.instruments.map(i => [i.instrument, i.plays, i.fcs, i.favDifficulty]), ref.inst);
 // starCounts: compare once the app's compute() returns it (a separate app change).
 if (ref.starCounts) { for (const k of ['5', '6', '7']) eq('starCounts.' + k, js.totals.starCounts[k], ref.starCounts[k]); }
 else console.log('note: python compute() has no starCounts yet; JS values', JSON.stringify(js.totals.starCounts));

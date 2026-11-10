@@ -115,6 +115,24 @@ class MergeTests(unittest.TestCase):
         t0 = playstats.compute(plays)["totals"]
         self.assertEqual((t0["starCounts"]["5"], t0["fcs"]), (0, 0))
 
+    def test_scoredata_never_overwrites_the_day_streak(self):
+        """2.6.5: the scoredata loop reused `cur` (the current streak) and left a [stars, fc] list in totals.streak."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        plays = []
+        for i in range(3):
+            p = play(str(i), stars=4)
+            p["played_at"] = (now - timedelta(days=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            plays.append(p)
+        res = playstats.compute(plays, now=now, scoredata=self.rows(plays))
+        t = res["totals"]
+        self.assertEqual((t["streak"], t["longestStreak"]), (3, 3))
+        for k, v in t.items():
+            self.assertTrue(isinstance(v, (int, float, dict)) and not isinstance(v, bool) or v is None, (k, v))
+        snap = playstats.career_snapshot(res, None, "", "x")["totals"]
+        self.assertEqual((snap["streak"], snap["longestStreak"]), (3, 3))
+        self.assertTrue(all(isinstance(snap[k], int) for k in ("plays", "songs", "fcs", "streak", "longestStreak", "fiveOrMore")))
+
     def test_plays_can_beat_scoredata_and_nothing_is_double_counted(self):
         plays = [play("1", stars=6, fc=True)]
         res = playstats.compute(plays, scoredata=self.rows(plays))

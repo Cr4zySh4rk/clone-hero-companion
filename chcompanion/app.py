@@ -457,6 +457,15 @@ class Companion:
             return (s.artist, s.name) if s else None
         return playstats.resolve_scoredata(rows, plays, lookup)
 
+    def refresh_ch_profile(self) -> None:
+        """Fetch the linked CH Leaderboards profile live (Sync now): the next snapshot and Profile use it."""
+        aid = int(self.settings().get("ch_account_id") or 0)
+        if aid:
+            try:
+                self.lb.profile(aid, max_age=0)
+            except Exception as e:
+                log.info("CH Leaderboards profile not refreshed: %s", e)
+
     def career_snapshot(self) -> dict:
         """The unfiltered Profile totals plus the linked CH Leaderboards account, as uploaded for the website."""
         from . import playstats
@@ -466,7 +475,7 @@ class Companion:
         aid = int(self.settings().get("ch_account_id") or 0)
         if aid:
             try:
-                prof = self.lb.profile(aid)
+                prof = self.lb.profile(aid, max_age=60)
             except Exception:
                 prof = None
         return playstats.career_snapshot(res, prof, username, __version__)

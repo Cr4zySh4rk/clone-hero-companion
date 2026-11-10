@@ -41,7 +41,7 @@ ALLOW_ENGLISH = {"Clone Hero", "Companion", "Clone Hero Companion", "Chorus Enco
                  "Windows", "macOS", "Linux", "Rock Band", "WebM", "MP4", "Pause", "Play", "Video", "Lyrics", "Metadata", "Charter",
                  "Album", "Jobs", "Profile", "Settings", "Folder", "Workers", "Preview", "Chart", "Setlists", "Library",
                  "Leaderboards", "Duplicates", "Full combos",
-                 "Version", "Position", "Release", "Song", "Songs", "Videos"}      # also ordinary French/German words      # game terms and product names the app shows in English
+                 "Version", "Position", "Release", "Song", "Songs", "Videos", "Instruments"}      # also ordinary French/German words      # game terms and product names the app shows in English
 
 CHECK_JS = r"""
 () => {
@@ -125,6 +125,31 @@ CHECK_JS = r"""
 """
 
 
+def seed_plays(cfg: Path):
+    """A play history (long names included) so the Profile tabs have content to lay out."""
+    import random
+    from datetime import datetime, timedelta, timezone
+    sys.path.insert(0, str(ROOT))
+    from chcompanion.paths import APP_NAME
+    rnd = random.Random(3)
+    names = [("Die Übergroße Kapelle", "Zeitgeist der Straßenmusikanten und ihrer Gitarren"), ("Band", "Short"), ("Исполнитель", "Подобный длинный заголовок композиции"),
+             ("アーティスト", "日本語のとても長い曲名"), ("B", "A")]
+    now = datetime.now(timezone.utc)
+    rows = []
+    for i in range(80):
+        a, n = names[i % len(names)]
+        tn = rnd.randint(200, 3000)
+        hit = int(tn * rnd.uniform(.5, .99))
+        t = now - timedelta(days=rnd.randint(0, 120), hours=rnd.randint(0, 23))
+        rows.append({"client_id": f"seed{i}", "played_at": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "artist": a, "name": f"{n} {i % 7}", "checksum": f"cs{i % 7}{i % len(names)}",
+                     "instrument": rnd.choice(["guitar", "bass", "drums", "keys", "rhythm"]), "difficulty": rnd.choice(["easy", "medium", "hard", "expert"]),
+                     "score": rnd.randint(1000, 999999), "stars": rnd.choice([3, 4, 5, 6, 7]), "accuracy": round(hit / tn, 4), "notes_hit": hit, "total_notes": tn,
+                     "max_streak": rnd.randint(5, hit), "fc": rnd.random() < .2, "duration_s": rnd.randint(60, 400), "speed": rnd.choice([100, 100, 150])})
+    d = cfg / APP_NAME
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "plays.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", "utf-8")
+
+
 def free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -158,6 +183,7 @@ class App:
         env = dict(os.environ, CHC_SKIP_UPDATE_CHECK="1", XDG_CONFIG_HOME=str(base / "cfg"), HOME=str(base / "home"), APPDATA=str(base / "cfg"),
                    CLONEHERO_DATA_DIR=str(self.data))
         (base / "home").mkdir(exist_ok=True)
+        seed_plays(base / "cfg")
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "chcompanion", "run", "--no-browser", "--no-youtube", "--no-lrclib", "--no-in-game",
              "--port", str(self.port), "--data-dir", str(self.data)],
@@ -237,6 +263,13 @@ def run(langs, sizes, pseudo, shots: Path | None, views) -> int:
                             continue
                         page.wait_for_timeout(700 if view not in ("leaderboards", "profile", "charts") else 1500)
                         res = page.evaluate(CHECK_JS)
+                        if view == "profile":                                # every Profile tab, not only the first
+                            for tab in page.evaluate("[...document.querySelectorAll('.p-tabs [role=tab]')].map((b) => b.id)")[1:]:
+                                page.click("#" + tab)
+                                page.wait_for_timeout(120)
+                                res2 = page.evaluate(CHECK_JS)
+                                for k in res:
+                                    res[k] += res2[k]
                         if view == "nowwin":
                             page.evaluate("document.getElementById('help').classList.remove('on')")
                             res2 = page.evaluate(CHECK_JS)

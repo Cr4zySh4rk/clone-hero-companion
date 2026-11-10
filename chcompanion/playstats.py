@@ -51,6 +51,35 @@ LB_REFRESH_S = 600          # fetch the linked account's public scores at most e
 DEDUPE_WINDOW_S = 300       # same score within 5 minutes = the same play
 
 
+# ------------------------------------------------------------------ rank
+# Rank / XP, the same numbers as the website's Career page (site/career.js; scripts/check_career_js.js compares them):
+#   XP = floor(notes hit / 20) + 50 * plays;  XP to reach rank R = round(500 * (R - 1) ** 1.7)  (rank 1 starts at 0 XP)
+XP_BASE, XP_POWER, XP_PER_PLAY, NOTES_PER_XP = 500, 1.7, 50, 20
+
+
+def round_half_up(x: float) -> int:
+    """JavaScript's Math.round (halves go up), so the app and the website agree to the last XP."""
+    return int(x // 1 + (1 if x - x // 1 >= 0.5 else 0))
+
+
+def xp_for_rank(r: int) -> int:
+    return 0 if r <= 1 else round_half_up(XP_BASE * (r - 1) ** XP_POWER)
+
+
+def xp_total(plays: int, notes_hit: int) -> int:
+    return int(notes_hit) // NOTES_PER_XP + XP_PER_PLAY * int(plays)
+
+
+def rank_info(xp: int) -> dict:
+    r = max(1, int((xp / XP_BASE) ** (1 / XP_POWER)) + 1)
+    while xp_for_rank(r + 1) <= xp:
+        r += 1
+    while r > 1 and xp_for_rank(r) > xp:
+        r -= 1
+    lo, hi = xp_for_rank(r), xp_for_rank(r + 1)
+    return {"rank": r, "xp": xp, "lo": lo, "hi": hi, "pct": min(1.0, (xp - lo) / (hi - lo)) if hi > lo else 0}
+
+
 # ------------------------------------------------------------------ parsing
 def norm_instrument(v) -> str:
     s = re.sub(r"[^a-z0-9]", "", str(v if v is not None else "").lower())
@@ -572,18 +601,66 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
             if has_lb:
                 continue
             ident = "cs:" + str(e.get("checksum"))
-        cur = best_of.setdefault((ident, inst, diff), [0, False])
-        cur[0] = max(cur[0], int(e.get("stars") or 0))
-        cur[1] = cur[1] or bool(e.get("fc"))
+        entry = best_of.setdefault((ident, inst, diff), [0, False])      # not `cur`: that is the current day streak
+        entry[0] = max(entry[0], int(e.get("stars") or 0))
+        entry[1] = entry[1] or bool(e.get("fc"))
         sd_used.add(e.get("checksum"))
     # Distinct charts whose best (highest) stars is exactly 5, 6 (gold) or 7.
     star_counts = {"5": 0, "6": 0, "7": 0}
     for best_stars, _fc in best_of.values():
         if str(best_stars) in star_counts:
             star_counts[str(best_stars)] += 1
+    # extras shown next to the totals (the website's Career page has the same ones)
+    with_stars = [p for p, _ in dts if p.get("stars") is not None]
+    sized = [p for p, _ in dts if _acc(p) is not None and (p.get("total_notes") or 0) >= 100] or [p for p, _ in dts if _acc(p) is not None]
+
+    def play_row(p: dict) -> dict:
+        return {"playedAt": p.get("played_at"), "artist": p.get("artist"), "name": p.get("name"), "score": p.get("score") or 0,
+                "stars": p.get("stars") or 0, "accuracy": _acc(p), "difficulty": p.get("difficulty"),
+                "instrument": p.get("instrument"), "fc": bool(p.get("fc")), "speed": p.get("speed") or 100}
+    first = min((d for _, d in dts), default=None)
+    weeks = max(1.0, ((today - first.date()).days + 1) / 7) if first else 1.0
+    top_note = max((p for p, _ in dts), key=lambda p: p.get("max_streak") or 0, default=None)
+    extras = {
+        "firstPlay": first.isoformat() if first else None,
+        "avgStars": sum(p.get("stars") or 0 for p in with_stars) / len(with_stars) if with_stars else None,
+        "bestAccuracyRun": play_row(max(sized, key=lambda p: (_acc(p) or 0) * 1e12 + (p.get("score") or 0))) if sized else None,
+        "highestScore": play_row(max((p for p, _ in dts), key=lambda p: p.get("score") or 0)) if dts else None,
+        "longestNoteStreak": {"streak": top_note.get("max_streak") or 0, "artist": top_note.get("artist"), "name": top_note.get("name")} if top_note else None,
+        "playsPerWeek": len(dts) / weeks if dts else 0,
+        "topWeekday": weekday.index(max(weekday)) if dts else None,
+        "topHour": hour.index(max(hour)) if dts else None,
+    }
+    by_inst: dict[str, list[dict]] = defaultdict(list)
+    for p, _ in dts:
+        by_inst[p.get("instrument") or "unknown"].append(p)
+
+    def diff_idx(x):
+        return DIFFICULTIES.index(x) if x in DIFFICULTIES else -1
+    instruments = []
+    for k, ps in by_inst.items():
+        as_ = [a for a in (_acc(p) for p in ps) if a is not None]
+        fc_charts: set[tuple] = set()
+        by_diff: dict[str, int] = {}
+        for p in ps:
+            if p.get("fc"):
+                fc_charts.add((song_ident(p), p.get("difficulty")))
+            dk = p.get("difficulty") or "unknown"
+            by_diff[dk] = by_diff.get(dk, 0) + 1
+        fav, fav_n = None, 0
+        for dk, n in by_diff.items():
+            if n > fav_n or (n == fav_n and diff_idx(dk) > (diff_idx(fav) if fav else -1)):
+                fav, fav_n = dk, n
+        instruments.append({"instrument": k, "plays": len(ps), "seconds": sum(float(p.get("duration_s") or 0) for p in ps),
+                            "avgAccuracy": sum(as_) / len(as_) if as_ else None, "fcs": len(fc_charts), "favDifficulty": fav})
+    instruments.sort(key=lambda i: -i["plays"])
+    # Rank: all of the user's own plays, never narrowed by the instrument / difficulty filter and never counting
+    # imported CH Leaderboards scores (the website only sees the plays the app synced).
+    own = [p for p in plays if p.get("source") != LB_SOURCE]
+    rank = rank_info(xp_total(len(own), sum(int(p.get("notes_hit") or 0) for p in own)))
     n_lb = sum(1 for p, _ in dts if p.get("source") == LB_SOURCE)
     return {
-        "totals": {"plays": len(dts), "hours": round(total_s / 3600, 1), "songs": len(by_song),
+        "totals": {"plays": len(dts), "hours": round(total_s / 3600, 1), "seconds": total_s, "songs": len(by_song),
                    "avgAccuracy": round(sum(accs) / len(accs), 4) if accs else None,
                    "fcs": sum(1 for _s, fc in best_of.values() if fc),
                    "fiveStars": sum(1 for st, _fc in best_of.values() if st >= 5),
@@ -592,6 +669,7 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
                    "notesHit": int(sum(p.get("notes_hit") or 0 for p, _ in dts)),
                    "streak": cur, "longestStreak": longest},
         "heatmap": {"start": start.isoformat(), "days": heat},
+        "rank": rank, "extras": extras, "instruments": instruments,
         "weekday": weekday, "hour": hour,
         "mostPlayed": most, "best": best, "needsPractice": needs, "recent": recent, "personalBests": pbs,
         "playSources": {"app": len(dts) - n_lb, "leaderboard": n_lb},
@@ -648,9 +726,14 @@ def account_section(profile: dict | None, username: str = "") -> dict | None:
         return None
     return {"username": (profile or {}).get("username") or username, "accountId": (profile or {}).get("accountId"),
             "createdAt": (profile or {}).get("createdAt"), "submissionCount": (profile or {}).get("submissionCount"),
-            "stats": dict(stats), "ranks": dict((profile or {}).get("ranks") or {}),
+            "fetchedAt": (profile or {}).get("fetchedAt"), "stats": dict(stats), "ranks": dict((profile or {}).get("ranks") or {}),
             "topArtists": list((profile or {}).get("topArtists") or [])[:5],
             "topInstruments": list((profile or {}).get("topInstruments") or [])[:5]}
+
+
+def _int(v) -> int:
+    """A plain int for the snapshot: anything else (a list from a bug, None, a bool) counts as 0."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
 
 
 def career_snapshot(res: dict, profile: dict | None, username: str, app_version: str) -> dict:
@@ -665,11 +748,11 @@ def career_snapshot(res: dict, profile: dict | None, username: str, app_version:
         "v": 1, "app": app_version, "ch_username": (profile or {}).get("username") or username or None,
         "ch_account_id": aid if isinstance(aid, int) and not isinstance(aid, bool) else None,
         "totals": {
-            "plays": t.get("plays", 0), "hours": t.get("hours", 0), "songs": t.get("songs", 0),
+            "plays": _int(t.get("plays")), "hours": t.get("hours", 0), "songs": _int(t.get("songs")),
             "avgAccuracy": t.get("avgAccuracy"), "totalScore": t.get("totalScore", 0), "notesHit": t.get("notesHit", 0),
-            "fcs": t.get("fcs", 0), "pfcs": None,
+            "fcs": _int(t.get("fcs")), "pfcs": None,
             "starCounts": {k: int(sc.get(k, 0)) for k in ("5", "6", "7")},
-            "fiveOrMore": t.get("fiveStars", 0), "streak": t.get("streak", 0), "longestStreak": t.get("longestStreak", 0),
+            "fiveOrMore": _int(t.get("fiveStars")), "streak": _int(t.get("streak")), "longestStreak": _int(t.get("longestStreak")),
         },
         "createdAt": acct.get("createdAt"), "submissionCount": acct.get("submissionCount"),
         "stats": acct.get("stats", {}), "ranks": acct.get("ranks", {}),
