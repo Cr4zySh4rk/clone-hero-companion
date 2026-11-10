@@ -58,8 +58,9 @@ const css = `
 #updGate button{font:inherit;font-weight:700;cursor:pointer;background:#ffb52e;color:#241500;border:1px solid #ffb52e;border-radius:6px;padding:9px 20px}
 #updGate button:disabled{opacity:.5;cursor:default}
 #updGate button:focus-visible,#updGate a:focus-visible{outline:2px solid #f6f1e7;outline-offset:2px}
+#updBanner[hidden],#updGate [hidden]{display:none!important}
 #updBanner{position:fixed;right:12px;bottom:12px;z-index:2147482000;display:flex;align-items:center;gap:8px;max-width:min(360px,calc(100vw - 24px));background:#352460;color:#f6f1e7;border:1px solid rgba(246,241,231,.2);border-radius:8px;padding:6px 8px 6px 12px;font:13px/1.3 Barlow,"Segoe UI",system-ui,sans-serif}
-#updBanner button{font:inherit;cursor:pointer;background:transparent;color:inherit;border:0;padding:2px 6px}#updBanner span{min-width:0}#updBanner .upd-retry{flex:none;white-space:nowrap;border:1px solid rgba(246,241,231,.35);border-radius:6px}#updBanner .upd-retry:disabled{opacity:.6;cursor:default}
+#updBanner button{font:inherit;cursor:pointer;background:transparent;color:inherit;border:0;padding:2px 6px}#updBanner span{min-width:0}#updBanner{flex-wrap:wrap}#updBanner small{order:9;flex-basis:100%;opacity:.75;font-size:11px;overflow-wrap:anywhere}#updBanner .upd-retry{flex:none;white-space:nowrap;border:1px solid rgba(246,241,231,.35);border-radius:6px}#updBanner .upd-retry:disabled{opacity:.6;cursor:default}
 `;
 
 let st = null, timer = null, gate = null, banner = null, dismissed = false;
@@ -73,7 +74,7 @@ function build() {
     <div class="upd-row"><button type="button" class="upd-go"></button><a class="upd-man" target="_blank" rel="noopener noreferrer"></a></div></div>`;
   gate.querySelector(".upd-go").onclick = install;
   banner = document.createElement("div"); banner.id = "updBanner"; banner.hidden = true; banner.setAttribute("role", "status");
-  banner.innerHTML = `<span></span><button type="button" class="upd-retry"></button><button type="button" class="upd-x">×</button>`;
+  banner.innerHTML = `<span></span><small hidden></small><button type="button" class="upd-retry"></button><button type="button" class="upd-x">×</button>`;
   banner.querySelector(".upd-x").onclick = () => { dismissed = true; banner.hidden = true; };
   banner.querySelector(".upd-retry").onclick = retry;
   document.body.append(gate, banner);
@@ -96,6 +97,7 @@ function paint() {
   banner.querySelector("span").textContent = tr("update.offline_banner");
   banner.querySelector(".upd-x").setAttribute("aria-label", tr("common.close"));
   banner.querySelector("span").title = st.error || "";
+  const why = banner.querySelector("small"); why.textContent = st.error || ""; why.hidden = !st.error;
   const rb = banner.querySelector(".upd-retry");
   rb.textContent = st.checking ? tr("update.retrying") : tr("update.retry");
   rb.disabled = !!st.checking;

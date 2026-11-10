@@ -549,3 +549,11 @@ class LinuxInstallTests(InstallBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BannerCssTests(unittest.TestCase):
+    def test_hidden_attribute_beats_the_banner_display_rule(self):
+        # #updBanner{display:flex} overrode [hidden], so "Couldn't check for updates" never went away (2.6.1)
+        js = (Path(__file__).resolve().parent.parent / "chcompanion" / "web" / "update.js").read_text(encoding="utf-8")
+        self.assertIn("#updBanner[hidden]", js)
+        self.assertIn("display:none!important", js)
