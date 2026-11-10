@@ -30,7 +30,16 @@ p{margin:0 0 1em}
 .top nav a:hover{color:var(--text);background:var(--panel)}
 .top nav a.cta{background:var(--text);color:#000}
 .top nav a.cta:hover{background:var(--yellow)}
-@media(max-width:700px){.top nav a:not(.cta){display:none}}
+.mnav{display:none;position:relative}
+.mnav summary{list-style:none;cursor:pointer;width:42px;height:38px;border-radius:8px;display:grid;place-items:center;border:1px solid var(--line,rgba(255,255,255,.15))}
+.mnav summary::-webkit-details-marker{display:none}
+.mnav summary span,.mnav summary span::before,.mnav summary span::after{display:block;width:18px;height:2px;background:var(--text);border-radius:2px;position:relative;content:""}
+.mnav summary span::before{position:absolute;top:-6px}.mnav summary span::after{position:absolute;top:6px}
+.mnav summary:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.mnav nav{align-items:stretch;margin:0;position:absolute;right:0;top:calc(100% + 8px);display:flex;flex-direction:column;min-width:200px;padding:8px;background:var(--panel);border:1px solid var(--line,rgba(255,255,255,.15));border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:50}
+.mnav nav a{text-align:left;color:var(--text);text-decoration:none;padding:11px 14px;border-radius:8px;font-weight:600}
+.mnav nav a:hover,.mnav nav a:focus-visible{background:rgba(255,255,255,.08)}
+@media(max-width:700px){.top nav[aria-label="Main"] a:not(.cta){display:none}.mnav{display:block}.top .wrap{gap:10px}.brand{font-size:1.05rem}}
 
 /* hero */
 .hero{position:relative;padding:clamp(48px,9vw,110px) 0 0;isolation:isolate;overflow:hidden}
