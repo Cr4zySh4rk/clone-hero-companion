@@ -88,7 +88,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _redirect_location(url: str, timeout: float) -> str | None:
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=net.ssl_context()))
+    opener = urllib.request.build_opener(_NoRedirect, *net.handlers())
     try:
         opener.open(urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA}), timeout=timeout).close()
     except urllib.error.HTTPError as e:
