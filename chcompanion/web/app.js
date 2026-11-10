@@ -1493,7 +1493,7 @@ function renderProfile(body, d, cs, fv, opts) {
     <div class="tiles">
       <div class="tile"><b>${nf(T.plays)}</b><span>${esc(tr("profile.tile.plays"))}</span></div><div class="tile"><b>${T.hours}</b><span>${esc(tr("profile.tile.hours"))}</span></div>
       <div class="tile"><b>${nf(T.songs)}</b><span>${esc(tr("profile.tile.songs"))}</span></div><div class="tile"><b>${pct(T.avgAccuracy)}</b><span>${esc(tr("profile.tile.accuracy"))}</span></div>
-      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}${esc(rk("totalFcs"))}</span></div><div class="tile"><b>${nf(T.fiveStars)}</b><span>${esc(tr("profile.tile.stars"))}</span></div>
+      <div class="tile"><b>${nf(T.fcs)}</b><span>${esc(tr("profile.tile.fcs"))}${esc(rk("totalFcs"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[5] || 0)}</b><span>${esc(tr("profile.tile.stars5"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[6] || 0)}</b><span>${esc(tr("profile.tile.stars6"))}</span></div><div class="tile"><b>${nf((T.starCounts || {})[7] || 0)}</b><span>${esc(tr("profile.tile.stars7"))}</span></div>
       <div class="tile"><b>${nf(T.totalScore)}</b><span>${esc(tr("profile.tile.score"))}${esc(rk("totalScore"))}</span></div>
       ${ro ? "" : `<div class="tile"><b>${nf(T.notesHit)}</b><span>${esc(tr("profile.tile.notes"))}</span></div>`}
       <div class="tile"><b>${T.streak}</b><span>${esc(tr("profile.tile.streak"))}</span></div><div class="tile"><b>${T.longestStreak}</b><span>${esc(tr("profile.tile.longest"))}</span></div></div>

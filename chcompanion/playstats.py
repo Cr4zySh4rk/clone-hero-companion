@@ -531,12 +531,19 @@ def compute(plays: list[dict], instrument: str = "", difficulty: str = "", now: 
     charts: dict[tuple, list[dict]] = defaultdict(list)
     for p, _ in dts:
         charts[(song_ident(p), p.get("instrument"), p.get("difficulty"))].append(p)
+    # Distinct charts whose best (highest) stars is exactly 5, 6 (gold) or 7.
+    star_counts = {"5": 0, "6": 0, "7": 0}
+    for ps in charts.values():
+        best_stars = max((p.get("stars") or 0) for p in ps)
+        if str(best_stars) in star_counts:
+            star_counts[str(best_stars)] += 1
     n_lb = sum(1 for p, _ in dts if p.get("source") == LB_SOURCE)
     return {
         "totals": {"plays": len(dts), "hours": round(total_s / 3600, 1), "songs": len(by_song),
                    "avgAccuracy": round(sum(accs) / len(accs), 4) if accs else None,
                    "fcs": sum(1 for ps in charts.values() if any(p.get("fc") for p in ps)),
                    "fiveStars": sum(1 for ps in charts.values() if any((p.get("stars") or 0) >= 5 for p in ps)),
+                   "starCounts": star_counts,
                    "totalScore": int(sum(p.get("score") or 0 for p, _ in dts)),
                    "notesHit": int(sum(p.get("notes_hit") or 0 for p, _ in dts)),
                    "streak": cur, "longestStreak": longest},

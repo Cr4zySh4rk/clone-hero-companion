@@ -144,3 +144,24 @@ class ChartVersionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StarCountsTests(unittest.TestCase):
+    def counts(self, plays, **kw):
+        return playstats.compute(plays, **kw)["totals"]["starCounts"]
+
+    def test_exact_buckets(self):
+        plays = [local("1", name="A", stars=4), local("2", name="B", stars=5), local("3", name="C", stars=6),
+                 local("4", name="D", stars=7), local("5", name="E", stars=7), local("6", name="F", stars=None)]
+        self.assertEqual(self.counts(plays), {"5": 1, "6": 1, "7": 2})
+
+    def test_best_of_several_plays(self):
+        plays = [local("1", stars=5), local("2", stars=7, score=2000), local("3", stars=6, score=1500),
+                 local("4", name="B", stars=6), local("5", name="B", stars=3, score=9000)]
+        self.assertEqual(self.counts(plays), {"5": 0, "6": 1, "7": 1})
+
+    def test_filter_applied(self):
+        plays = [local("1", stars=7), local("2", diff="hard", stars=5), local("3", name="B", diff="hard", stars=6)]
+        self.assertEqual(self.counts(plays), {"5": 1, "6": 1, "7": 1})
+        self.assertEqual(self.counts(plays, difficulty="hard"), {"5": 1, "6": 1, "7": 0})
+        self.assertEqual(self.counts(plays, difficulty="expert"), {"5": 0, "6": 0, "7": 1})
