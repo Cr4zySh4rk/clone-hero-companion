@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .. import cancel as _cancel
 from ..i18n import _
 from ..net import urlopen
 
@@ -212,8 +213,8 @@ def _save(r, dest_dir: Path, fallback: str, progress=None, cancel=None) -> Path:
     done = 0
     with open(path, "wb") as f:
         while True:
-            if cancel and cancel.is_set():
-                raise RuntimeError(_("job.cancelled"))
+            if (cancel and cancel.is_set()) or _cancel.is_set():
+                raise _cancel.Cancelled()      # the caller's temp folder (with this partial file) is removed
             chunk = r.read(1 << 18)
             if not chunk:
                 break

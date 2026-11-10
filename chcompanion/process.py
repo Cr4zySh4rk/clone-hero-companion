@@ -5,7 +5,10 @@ import os
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
+
+from . import cancel as _cancel
 
 # Library enrichment and download workers can all probe/convert at once.
 # Bound short-lived helpers too, not just the expensive video encoders.
@@ -48,14 +51,87 @@ def _options(options: dict) -> dict:
     return options
 
 
+def terminate(proc, grace: float = 3.0) -> None:
+    """Stop a process: terminate, then kill if it is still there after the grace period."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(10)
+        except Exception:
+            pass
+    except OSError:
+        pass
+
+
+@contextmanager
+def kill_on_cancel(proc, cancel=None):
+    """While the block runs, terminate proc (then kill) as soon as the job's cancel Event is set.
+    The caller sees the process end (its pipes close) and checks cancel.check() afterwards."""
+    cancel = cancel or _cancel.current()
+    done = threading.Event()
+    if cancel is not None:
+        def watch():
+            while not done.is_set():
+                if cancel.wait(0.1):
+                    if not done.is_set():
+                        terminate(proc)
+                    return
+        threading.Thread(target=watch, daemon=True, name="proc-cancel").start()
+    try:
+        yield
+    finally:
+        done.set()
+
+
+def _run_cancellable(args, options):
+    timeout = options.pop("timeout", None)
+    check = options.pop("check", False)
+    data = options.pop("input", None)
+    if options.pop("capture_output", False):
+        options["stdout"] = options["stderr"] = subprocess.PIPE
+    if data is not None:
+        options["stdin"] = subprocess.PIPE
+    proc = subprocess.Popen(args, **options)
+    try:
+        with kill_on_cancel(proc):
+            try:
+                out, err = proc.communicate(data, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise
+            except BaseException:
+                proc.kill()
+                raise
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    _cancel.check()
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, args, out, err)
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+
+
 def run(args, **options):
     exe = str(args[0])
-    with _SLOTS:
+    _cancel.check()
+    _cancel.acquire(_SLOTS)
+    try:
         with _FAILURE_LOCK:
             failure = _FAILED_STARTS.get(exe)
         if failure:
             raise ToolStartError(failure)
-        result = subprocess.run(args, **_options(options))
+        if _cancel.current() is not None:
+            result = _run_cancellable(args, _options(options))
+        else:
+            result = subprocess.run(args, **_options(options))
+    finally:
+        _SLOTS.release()
     # Windows may return the status either signed or unsigned. Keep normal
     # ffmpeg probe failures (exit 1) for callers that parse stderr.
     status = result.returncode & 0xFFFFFFFF

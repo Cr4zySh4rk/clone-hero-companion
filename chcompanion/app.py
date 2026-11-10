@@ -714,6 +714,8 @@ class Companion:
         its video step again for when the cool-down ends (a later Run also picks it up)."""
         self.store.update_song(song.key, video_pending=True)
         n = int(job.options.get("resumes", 0))
+        if job.cancel.is_set():
+            return _("job.cancelled")
         label = youtube.SIGNAL_LABELS.get(signal, signal)
         if n < self.MAX_VIDEO_RESUMES:
             nj = self.queue_song(song, "media", PRIO_LIBRARY, lyrics=False, resumes=n + 1)
@@ -785,7 +787,7 @@ class Companion:
         if want_c:      # star exactly the chart that was favourited (the charter), not other charts in a pack
             fav_targets = [x for x in new if norm_key(self.libmgr.charter_of(x)) == want_c] or fav_targets
         for x in new:
-            progress(_("job.saving_chart"))
+            progress(_("job.saving_chart"))      # raises when the job was cancelled: nothing more is queued
             if item.get("source") == "encore":      # remember where it came from, to reinstall it elsewhere
                 self.store.update_song(x.key, src_encore_md5=item.get("md5"), src_url=item.get("downloadUrl"))
             elif item.get("source") == "rhythmverse":
@@ -798,7 +800,7 @@ class Companion:
                     self.cloudsync.state.setdefault("aliases", {})[job.options["fav_key"]] = \
                         self.libmgr.chart_key(x, compute=True)
             self.libmgr.refresh_song(x)
-            if job.options.get("process", s["auto_process_downloads"]):
+            if job.options.get("process", s["auto_process_downloads"]) and not job.cancel.is_set():
                 progress(_("job.queuing_processing"))
                 self.queue_song(x, "full", PRIO_BATCH)
         return _("job.installed", count=len(paths))

@@ -25,6 +25,7 @@ import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import cancel as _cancel
 from .i18n import _, join
 from .library import Song, norm_key
 from .lyrics import clean_title
@@ -186,15 +187,14 @@ class RateGate:
         self.last = 0.0
         self.paused_until = 0.0
         self.strikes = 0
-        self.cancel = threading.Event()
+        self.cancel = threading.Event()       # shutting the app down; a job's own cancel arrives via cancel.current()
         self.requests: list[float] = []       # start times of lookups in the last hour
         self.last_limit: dict | None = None   # the latest genuine limit: signal, message, video id, counts
         self.path: Path | None = None
 
     # ------------------------------------------------------------ activity
     def _sleep(self, secs: float):
-        if self.cancel.wait(secs):
-            raise RuntimeError(_("job.cancelled"))
+        _cancel.sleep(secs, self.cancel)
 
     def _count(self, now: float, secs: float) -> int:
         return sum(1 for t in self.requests if now - t < secs)
@@ -267,7 +267,8 @@ class RateGate:
     @contextmanager
     def slot(self, video_id: str | None = None):
         self._wait_unpaused()
-        with self.sem:
+        _cancel.acquire(self.sem)
+        try:
             self._begin(video_id)
             try:
                 yield
@@ -279,11 +280,13 @@ class RateGate:
                 raise
             finally:
                 self.last = time.time()
+        finally:
+            self.sem.release()
 
     def acquire(self, video_id: str | None = None):
         """Manual form of slot() for calls that release it part-way (lookup, then download)."""
         self._wait_unpaused()
-        self.sem.acquire()
+        _cancel.acquire(self.sem)
         try:
             self._begin(video_id)
         except BaseException:
@@ -356,7 +359,8 @@ DOWNLOADS = threading.BoundedSemaphore(2)   # parallel media downloads (streams 
 
 @contextmanager
 def download_slot(video_id: str | None = None):
-    with DOWNLOADS:
+    _cancel.acquire(DOWNLOADS)
+    try:
         try:
             yield
         except Exception as e:
@@ -364,6 +368,8 @@ def download_slot(video_id: str | None = None):
                 GATE.throttled(e, video_id)
                 raise BotDetected(str(e), video_id) from e
             raise
+    finally:
+        DOWNLOADS.release()
 
 
 # ------------------------------------------------------------------ sign-in cookies
@@ -431,6 +437,11 @@ def _note_cookie_failure(e: Exception) -> None:
 
 def cookie_opts_mode() -> str:
     return _COOKIES["mode"]
+
+
+def _cancel_hook(d) -> None:
+    """yt-dlp progress hook: a cancelled job stops the download at the next chunk."""
+    _cancel.check()
 
 
 def make_ydl(opts: dict):
@@ -865,7 +876,7 @@ class YouTube:
                 with self._lock:           # don't keep the cut-down answer cached
                     self._infos.pop(video_id, None)
             raise self._no_hd(info.get("formats") or [])
-        hooks = []
+        hooks = [_cancel_hook]
         if progress:
             def hook(d):
                 if d.get("status") == "downloading":
@@ -917,7 +928,7 @@ class YouTube:
             if state["gate"]:                 # the lookup is done: let the next one start
                 GATE.release()
                 state["gate"] = False
-                DOWNLOADS.acquire()
+                _cancel.acquire(DOWNLOADS)
                 state["dl"] = True
             state["n"] = len(fm)
             v = pick_format(fm, pref, max_p=maxp)
@@ -935,7 +946,7 @@ class YouTube:
                 if a:
                     yield a
 
-        hooks = []
+        hooks = [_cancel_hook]
         if progress:
             def hook(d):
                 if d.get("status") == "downloading" and (d.get("info_dict") or {}).get("vcodec") not in (None, "none"):
@@ -996,7 +1007,8 @@ class YouTube:
         last = None
         for fmt in ("bestaudio[ext=m4a]/bestaudio", "bestaudio[acodec=opus]/bestaudio", "worstaudio"):
             try:
-                opts = _ydl_opts(format=fmt, outtmpl=dest_noext + ".%(ext)s", overwrites=True)
+                opts = _ydl_opts(format=fmt, outtmpl=dest_noext + ".%(ext)s", overwrites=True,
+                                 progress_hooks=[_cancel_hook])
                 with GATE.slot(video_id), download_slot(video_id), make_ydl(opts) as ydl:
                     info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
                     return ydl.prepare_filename(info)

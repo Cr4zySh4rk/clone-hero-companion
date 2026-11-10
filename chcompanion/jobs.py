@@ -26,8 +26,12 @@ log = logging.getLogger(__name__)
 PRIO_HOVER, PRIO_USER, PRIO_PLAYED, PRIO_BATCH, PRIO_LIBRARY = 0, 1, 2, 3, 5
 
 
-class Cancelled(Exception):
-    pass
+from .cancel import Cancelled, bind as _bind_cancel  # noqa: E402,F401  (Cancelled is re-exported here)
+
+
+def _is_cancel_error(e: BaseException) -> bool:
+    """Older code raised RuntimeError(_("job.cancelled")); it is a cancel, not a failure."""
+    return getattr(msg_of(e), "key", "") == "job.cancelled"
 
 
 @dataclass
@@ -118,12 +122,18 @@ class JobManager:
                 list(self.jobs.values()) if job_id is None else [])
             if kind:
                 targets = [j for j in targets if j.kind == kind]
+            queued = []
             for j in targets:
                 if j.status in ("queued", "waiting", "running"):
                     j.cancel.set()
-                    if j.status != "running":
-                        j.status, j.finished = "cancelled", time.time()
+                    if j.status != "running":      # never started: finished right now
+                        j.status, j.step, j.finished = "cancelled", "", time.time()
+                        queued.append(j)
+                    else:                          # shown cancelled at once; the worker stops the work
+                        j.status, j.step = "cancelled", ""
             self.lock.notify_all()
+        for j in queued:
+            self.on_change(j)
 
     def retry_failed(self):
         with self.lock:
@@ -200,18 +210,26 @@ class JobManager:
             def progress(msg, job=job):
                 if job.cancel.is_set():
                     raise Cancelled()
+                if job.status == "cancelled":
+                    return
                 job.step = msg
                 if getattr(msg, "key", "") not in ("job.wait_cooldown", "yt.pacing"):
                     job.work_step = msg
                 self.on_change(job)
             try:
-                job.result = self.runner(job, progress) or _("job.done")
-                job.status = "done"
+                if job.cancel.is_set():
+                    raise Cancelled()
+                with _bind_cancel(job.cancel):
+                    job.result = self.runner(job, progress) or _("job.done")
+                job.status = "cancelled" if job.cancel.is_set() else "done"
                 job.step = ""
             except Cancelled:
                 job.status, job.step = "cancelled", ""
             except Exception as e:
-                if type(e).__name__ == "BotDetected":
+                detail = None
+                if job.cancel.is_set() or _is_cancel_error(e):
+                    job.status, job.step = "cancelled", ""
+                elif type(e).__name__ == "BotDetected":
                     # YouTube really is limiting us (429 / "not a bot"): the gate pauses everyone. Wait
                     # out the cool-down and retry; fail only once every cool-down has been used.
                     from . import youtube
@@ -234,7 +252,6 @@ class JobManager:
                     job.status = "failed"
                     job.error = _("job.error_in_step", step=job.work_step or _("job.searching_youtube"), detail=why)
                     job.not_before = 0.0
-                    detail = None
                 else:
                     detail = msg_of(e)
                 # Keep the operation and traceback: Windows' missing-executable
@@ -246,7 +263,7 @@ class JobManager:
                     job.error = _("job.error_in_step", step=job.step, detail=detail) if job.step else detail
             finally:
                 if job.status != "waiting":
-                    job.finished = time.time()
+                    job.finished = job.finished if job.status == "cancelled" and job.finished else time.time()
             with self.lock:
                 if job.status != "waiting":
                     self.active -= 1

@@ -5,6 +5,8 @@ from __future__ import annotations
 import ssl
 import urllib.request
 
+from . import cancel
+
 _ctx: ssl.SSLContext | None = None
 
 
@@ -20,4 +22,5 @@ def ssl_context() -> ssl.SSLContext:
 
 
 def urlopen(req, timeout: float = 15.0):
+    cancel.check()          # a cancelled job starts no further request
     return urllib.request.urlopen(req, timeout=timeout, context=ssl_context())

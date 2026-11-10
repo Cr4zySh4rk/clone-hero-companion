@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import shutil
+from . import cancel as _cancel
 from .process import run as run_process
 import subprocess
 import tempfile
@@ -177,35 +178,34 @@ def _encode(ff: str, src: Path, dst: Path, args: list[str], progress=None, total
             pre: list[str] = ()) -> None:
     """Run ffmpeg, reporting the percentage from its -progress output (needs `total` seconds).
     pre: input options (hardware decoding) that go before -i."""
-    from .process import popen
+    from .process import popen, terminate, kill_on_cancel
     cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", *pre, "-i", str(src), *args,
            "-progress", "pipe:1", str(dst)]
-    if not _ENCODES.acquire(blocking=False):
+    _cancel.check()
+    if not _cancel.acquire(_ENCODES, blocking=False):
         if progress:
             progress(_("ingame.waiting_encoder"))
-        _ENCODES.acquire()
+        _cancel.acquire(_ENCODES)
     proc = None
     try:
         proc = popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
         last, errs = -1, []
-        for line in proc.stdout:
-            key, sep, val = line.strip().partition("=")
-            if sep and key in _PROGRESS_KEYS:
-                if key == "out_time_us" and total and progress and val.isdigit():
-                    pct = min(99, int(int(val) / 1e6 / total * 100))
-                    if pct != last:
-                        last = pct
-                        progress(_("ingame.encoding_pct", pct=pct))
-            elif line.strip():
-                errs.append(line.strip())
-        rc = proc.wait()
+        with kill_on_cancel(proc):          # a cancel stops ffmpeg within a fraction of a second
+            for line in proc.stdout:
+                key, sep, val = line.strip().partition("=")
+                if sep and key in _PROGRESS_KEYS:
+                    if key == "out_time_us" and total and progress and val.isdigit():
+                        pct = min(99, int(int(val) / 1e6 / total * 100))
+                        if pct != last:
+                            last = pct
+                            progress(_("ingame.encoding_pct", pct=pct))
+                elif line.strip():
+                    errs.append(line.strip())
+            rc = proc.wait()
+        _cancel.check()
     except BaseException:
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(10)
-            except Exception:
-                proc.kill()
+        if proc is not None:
+            terminate(proc, 3.0)
         dst.unlink(missing_ok=True)
         raise
     finally:
@@ -460,6 +460,18 @@ def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
 
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False,
                    defer: bool = False, convert: bool = True) -> Path:
+    """See _download_video. A cancel removes the work folder (partial downloads, half-written WebM)."""
+    made: list[Path] = []
+    try:
+        return _download_video(song, yt, store, progress, force, defer, convert, made)
+    except _cancel.Cancelled:
+        for d in made:
+            shutil.rmtree(d, ignore_errors=True)
+        raise
+
+
+def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool, defer: bool,
+                    convert: bool, made: list) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and as VP8 WebM (plays in
     Clone Hero on every OS). A video that is already VP8 is used as it is; a lead-in of black for a negative
     offset is folded into the one encode (see padded_seconds). Raises InGameError if there is none.
@@ -496,6 +508,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
             _remember_failure(store, song, bkey, _("ingame.reason_nomatch"))
             raise InGameError(_("ingame.no_match"))
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
+    made.append(tmpdir)
 
     def prog(done, total):
         if progress and total:
@@ -808,6 +821,7 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
         if vpath and padded_seconds(vpath):     # the black lead-in is already in the file (one encode)
             write_v = 0.0
         off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
+        _cancel.check()
         try:
             if song.is_sng:
                 _apply_sng(song, vpath, lines, off_l, write_v, result)
@@ -854,6 +868,7 @@ def convert_song_video(song: Song, store: Store, progress=None) -> str | None:
             encode_vp8(a, out, progress=progress)
             if not out.exists() or out.stat().st_size == 0:
                 raise InGameError(_("ingame.ffmpeg_failed", detail="empty output"))
+            _cancel.check()
             result: dict = {"video": None, "lyrics": None}
             if song.is_sng:
                 _apply_sng(song, out, [], 0.0, song.video_start_s, result)

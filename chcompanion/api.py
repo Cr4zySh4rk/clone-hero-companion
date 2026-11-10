@@ -134,6 +134,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             n += 1
         return _json(h, {"queued": n, **extra}) or True
     if path == "/api/jobs/cancel" and method == "POST":
+        if "id" in body and not body["id"]:     # a per-job cancel without an id must never mean "all"
+            return _json(h, {"ok": False}) or True
         c.jobs.cancel(body.get("id"), body.get("kind"))
         return _json(h, {"ok": True}) or True
     if path == "/api/jobs/retry" and method == "POST":
