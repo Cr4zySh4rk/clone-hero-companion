@@ -36,7 +36,9 @@ API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 PAGE_URL = f"https://github.com/{REPO}/releases/latest"
 DOWNLOAD_PREFIX = f"https://github.com/{REPO}/releases/download/"
 CHECK_EVERY_S = 6 * 3600
-CHECK_TIMEOUT_S = 6.0
+CHECK_TIMEOUT_S = 15.0
+RETRY_AFTER_S = (20, 60, 180, 600, 1800)   # after a failed check: retry soon, then back off (then every 30 min)
+LAST_ERROR = ""                             # why the last check failed, for the banner tooltip and doctor
 SKIP_ENV = "CHC_SKIP_UPDATE_CHECK"
 UA = f"CloneHeroCompanion/{__version__} (+https://github.com/{REPO})"
 
@@ -121,6 +123,10 @@ def _normalize(data: dict) -> dict | None:
             "url": str(data.get("html_url") or PAGE_URL), "assets": assets, "source": "api"}
 
 
+def _short(e: BaseException) -> str:
+    return (str(getattr(e, "reason", "") or e) or type(e).__name__)[:160]
+
+
 def fetch_latest(timeout: float = CHECK_TIMEOUT_S) -> tuple[str, dict | None]:
     """('ok', release|None) or ('offline', None). Tries the API, then the github.com redirect. A None release means
     the repo has no usable (non-draft, non-prerelease) release."""
@@ -128,10 +134,13 @@ def fetch_latest(timeout: float = CHECK_TIMEOUT_S) -> tuple[str, dict | None]:
         return "ok", _normalize(_api_release(timeout) or {})
     except Exception as e:                                     # rate limit (403/429), 5xx, DNS, TLS, bad JSON...
         log.info("Update check via the API failed (%s); trying the release page", e)
+        api_err = e
     try:
         loc = _redirect_location(PAGE_URL, timeout)
     except Exception as e:
         log.info("Update check via the release page failed (%s)", e)
+        global LAST_ERROR
+        LAST_ERROR = f"{_short(api_err)} / {_short(e)}"
         return "offline", None
     m = re.search(r"/releases/tag/([^/?#]+)", loc or "")
     if not m:
@@ -272,6 +281,7 @@ class Updater:
             return {"status": status, "required": self.required, "current": self.current,
                     "latest": rel["version"] if rel else None, "notes": rel["notes"] if rel else "",
                     "url": rel["url"] if rel else PAGE_URL, "checkedAt": self.checked_at, "checking": self.checking,
+                    "error": LAST_ERROR if status == "offline" else "",
                     "install": dict(self.install)}
 
     def gate_payload(self) -> dict:
@@ -315,9 +325,11 @@ class Updater:
             return
 
         def loop():
+            fails = 0
             while not self._stop.is_set():
-                self.check()
-                self._stop.wait(CHECK_EVERY_S)
+                ok = self.check().get("status") != "offline"
+                fails = 0 if ok else fails + 1
+                self._stop.wait(CHECK_EVERY_S if ok else RETRY_AFTER_S[min(fails, len(RETRY_AFTER_S)) - 1])
         threading.Thread(target=loop, daemon=True, name="update-check").start()
 
     def stop(self) -> None:

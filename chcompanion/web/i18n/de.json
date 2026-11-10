@@ -819,6 +819,8 @@
  "update.manual": "Manuell herunterladen",
  "update.now": "Jetzt aktualisieren",
  "update.offline_banner": "Updates konnten nicht geprüft werden",
+ "update.retry": "Erneut versuchen",
+ "update.retrying": "Wird geprüft…",
  "update.p.downloading": "Update wird heruntergeladen…",
  "update.p.installing": "Update wird installiert…",
  "update.p.installing_msi": "Installer wird gestartet. Die App wird geschlossen, damit sie ersetzt werden kann.",

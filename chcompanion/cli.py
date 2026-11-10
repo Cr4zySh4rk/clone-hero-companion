@@ -151,7 +151,7 @@ def update_check_line() -> str:
     return {"skipped": f"Update check: skipped ({updater.SKIP_ENV}=1)",
             "available": f"Update check: update available {r['latest']} (running {__version__})",
             "current": f"Update check: up to date ({__version__})",
-            "offline": "Update check: offline"}[r["state"]]
+            "offline": f"Update check: offline ({updater.LAST_ERROR or 'no response'})"}[r["state"]]
 
 
 def cmd_doctor(args) -> int:

@@ -783,6 +783,8 @@
  "update.manual": "手動でダウンロード",
  "update.now": "今すぐアップデート",
  "update.offline_banner": "アップデートを確認できませんでした",
+ "update.retry": "再試行",
+ "update.retrying": "確認中…",
  "update.p.downloading": "アップデートをダウンロードしています…",
  "update.p.installing": "アップデートをインストールしています…",
  "update.p.installing_msi": "インストーラーを起動しています。置き換えのためアプリを終了します。",

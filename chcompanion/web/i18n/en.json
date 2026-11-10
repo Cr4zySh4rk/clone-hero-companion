@@ -805,6 +805,8 @@
  "update.manual": "Download manually",
  "update.now": "Update now",
  "update.offline_banner": "Couldn't check for updates",
+ "update.retry": "Retry",
+ "update.retrying": "Checking…",
  "update.p.downloading": "Downloading the update…",
  "update.p.installing": "Installing the update…",
  "update.p.installing_msi": "Starting the installer. The app will close so it can be replaced.",

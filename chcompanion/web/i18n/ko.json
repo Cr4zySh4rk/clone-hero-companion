@@ -783,6 +783,8 @@
  "update.manual": "직접 다운로드",
  "update.now": "지금 업데이트",
  "update.offline_banner": "업데이트를 확인하지 못했습니다",
+ "update.retry": "다시 시도",
+ "update.retrying": "확인 중…",
  "update.p.downloading": "업데이트를 다운로드하는 중…",
  "update.p.installing": "업데이트를 설치하는 중…",
  "update.p.installing_msi": "설치 프로그램을 시작합니다. 앱을 교체할 수 있도록 앱이 종료됩니다.",

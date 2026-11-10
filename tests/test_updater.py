@@ -110,6 +110,26 @@ class FetchFallbackTests(unittest.TestCase):
         with mock.patch.object(updater.net, "urlopen", fake_net(api=urllib.error.URLError("no network"))), \
                 mock.patch.object(updater, "_redirect_location", side_effect=urllib.error.URLError("no network")):
             self.assertEqual(updater.fetch_latest(), ("offline", None))
+        self.assertIn("no network", updater.LAST_ERROR)
+
+    def test_failed_check_retries_soon_not_in_six_hours(self):
+        u = Updater(current="2.5.0")
+        waits = []
+        stop = u._stop
+        real_set = stop.set
+        def fake_wait(t):
+            waits.append(t)
+            if len(waits) >= 3:
+                real_set()
+            return stop.is_set()
+        results = iter([("offline", None), ("offline", None), ("ok", None)])
+        with mock.patch.object(updater, "fetch_latest", side_effect=lambda *a, **k: next(results)), \
+                mock.patch.object(updater, "disabled", return_value=False), \
+                mock.patch.object(u._stop, "wait", side_effect=fake_wait), \
+                mock.patch.object(updater.threading, "Thread", side_effect=lambda target, **k: mock.Mock(start=target)):
+            u.start()
+        self.assertEqual(waits, [updater.RETRY_AFTER_S[0], updater.RETRY_AFTER_S[1], updater.CHECK_EVERY_S])
+        self.assertEqual(u.public()["status"], "current")
 
     def test_redirect_location_reads_the_location_header(self):
         err = urllib.error.HTTPError(updater.PAGE_URL, 302, "Found", {"Location": "https://github.com/a/b/releases/tag/v9.9.9"}, None)

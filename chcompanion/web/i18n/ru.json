@@ -891,6 +891,8 @@
  "update.manual": "Скачать вручную",
  "update.now": "Обновить сейчас",
  "update.offline_banner": "Не удалось проверить обновления",
+ "update.retry": "Повторить",
+ "update.retrying": "Проверка…",
  "update.p.downloading": "Загрузка обновления…",
  "update.p.installing": "Установка обновления…",
  "update.p.installing_msi": "Запуск установщика. Приложение закроется, чтобы его можно было заменить.",

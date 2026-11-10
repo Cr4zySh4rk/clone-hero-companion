@@ -819,6 +819,8 @@
  "update.manual": "Baixar manualmente",
  "update.now": "Atualizar agora",
  "update.offline_banner": "Não foi possível verificar atualizações",
+ "update.retry": "Tentar novamente",
+ "update.retrying": "Verificando…",
  "update.p.downloading": "Baixando a atualização…",
  "update.p.installing": "Instalando a atualização…",
  "update.p.installing_msi": "Iniciando o instalador. O app será fechado para poder ser substituído.",
