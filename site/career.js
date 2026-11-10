@@ -8,7 +8,7 @@
  *   XP            = floor(notes hit / 20) + 50 * plays
  *   XP to reach rank R = round(500 * (R - 1) ^ 1.7)     (rank 1 starts at 0 XP)
  * The exponent makes each rank cost more than the last, like GTA Online: rank 2 needs 500 XP, rank 10 about
- * 21,000, rank 50 about 390,000, rank 100 about 1.2 million.
+ * 21,000, rank 50 about 374,000, rank 100 about 1.2 million.
  */
 (function (root) {
   'use strict';
@@ -406,7 +406,7 @@
           (t[0] === 'overview' ? lbCard(profile, s) + t[2](s) : t[2](s)) + '</div>';
       }).join('');
     }
-    body += '<details class="cr-how"><summary>How rank works</summary><p>XP = notes hit &divide; 20 + 50 for every play. Reaching rank <i>R</i> takes 500 &times; (<i>R</i>&minus;1)<sup>1.7</sup> XP, so every rank costs more than the one before: rank 2 is 500 XP, rank 10 about 21,000, rank 50 about 390,000. It is just for fun and is not a CH Leaderboards rank.</p></details>';
+    body += '<details class="cr-how"><summary>How rank works</summary><p>XP = notes hit &divide; 20 + 50 for every play. Reaching rank <i>R</i> takes 500 &times; (<i>R</i>&minus;1)<sup>1.7</sup> XP, so every rank costs more than the one before: rank 2 is 500 XP, rank 10 about 21,000, rank 50 about 374,000. It is just for fun and is not a CH Leaderboards rank.</p></details>';
     el.innerHTML = head + body;
     var img = el.querySelector('.cr-avatar img');
     if (img) img.addEventListener('error', function () { img.remove(); });
