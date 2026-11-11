@@ -123,7 +123,12 @@ jobs:
       - name: Make .dmg
         run: |
           mkdir -p dmg && cp -R "dist/Clone Hero Companion.app" dmg/ && ln -s /Applications dmg/Applications
-          hdiutil create -volname "Clone Hero Companion" -srcfolder dmg -ov -format UDZO "$ASSET"
+          # hdiutil sometimes fails with "Resource busy" on GitHub's macOS runners (2.8.0): retry a few times
+          for i in 1 2 3 4 5; do
+            hdiutil create -volname "Clone Hero Companion" -srcfolder dmg -ov -format UDZO "$ASSET" && break
+            [ "$i" = 5 ] && exit 1
+            echo "hdiutil failed (attempt $i), retrying"; sleep $((i * 10))
+          done
           ls -la "$ASSET"
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
