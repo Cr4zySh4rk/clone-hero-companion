@@ -347,7 +347,9 @@ class Updater:
             if self._installing:
                 return True
             self._installing = True
-            self.install = self._idle()
+            # report progress at once: the reply to the click must already show the download starting,
+            # otherwise the screen looks unchanged for seconds and people click again (2.7.0)
+            self.install = dict(self._idle(), phase="downloading", message=_("update.p.downloading"))
         threading.Thread(target=self._run_install, daemon=True, name="update-install").start()
         return True
 

@@ -352,6 +352,17 @@ class WindowsInstallTests(InstallBase):
         self.assertTrue(kw["creationflags"] & 0x8 and kw["creationflags"] & 0x200)     # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
         self.assertEqual(self.u.install["phase"], "done")
 
+    def test_first_click_already_reports_the_download_starting(self):
+        # 2.7.0 replied "idle" and the screen didn't change for 5 s, so people clicked Update now twice
+        a = asset("CloneHeroCompanion-windows-x64.msi", b"MSI" * 1000)
+        self.release([a], {a["browser_download_url"]: b"MSI" * 1000})
+        started = threading.Event()
+        with mock.patch.object(updater.Updater, "_run_install", lambda self: started.wait(1)), \
+                mock.patch.object(updater.sys, "platform", "win32"):
+            self.assertTrue(self.u.start_install())
+            self.assertEqual(self.u.public()["install"]["phase"], "downloading")
+            started.set()
+
     def test_truncated_download_is_rejected_and_nothing_is_launched(self):
         a = asset("CloneHeroCompanion-windows-x64.msi", b"MSI" * 1000)
         self.release([a], {a["browser_download_url"]: b"MSI" * 10})

@@ -123,7 +123,9 @@ function paint() {
 }
 
 async function install() {
-  try { st = await (await fetch("/api/update/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json(); } catch (e) { return; }
+  const go = gate && gate.querySelector(".upd-go");
+  if (go) go.disabled = true;                       // one click is enough; it re-enables only if the start failed
+  try { st = await (await fetch("/api/update/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json(); } catch (e) { if (go) go.disabled = false; return; }
   paint(); schedule();
 }
 
