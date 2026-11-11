@@ -189,7 +189,7 @@ def cmd_doctor(args) -> int:
     say(update_check_line())
     from . import telemetry
     st = Store(config_dir() / "config.json").get("settings", {}) or {}
-    say("Telemetry   : " + ("off (CHC_NO_TELEMETRY)" if telemetry.env_disabled() else "on" if st.get("telemetry", True) else "off"))
+    say("Telemetry   : " + ("off (CHC_NO_TELEMETRY)" if telemetry.env_disabled() else "on"))
     from . import gui
     say(f"Window      : {gui.describe_backend()}")
     from .align import ffmpeg_path

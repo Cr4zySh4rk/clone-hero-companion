@@ -18,9 +18,14 @@ async function api(path, body, method) {
   let data = null;
   try { data = await r.json(); } catch (e) { /* empty */ }
   if (r.status === 426 && window.CHCUpdate) window.CHCUpdate.refresh();      // an update is required: show the update screen
+  if (r.status === 451 && window.CHCTerms) {                                  // the Terms are not accepted yet: the acceptance screen is up
+    window.CHCTerms.refresh();
+    throw Object.assign(new Error((data && data.message) || "terms_not_accepted"), { terms: true });
+  }
   if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
   return data;
 }
+window.addEventListener("unhandledrejection", (e) => { if (e.reason && e.reason.terms) e.preventDefault(); });
 function toast(msg, ms = 2600, onclick = null) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("on");
   t.onclick = onclick; t.style.cursor = onclick ? "pointer" : ""; t.style.pointerEvents = onclick ? "auto" : "";
@@ -848,7 +853,7 @@ async function loadSettings() {
       ${chk("game_lyrics", tr("settings.game_lyrics"), tr("settings.game_lyrics_help"))}
     </section>
     <section><h3>${esc(tr("settings.privacy"))}</h3>
-      <div class="row2"><span>${esc(tr("settings.telemetry"))}</span><label class="inline"><input type="checkbox" id="teleSw" ${s.telemetry ? "checked" : ""}> <span>${esc(tr("settings.telemetry_help"))}</span></label>
+      <div class="row2"><span>${esc(tr("telemetry.title"))}</span><span>${esc(tr("telemetry.body"))}</span>
         <small><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/PRIVACY.md" target="_blank" rel="noopener">${esc(tr("telemetry.details"))}</a></small></div>
     </section>
     <section><h3>${esc(tr("settings.youtube"))}</h3>
@@ -880,7 +885,6 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
   bindLangSelects();
-  $("#teleSw").onchange = (e) => api("/api/telemetry", { enabled: e.target.checked }).then(() => toast(tr("settings.saved"))).catch((err) => toast(err.message));
   bindShare($("#settingsForm")); paintShare();
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
@@ -1793,22 +1797,6 @@ function bindLangSelects() {
     };
   });
 }
-/* One-time, non-blocking notice about the anonymous statistics (nothing is sent until it has been shown). */
-async function teleNotice() {
-  try {
-    const t = await api("/api/telemetry");
-    if (t.noticeSeen || t.envOff) return;
-    const box = document.createElement("div");
-    box.id = "teleNotice"; box.setAttribute("role", "region"); box.setAttribute("aria-label", tr("telemetry.title"));
-    box.style.cssText = "position:fixed;right:16px;bottom:16px;max-width:min(420px,calc(100vw - 32px));z-index:60;padding:14px 16px;border-radius:12px;background:var(--panel,#1d2230);color:var(--text,#eee);border:1px solid var(--line,#3a4256);box-shadow:0 8px 30px rgba(0,0,0,.4);font-size:13px;line-height:1.45";
-    box.innerHTML = `<b>${esc(tr("telemetry.title"))}</b><p style="margin:6px 0 10px">${esc(tr("telemetry.body"))} <a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/PRIVACY.md" target="_blank" rel="noopener">${esc(tr("telemetry.details"))}</a></p>
-      <span class="btnrow"><button class="primary" data-t="off">${esc(tr("telemetry.turn_off"))}</button> <button data-t="ok">${esc(tr("telemetry.ok"))}</button></span>`;
-    document.body.appendChild(box);
-    const done = async (body) => { try { await api("/api/telemetry", body); } catch (e) { /* ignore */ } box.remove(); };
-    box.querySelector("[data-t=off]").onclick = () => done({ enabled: false, seen: true });
-    box.querySelector("[data-t=ok]").onclick = () => done({ seen: true });
-  } catch (e) { /* ignore */ }
-}
 function refreshView() {
   switch (currentView) {
     case "settings": loadSettings(); break;
@@ -1843,7 +1831,6 @@ I18N.onChange(() => {
   $("#runBtn").textContent = tr("lib.run"); $("#plToggle").textContent = tr("player.pause");
   loadLibrary().then(() => { pollLibrary(); pollJobs(); });
   loadCloud(); pollFriends(); setInterval(pollFriends, 30000);
-  teleNotice();
   // First run (or the data folder vanished): open the setup screen.
   api("/api/setup").then((d) => {
     const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found

@@ -1,10 +1,10 @@
-"""Anonymous usage statistics (opt-out; see PRIVACY.md).
+"""Anonymous usage statistics (always on in the app, no user opt-out; see PRIVACY.md).
 
 What is sent: event names from SCHEMA below, with enum / bucket / count properties only, plus the app version, the
 operating system family, the app language, a random install id and a random per-run session id. Nothing about songs,
 names, e-mail addresses, file paths or search text, and no IP address is stored on the server.
 
-Nothing is sent when the setting is off, before the first-run notice has been shown, or when CHC_NO_TELEMETRY=1.
+Nothing is sent before the Terms of Use have been accepted (terms.py), or when CHC_NO_TELEMETRY=1 (developer / CI switch).
 `event()` never raises."""
 from __future__ import annotations
 
@@ -122,6 +122,7 @@ class Telemetry:
         self.lock = threading.Lock()
         self.queue: list[dict] = []
         self.active = False
+        self.allowed: Callable[[], bool] = lambda: True      # the Companion sets this to "Terms accepted"
         self.on_start: Callable[[], dict] | None = None     # extra app_start props (set by the Companion)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -169,22 +170,13 @@ class Telemetry:
             pass
 
     # ---- state
-    def apply(self, enabled: bool, seen: bool) -> None:
-        """Called with the settings at start-up and whenever they change."""
+    def apply(self) -> None:
+        """Start collecting (called once at start-up). Does nothing when CHC_NO_TELEMETRY=1."""
         try:
             if os.environ.get("CHC_NO_TELEMETRY") == "1":
                 self.active = False
                 return
-            if not enabled:
-                self.active = False
-                with self.lock:
-                    self.queue.clear()
-                try:
-                    self._path("telemetry_queue.json").unlink(missing_ok=True)
-                except Exception:
-                    pass
-                return
-            if not seen or self.active:
+            if self.active or not self.allowed():
                 return
             self.active = True
             self._load_overflow()
@@ -281,9 +273,9 @@ def event(name: str, /, **props) -> None:
         pass
 
 
-def apply(enabled: bool, seen: bool) -> None:
+def apply() -> None:
     try:
-        get().apply(enabled, seen)
+        get().apply()
     except Exception:
         pass
 

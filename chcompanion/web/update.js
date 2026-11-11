@@ -81,7 +81,7 @@ function build() {
 }
 
 function setBlocked(on) {
-  [...document.body.children].forEach((n) => { if (n !== gate && n !== banner) { if (on) n.setAttribute("inert", ""); else n.removeAttribute("inert"); } });
+  [...document.body.children].forEach((n) => { if (n !== gate && n !== banner) { if (on) n.setAttribute("inert", ""); else if (!n.hasAttribute("data-terms-block")) n.removeAttribute("inert"); } });
 }
 
 async function retry() {

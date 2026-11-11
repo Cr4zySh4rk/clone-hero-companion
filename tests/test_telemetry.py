@@ -30,21 +30,25 @@ class TelemetryTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def make(self, post):
-        t = Telemetry(self.dir, url="https://x.invalid", key="k", post=post, version="2.8.0", locale=lambda: "en")
+        t = Telemetry(self.dir, url="https://x.invalid", key="k", post=post, version="2.8.1", locale=lambda: "en")
         self.addCleanup(t._stop.set)
         return t
 
     def test_env_disables(self):
         with mock.patch.dict(os.environ, {"CHC_NO_TELEMETRY": "1"}):
             sink = Sink(); t = self.make(sink)
-            t.apply(True, True); t.event("view", name="library")
+            t.apply(); t.event("view", name="library")
             self.assertFalse(t.active); self.assertEqual(t.queue, [])
 
-    def test_not_active_before_notice_or_when_off(self):
-        t = self.make(Sink()); t.apply(True, False); t.event("view", name="library")
-        self.assertEqual(t.queue, [])
-        t.apply(False, True); t.event("view", name="library")
-        self.assertEqual(t.queue, [])
+    def test_not_active_before_terms_are_accepted(self):
+        accepted = [False]
+        t = self.make(Sink()); t.allowed = lambda: accepted[0]
+        t.apply(); t.event("view", name="library")
+        self.assertFalse(t.active); self.assertEqual(t.queue, [])
+        accepted[0] = True
+        t.apply(); t.event("view", name="library")
+        self.assertTrue(t.active)
+        self.assertEqual([r["name"] for r in t.queue], ["app_start", "view"])
 
     def test_allow_list_drops_unknown_events_and_props(self):
         self.assertIsNone(clean_props("song_title", {}))
@@ -56,7 +60,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_queue_flush_and_payload_is_anonymous(self):
         sink = Sink(); t = self.make(sink)
-        t.apply(True, True)
+        t.apply()
         t.event("view", name="settings", path="/secret")
         self.assertTrue(t.flush())
         rows = sink.calls[0][2]["events"]
@@ -73,35 +77,36 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual((self.dir / "telemetry_id").read_text().strip(), a)
 
     def test_offline_events_persist_and_resend(self):
-        t = self.make(Sink(fail=True)); t.apply(True, True)
+        t = self.make(Sink(fail=True)); t.apply()
         t.event("launch_game")
         self.assertFalse(t.flush())
         saved = json.loads((self.dir / "telemetry_queue.json").read_text())
         self.assertEqual([r["name"] for r in saved], ["app_start", "launch_game"])
-        sink = Sink(); t2 = self.make(sink); t2.apply(True, True)
+        sink = Sink(); t2 = self.make(sink); t2.apply()
         self.assertTrue(t2.flush())
         names = [r["name"] for r in sink.calls[0][2]["events"]]
         self.assertEqual(names[:2], ["app_start", "launch_game"])
         self.assertFalse((self.dir / "telemetry_queue.json").exists())
 
     def test_queue_is_capped(self):
-        t = self.make(Sink()); t.apply(True, True)
+        t = self.make(Sink()); t.apply()
         for _ in range(telemetry.MAX_QUEUE + 50):
             t.event("job_cancel")
         self.assertEqual(len(t.queue), telemetry.MAX_QUEUE)
 
-    def test_opt_out_clears_queue_and_sends_nothing(self):
-        sink = Sink(fail=True); t = self.make(sink); t.apply(True, True)
-        t.event("launch_game"); t.flush()
-        self.assertTrue((self.dir / "telemetry_queue.json").exists())
-        t.apply(False, True)
-        self.assertEqual(t.queue, []); self.assertFalse(t.active)
-        self.assertFalse((self.dir / "telemetry_queue.json").exists())
-        t.event("launch_game"); t.shutdown()
-        self.assertEqual(sink.calls, []); self.assertEqual(t.queue, [])
+    def test_there_is_no_opt_out_and_a_stored_false_is_ignored(self):
+        import inspect
+        from chcompanion import api, app, cli
+        self.assertEqual(list(inspect.signature(Telemetry.apply).parameters), ["self"])      # no enabled / seen switch
+        self.assertNotIn("telemetry", app.Companion.DEFAULTS)                                  # the setting key is gone
+        for mod in (api, app, cli):                                                            # nothing reads a stored value
+            self.assertNotRegex(inspect.getsource(mod), r"""settings\(\)\[["']telemetry["']\]|get\(["']telemetry["']""")
+        self.assertNotRegex(inspect.getsource(api), r'"/api/telemetry" and method == "POST"')
+        sink = Sink(); t = self.make(sink); t.apply()                                          # a saved "telemetry": false cannot matter
+        self.assertTrue(t.active)
 
     def test_event_never_raises(self):
-        t = self.make(Sink()); t.apply(True, True)
+        t = self.make(Sink()); t.apply()
         t.locale = lambda: 1 / 0
         t.event("view", name="library")
 

@@ -200,7 +200,7 @@ The app finds it automatically in most cases. Usually it's `~/Clone Hero` on mac
 <details>
 <summary><b>Does it send my data anywhere?</b></summary>
 
-No accounts and no telemetry. The app only talks to the services it gets content from: YouTube (videos), LRCLIB (lyrics), Chorus Encore, RhythmVerse and iTunes (charts and metadata), and Spotify for playlists you paste. Everything runs on your computer.
+Signing in is optional. Anonymous usage statistics are always on (see [PRIVACY.md](PRIVACY.md) and [TERMS.md](TERMS.md)). The app only talks to the services it gets content from: YouTube (videos), LRCLIB (lyrics), Chorus Encore, RhythmVerse and iTunes (charts and metadata), and Spotify for playlists you paste. Everything runs on your computer.
 </details>
 
 <details>

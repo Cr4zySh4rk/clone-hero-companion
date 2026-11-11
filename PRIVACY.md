@@ -21,9 +21,9 @@ Sharing is off by default. If you turn on sharing, all your friends can see your
 YouTube (through yt-dlp), lyrics providers, Chorus Encore, RhythmVerse and the public CH Leaderboards API, to find videos, lyrics, charts and public scores. Only search terms such as song titles are sent.
 
 ## Anonymous usage statistics
-The app (from 2.8.0) and this website count how they are used, so development can focus on what matters. It is anonymous and the app lets you opt out.
+The app and this website count how they are used, so development can focus on what matters. It is anonymous.
 
-**App.** On by default; switch it off in Settings > Privacy > "Share anonymous usage statistics", or start the app with the environment variable `CHC_NO_TELEMETRY=1`. The first launch after updating shows a notice with a "Turn off" button, and nothing is sent until you have seen it. Turning it off stops sending and deletes anything still waiting to be sent. What is sent:
+**App.** Anonymous usage statistics are always on in the app (from 2.8.1 there is no setting to turn them off). You must accept the [Terms of Use](TERMS.md) and this Privacy Policy on first launch (and again after material changes) before the app can be used; nothing is sent before you accept. What is sent:
 - A random install ID (a random UUID kept in the app's config folder, not derived from your hardware or account) and a random ID for each run of the app.
 - The app version, operating system family (windows, macos, linux), CPU architecture, and the app language.
 - At start: whether you are signed in (yes/no), a library size bucket (0, 1-50, 51-200, 201-1000, 1000+) and the kind of video acceleration (cpu, nvidia, apple, d3d11, vaapi).

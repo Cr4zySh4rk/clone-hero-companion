@@ -46,5 +46,6 @@
 ## Optional
 
 - [Privacy policy](https://cloneherocompanion.com/privacy.html)
+- [Terms of use](https://cloneherocompanion.com/terms.html)
 - [Full documentation as plain text](https://cloneherocompanion.com/llms-full.txt)
 - [README on GitHub](https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/README.md)

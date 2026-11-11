@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import hwvideo, telemetry, ytupdate
+from . import hwvideo, telemetry, terms, ytupdate
 from . import __version__, youtube
 from .jobs import Job, PRIO_BATCH, PRIO_USER
 from .libmgr import find_game, launch_game, reveal, song_id
@@ -434,21 +434,18 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                          "ytdlpInfo": ytupdate.active_info()}) or True
     if path == "/api/settings" and method == "POST":
         s = {k: v for k, v in (body.get("settings") or {}).items()
-             if k not in ("ch_username", "ch_account_id", "ch_verified")}       # only a CH sign-in (chlink.py) may link an account
+             if k not in ("ch_username", "ch_account_id", "ch_verified", "terms_version", "accepted_at")}       # only a CH sign-in (chlink.py) may link an account; only /api/terms/accept records acceptance
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
         return _json(h, {"settings": c.update_settings(s), "youtube": youtube.GATE.status()}) or True
     if path == "/api/telemetry" and method == "GET":
         return _json(h, _telemetry_state(c)) or True
-    if path == "/api/telemetry" and method == "POST":
-        vals = {}
-        if "enabled" in body:
-            vals["telemetry"] = bool(body["enabled"])
-        if body.get("seen"):
-            vals["telemetry_notice"] = True
-        if vals:
-            c.update_settings(vals)
-        return _json(h, _telemetry_state(c)) or True
+    if path == "/api/terms" and method == "GET":
+        return _json(h, terms.state(c.settings())) or True
+    if path == "/api/terms/accept" and method == "POST":
+        c.update_settings(terms.record())
+        telemetry.apply()                    # statistics start now that the user has agreed
+        return _json(h, terms.state(c.settings())) or True
     if path == "/api/telemetry/event" and method == "POST":
         if body.get("name") in telemetry.UI_EVENTS:      # the UI reports navigation, heartbeats and share clicks
             telemetry.event(body["name"], **(body.get("props") if isinstance(body.get("props"), dict) else {}))
@@ -568,7 +565,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             import urllib.parse
             import webbrowser
             u = urllib.parse.urlparse(url)
-            if u.scheme != "https" or u.hostname not in SHARE_HOSTS:
+            if u.scheme != "https" or not (u.hostname in SHARE_HOSTS or url in (terms.URL_TERMS, terms.URL_PRIVACY)):
                 return _json(h, {"error": _("api.not_found")}, 400) or True
             webbrowser.open(url)
             return _json(h, {"ok": True}) or True
@@ -580,9 +577,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
 
 
 def _telemetry_state(c) -> dict:
-    s = c.settings()
-    return {"enabled": bool(s["telemetry"]), "noticeSeen": bool(s["telemetry_notice"]),
-            "envOff": telemetry.env_disabled(), "active": telemetry.is_active()}
+    return {"envOff": telemetry.env_disabled(), "active": telemetry.is_active()}
 
 
 def _link_songs(lm, res: dict):

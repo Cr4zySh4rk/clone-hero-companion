@@ -16,7 +16,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, net, telemetry, youtube
+from . import __version__, net, telemetry, terms, youtube
 from . import hwvideo, ingame, metadata, leaderboard
 from .chlink import ChLink
 from .cloud import Cloud, CloudSync
@@ -357,7 +357,7 @@ class Companion:
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
                 "ch_username": "", "ch_account_id": 0, "ch_verified": False, "yt_cookies": "none", "yt_cookies_file": "",
-                "language": "auto", "telemetry": True, "telemetry_notice": False}
+                "language": "auto", "terms_version": 0, "accepted_at": ""}
 
     # ------------------------------------------------------------ videos that don't play everywhere
     def refresh_unplayable(self) -> int:
@@ -526,8 +526,6 @@ class Companion:
             threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
         if "language" in values:
             self.apply_language()
-        if "telemetry" in values or "telemetry_notice" in values:
-            telemetry.apply(bool(s["telemetry"]), bool(s["telemetry_notice"]))
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
         return s
 
@@ -876,8 +874,8 @@ class Companion:
         from .paths import wipe_cache
         s = self.settings()
         telemetry.get().on_start = self._telemetry_start
-        threading.Thread(target=telemetry.apply, args=(bool(s["telemetry"]), bool(s["telemetry_notice"])),
-                         daemon=True, name="telemetry-start").start()
+        telemetry.get().allowed = lambda: terms.accepted(self.settings())      # statistics start only after acceptance
+        threading.Thread(target=telemetry.apply, daemon=True, name="telemetry-start").start()
         wipe_cache()                 # the preview/work cache is per session; also removes the old config_dir/video-cache
         self.watcher.start()
         self.playwatcher.start()
@@ -1089,6 +1087,9 @@ class Handler(BaseHTTPRequestHandler):
         if u is not None and u.required and p not in UPDATE_OPEN_POSTS:
             # a stale tab must not keep working on an outdated app; the update screen's own calls stay open
             return self._json(u.gate_payload(), 426)
+        if p not in terms.OPEN_POSTS and not terms.accepted(c.settings()):
+            # the Terms of Use / Privacy Policy have not been accepted (yet); the acceptance screen's own calls stay open
+            return self._json({"error": "terms_not_accepted", "message": _("api.terms_required")}, 451)
         from . import api
         try:
             if api.handle(self, "POST", p, urllib.parse.parse_qs(url.query), b):

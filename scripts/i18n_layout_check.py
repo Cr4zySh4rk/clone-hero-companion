@@ -175,12 +175,12 @@ def seed(root: Path):
 
 
 class App:
-    def __init__(self):
+    def __init__(self, accept=True):
         self.tmp = tempfile.TemporaryDirectory(prefix="chc-layout-")
         base = Path(self.tmp.name)
         self.data = seed(base)
         self.port = free_port()
-        env = dict(os.environ, CHC_SKIP_UPDATE_CHECK="1", XDG_CONFIG_HOME=str(base / "cfg"), HOME=str(base / "home"), APPDATA=str(base / "cfg"),
+        env = dict(os.environ, CHC_SKIP_UPDATE_CHECK="1", CHC_ACCEPT_TERMS="1" if accept else "0", XDG_CONFIG_HOME=str(base / "cfg"), HOME=str(base / "home"), APPDATA=str(base / "cfg"),
                    CLONEHERO_DATA_DIR=str(self.data))
         (base / "home").mkdir(exist_ok=True)
         seed_plays(base / "cfg")
@@ -211,9 +211,48 @@ class App:
         self.tmp.cleanup()
 
 
+def check_terms(ctx, gate_app, lang, w, h, q, pseudo, en_values, shots) -> int:
+    """The Terms / Privacy acceptance screen (terms.js): same checks as a view, plus its button behaviour."""
+    tag = f"{'pseudo' if pseudo else lang}@{w}x{h}"
+    page = ctx.new_page()
+    errors, n = [], 0
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" and "Failed to load resource" not in m.text else None)
+    page.on("pageerror", lambda e: errors.append("uncaught: " + str(e)))
+    try:
+        page.goto(gate_app.url + "/" + q)
+        page.wait_for_selector("#termsGate.on", timeout=15000)
+        if lang != "en" and not pseudo:
+            page.evaluate("v => { window.__EN_VALUES = new Set(v); }", en_values)
+        page.wait_for_timeout(500)
+        if not page.is_disabled("#termsGate .tm-go"):
+            print(f"[{tag}] terms: Accept is enabled before the box is ticked"); n += 1
+        page.check("#termsGate .tm-chk")
+        if page.is_disabled("#termsGate .tm-go"):
+            print(f"[{tag}] terms: Accept stays disabled after the box is ticked"); n += 1
+        page.uncheck("#termsGate .tm-chk")
+        res = page.evaluate("() => { const r = (" + CHECK_JS.strip() + ")(); return r; }")
+        if shots:
+            shots.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(shots / f"terms-{'pseudo' if pseudo else lang}-{w}x{h}.png"))
+        for kind, items in res.items():
+            if kind == "english" and (lang == "en" or pseudo):
+                continue
+            for it in dict.fromkeys(items):
+                n += 1
+                print(f"[{tag}] terms: {kind}: {it}")
+    except Exception as e:
+        print(f"[{tag}] terms: could not open: {str(e).splitlines()[0]}"); n += 1
+    for e in dict.fromkeys(errors):
+        n += 1
+        print(f"[{tag}] terms: console error: {e[:200]}")
+    page.close()
+    return n
+
+
 def run(langs, sizes, pseudo, shots: Path | None, views) -> int:
     from playwright.sync_api import sync_playwright
     app = App()
+    gate_app = App(accept=False)           # a second instance that has not accepted the Terms: the full-window acceptance screen
     en = json.loads((ROOT / "chcompanion/web/i18n/en.json").read_text("utf-8"))
     problems = 0
     try:
@@ -229,6 +268,7 @@ def run(langs, sizes, pseudo, shots: Path | None, views) -> int:
                     page.on("console", lambda m: errors.append(m.text) if m.type == "error" and "Failed to load resource" not in m.text else None)
                     page.on("pageerror", lambda e: errors.append("uncaught: " + str(e)))
                     q = "?pseudo=1" if pseudo else ""
+                    problems += check_terms(ctx, gate_app, lang, w, h, q, pseudo, en_values, shots)
                     page.goto(app.url + "/" + q)
                     page.wait_for_selector("#libBody .row", state="attached", timeout=15000)
                     page.click('#nav button[data-view="library"]')           # dismiss the first-run setup screen
@@ -293,6 +333,7 @@ def run(langs, sizes, pseudo, shots: Path | None, views) -> int:
             browser.close()
     finally:
         app.close()
+        gate_app.close()
     print(f"layout check: {problems} problem(s)")
     return 1 if problems else 0
 
