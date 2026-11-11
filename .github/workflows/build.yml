@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+env:
+  CHC_NO_TELEMETRY: "1"     # CI (tests and the smoke runs of the packaged app) must never send usage statistics
+  CHC_ACCEPT_TERMS: "1"
+
 jobs:
   test:
     runs-on: ubuntu-latest

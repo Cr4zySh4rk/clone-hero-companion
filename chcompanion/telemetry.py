@@ -173,7 +173,7 @@ class Telemetry:
     def apply(self) -> None:
         """Start collecting (called once at start-up). Does nothing when CHC_NO_TELEMETRY=1."""
         try:
-            if os.environ.get("CHC_NO_TELEMETRY") == "1":
+            if env_disabled():
                 self.active = False
                 return
             if self.active or not self.allowed():
@@ -289,7 +289,12 @@ def shutdown() -> None:
 
 
 def env_disabled() -> bool:
-    return os.environ.get("CHC_NO_TELEMETRY") == "1"
+    """Only the packaged app sends. Running from source (tests, CI test jobs, scripts, development) never does,
+    unless CHC_TELEMETRY_FROM_SOURCE=1; CHC_NO_TELEMETRY=1 turns it off everywhere (CI smoke-tests the packaged app).
+    2.8.1's CI test run sent real events before this rule existed."""
+    if os.environ.get("CHC_NO_TELEMETRY") == "1":
+        return True
+    return not getattr(sys, "frozen", False) and os.environ.get("CHC_TELEMETRY_FROM_SOURCE") != "1"
 
 
 def is_active() -> bool:

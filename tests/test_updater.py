@@ -224,6 +224,7 @@ class GatingTests(unittest.TestCase):
     def setUp(self):
         self.addCleanup(mock.patch.dict(os.environ).stop)
         os.environ.pop(updater.SKIP_ENV, None)
+        os.environ["CHC_ACCEPT_TERMS"] = "1"       # unittest (CI) doesn't read conftest.py; these tests are about the update gate
         self.u = Updater(quit_event=threading.Event(), current="2.4.0")
         self.comp = types.SimpleNamespace(updater=self.u, adjust_offset=mock.Mock(), quit_requested=self.u.quit_event,
                                           settings=lambda: {}, simulate=mock.Mock(), libmgr=mock.Mock())

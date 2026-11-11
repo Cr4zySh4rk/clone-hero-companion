@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,7 +26,7 @@ class TelemetryTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.dict(os.environ, {"CHC_NO_TELEMETRY": "0"})
+        patcher = mock.patch.dict(os.environ, {"CHC_NO_TELEMETRY": "0", "CHC_TELEMETRY_FROM_SOURCE": "1"})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -113,3 +114,22 @@ class TelemetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SourceRunsNeverSendTests(unittest.TestCase):
+    def test_running_from_source_is_disabled_unless_forced(self):
+        # 2.8.1's CI test run (python -m unittest, no conftest) sent real events: source runs must never send
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CHC_NO_TELEMETRY", None)
+            os.environ.pop("CHC_TELEMETRY_FROM_SOURCE", None)
+            self.assertFalse(getattr(sys, "frozen", False))
+            self.assertTrue(telemetry.env_disabled())
+            os.environ["CHC_TELEMETRY_FROM_SOURCE"] = "1"
+            self.assertFalse(telemetry.env_disabled())
+            os.environ["CHC_NO_TELEMETRY"] = "1"
+            self.assertTrue(telemetry.env_disabled())
+
+    def test_packaged_app_sends(self):
+        with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(sys, "frozen", True, create=True):
+            os.environ.pop("CHC_NO_TELEMETRY", None)
+            self.assertFalse(telemetry.env_disabled())
