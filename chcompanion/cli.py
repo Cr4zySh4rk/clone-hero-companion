@@ -187,6 +187,9 @@ def cmd_doctor(args) -> int:
     youtube.GATE.attach(config_dir() / "youtube_activity.json")
     say(youtube_activity_line(youtube.GATE.status()))
     say(update_check_line())
+    from . import telemetry
+    st = Store(config_dir() / "config.json").get("settings", {}) or {}
+    say("Telemetry   : " + ("off (CHC_NO_TELEMETRY)" if telemetry.env_disabled() else "on" if st.get("telemetry", True) else "off"))
     from . import gui
     say(f"Window      : {gui.describe_backend()}")
     from .align import ffmpeg_path
@@ -394,6 +397,8 @@ def cmd_run(args) -> int:
                 stop.wait(1)
         except KeyboardInterrupt:
             pass
+    from . import telemetry
+    telemetry.shutdown()
     logging.info("Bye!")
     return 0
 

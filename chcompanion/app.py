@@ -16,7 +16,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, net, youtube
+from . import __version__, net, telemetry, youtube
 from . import hwvideo, ingame, metadata, leaderboard
 from .chlink import ChLink
 from .cloud import Cloud, CloudSync
@@ -357,7 +357,7 @@ class Companion:
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
                 "ch_username": "", "ch_account_id": 0, "ch_verified": False, "yt_cookies": "none", "yt_cookies_file": "",
-                "language": "auto"}
+                "language": "auto", "telemetry": True, "telemetry_notice": False}
 
     # ------------------------------------------------------------ videos that don't play everywhere
     def refresh_unplayable(self) -> int:
@@ -526,6 +526,8 @@ class Companion:
             threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
         if "language" in values:
             self.apply_language()
+        if "telemetry" in values or "telemetry_notice" in values:
+            telemetry.apply(bool(s["telemetry"]), bool(s["telemetry_notice"]))
         self.jobs.set_workers(int(s["workers"]) or min(4, __import__("os").cpu_count() or 2))
         return s
 
@@ -723,6 +725,12 @@ class Companion:
                                    progress=progress, defer_video=True)
                 if r.get("lyrics") == "none found":
                     self.store.update_song(song.key, lyrics_none=True)
+                if r.get("video"):
+                    telemetry.event("add_video", result="ok")
+                elif o.get("video", True) and self.store.song(song.key).get("video_failed"):
+                    telemetry.event("add_video", result="fail")
+                if r.get("lyrics") in ("added", "none found"):
+                    telemetry.event("add_lyrics", result="ok" if r["lyrics"] == "added" else "fail")
                 res = self.store.song(song.key).get("video_res")
                 if r.get("video"):
                     job.video_added = True
@@ -852,8 +860,24 @@ class Companion:
         """Pretend the game loaded a song (for testing without the game)."""
         self.watcher.handle_line(f"[Log] Loading Song: {name}")
 
+    def _telemetry_start(self) -> dict:
+        """app_start properties (enums and buckets only)."""
+        import platform
+        try:
+            hwvideo.capabilities()
+            kind = {"cuda": "nvidia", "videotoolbox": "apple", "d3d11va": "d3d11", "vaapi": "vaapi",
+                    "vaapi_enc": "vaapi", "cpu": "cpu"}.get(hwvideo.best().key, "unknown")
+        except Exception:
+            kind = "unknown"
+        return {"arch": platform.machine().lower()[:12] or "unknown", "signed_in": bool(self.cloud.signed_in),
+                "library_size_bucket": telemetry.library_bucket(len(self.library.songs)), "gpu_kind": kind}
+
     def start(self):
         from .paths import wipe_cache
+        s = self.settings()
+        telemetry.get().on_start = self._telemetry_start
+        threading.Thread(target=telemetry.apply, args=(bool(s["telemetry"]), bool(s["telemetry_notice"])),
+                         daemon=True, name="telemetry-start").start()
         wipe_cache()                 # the preview/work cache is per session; also removes the old config_dir/video-cache
         self.watcher.start()
         self.playwatcher.start()

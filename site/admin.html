@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b0a10"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Hanken+Grotesk:wght@400;600;700&display=swap"><link rel="stylesheet" href="/styles.css?v=6729da61">
+<title>Admin | Clone Hero Companion</title>
+<meta name="robots" content="noindex,nofollow,noarchive">
+<style>
+.ad{padding:32px 0 80px}
+.ad h1{font-size:clamp(2.2rem,6vw,3.6rem);margin-bottom:6px}
+.ad h2{font-size:1.9rem;margin:40px 0 14px}
+.ad .sub{color:var(--mute);margin:0 0 20px}
+.ad-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:18px 0 8px}
+.ad-seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ad-seg button{background:var(--panel);color:var(--text);border:0;padding:10px 16px;font:600 .95rem var(--body);cursor:pointer;min-height:44px}
+.ad-seg button+button{border-left:1px solid var(--line)}
+.ad-seg button[aria-pressed=true]{background:var(--yellow);color:#1a0f00}
+.ad-btn{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 16px;font:600 .95rem var(--body);cursor:pointer;min-height:44px}
+.ad-btn:hover{border-color:var(--yellow)}
+.ad-btn.danger{border-color:#7a2a27;color:#ffb3ae}
+.ad-btn:disabled{opacity:.5;cursor:default}
+.ad-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.ad-kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.ad-kpi dt{color:var(--mute);font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.ad-kpi dd{margin:4px 0 0;font:800 2rem/1.05 var(--disp);letter-spacing:.01em}
+.ad-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px}
+.ad-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.ad-card h3{font-size:1.25rem;margin-bottom:10px;color:var(--text)}
+.ad-card svg{width:100%;height:auto;display:block}
+.ad-bars{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ad-bars li{display:grid;grid-template-columns:minmax(70px,34%) 1fr auto;gap:10px;align-items:center;font-size:.95rem}
+.ad-bars .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ad-bars .t{height:10px;background:#0f0e17;border-radius:5px;overflow:hidden}
+.ad-bars .t i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:5px}
+.ad-bars .n{color:var(--mute);font-variant-numeric:tabular-nums}
+.ad-tbl{width:100%;border-collapse:collapse;font-size:.95rem}
+.ad-tbl th,.ad-tbl td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+.ad-tbl th{color:var(--mute);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+.ad-tbl td.r,.ad-tbl th.r{text-align:right;font-variant-numeric:tabular-nums}
+.ad-tblwrap{overflow-x:auto}
+.ad-empty{color:var(--mute);margin:0}
+.ad-msg{margin:12px 0;min-height:1.4em}
+.ad-msg.err{color:#ff9a94}
+.ad-center{max-width:460px;margin:60px auto;text-align:left}
+.ad-center label{display:block;margin:14px 0 6px;font-weight:600}
+.ad-center input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0f0e17;color:var(--text);font:inherit;min-height:44px}
+.ad-center .ad-btn{width:100%;margin-top:10px}
+.ad-axis{fill:var(--mute);font:11px var(--body)}
+.sr{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+@media(max-width:520px){.ad-kpi dd{font-size:1.6rem}.ad-bars li{grid-template-columns:minmax(60px,40%) 1fr auto}}
+</style>
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main" class="ad"><div class="wrap">
+<div id="ad-loading"><p role="status">Loading&hellip;</p><noscript><p>The admin page needs JavaScript.</p></noscript></div>
+<div id="ad-out" class="ad-center" hidden>
+<h1>Admin</h1>
+<p class="sub">Sign in with the admin account.</p>
+<button type="button" class="ad-btn" id="ad-google">Sign in with Google</button>
+<form id="ad-email-form" novalidate><label for="ad-email">Email address</label><input id="ad-email" type="email" autocomplete="email" inputmode="email" required><button type="submit" class="ad-btn" id="ad-send">Email me a code</button></form>
+<form id="ad-code-form" novalidate hidden><label for="ad-code">6-digit code</label><input id="ad-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required><button type="submit" class="ad-btn" id="ad-verify">Verify</button></form>
+<p class="ad-msg" id="ad-msg" role="status" aria-live="polite"></p>
+</div>
+<div id="ad-denied" class="ad-center" hidden>
+<h1>Not authorised</h1>
+<p class="sub">This account does not have access to the dashboard.</p>
+<button type="button" class="ad-btn" id="ad-denied-out">Sign out</button>
+</div>
+<div id="ad-in" hidden>
+<h1>Usage statistics</h1>
+<p class="sub" id="ad-gen"></p>
+<div class="ad-bar">
+<div class="ad-seg" role="group" aria-label="Date range"><button type="button" data-d="7" aria-pressed="false">7 days</button><button type="button" data-d="30" aria-pressed="true">30 days</button><button type="button" data-d="90" aria-pressed="false">90 days</button></div>
+<button type="button" class="ad-btn" id="ad-refresh">Refresh</button>
+<button type="button" class="ad-btn" id="ad-out-btn">Sign out</button>
+</div>
+<p class="ad-msg" id="ad-status" role="status" aria-live="polite"></p>
+<div id="ad-data" hidden>
+<h2>Overview</h2><dl class="ad-kpis" id="ad-kpis"></dl>
+<h2>App</h2>
+<div class="ad-grid"><section class="ad-card"><h3>Active installs per day</h3><div id="ch-active"></div></section>
+<section class="ad-card"><h3>New installs per day</h3><div id="ch-new"></div></section>
+<section class="ad-card"><h3>Versions</h3><div id="l-versions"></div></section>
+<section class="ad-card"><h3>Operating systems</h3><div id="l-os"></div></section>
+<section class="ad-card"><h3>Languages</h3><div id="l-locales"></div></section>
+<section class="ad-card"><h3>Screens opened</h3><div id="l-views"></div></section>
+<section class="ad-card"><h3>Feature usage</h3><div id="t-features"></div></section>
+<section class="ad-card"><h3>Top events</h3><div id="t-events"></div></section></div>
+<h2>Website</h2>
+<div class="ad-grid"><section class="ad-card"><h3>Visitors per day</h3><div id="ch-web"></div></section>
+<section class="ad-card"><h3>Top pages</h3><div id="t-pages"></div></section>
+<section class="ad-card"><h3>Referrers</h3><div id="l-refs"></div></section>
+<section class="ad-card"><h3>Download clicks by system</h3><div id="l-dl"></div></section></div>
+<h2>Accounts</h2>
+<div class="ad-grid"><section class="ad-card"><h3>Sign-ups per day</h3><div id="ch-signups"></div></section></div>
+<h2>Data retention</h2>
+<p class="sub">Raw events are kept for 180 days.</p>
+<button type="button" class="ad-btn danger" id="ad-purge">Purge events older than 180 days</button>
+<p class="ad-msg" id="ad-purge-msg" role="status" aria-live="polite"></p>
+</div>
+</div>
+</div></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.79.0/dist/umd/supabase.js" crossorigin="anonymous"></script>
+<script src="/admin.js"></script>
+</body></html>

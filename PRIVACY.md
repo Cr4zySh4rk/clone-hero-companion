@@ -1,6 +1,6 @@
 # Privacy policy — Clone Hero Companion
 
-_Last updated: 4 November 2026_
+_Last updated: 11 November 2026_
 
 Clone Hero Companion runs on your own computer. Signing in is optional; everything except cloud sync works without an account.
 
@@ -19,6 +19,22 @@ Sharing is off by default. If you turn on sharing, all your friends can see your
 
 ## Other services the app talks to
 YouTube (through yt-dlp), lyrics providers, Chorus Encore, RhythmVerse and the public CH Leaderboards API, to find videos, lyrics, charts and public scores. Only search terms such as song titles are sent.
+
+## Anonymous usage statistics
+The app (from 2.8.0) and this website count how they are used, so development can focus on what matters. It is anonymous and the app lets you opt out.
+
+**App.** On by default; switch it off in Settings > Privacy > "Share anonymous usage statistics", or start the app with the environment variable `CHC_NO_TELEMETRY=1`. The first launch after updating shows a notice with a "Turn off" button, and nothing is sent until you have seen it. Turning it off stops sending and deletes anything still waiting to be sent. What is sent:
+- A random install ID (a random UUID kept in the app's config folder, not derived from your hardware or account) and a random ID for each run of the app.
+- The app version, operating system family (windows, macos, linux), CPU architecture, and the app language.
+- At start: whether you are signed in (yes/no), a library size bucket (0, 1-50, 51-200, 201-1000, 1000+) and the kind of video acceleration (cpu, nvidia, apple, d3d11, vaapi).
+- Which screen is open (a fixed list such as library, charts, settings), about every 5 minutes while the app is open, and when you switch screens; and the length of the run in seconds when you quit.
+- Counts of actions, with at most a fixed choice attached: chart download (Encore or other), video added or failed, lyrics added or failed, video conversion (number bucket), Spotify import, setlist created, favourite on/off, stats shared (to which service), friend request sent, friend profile viewed, CH account link (ok or failed), app update (ok or failed), job cancelled, game launched.
+
+**Website.** One page view per page load: the page path without any query, the domain you came from (if external), a screen-width bucket, and a random ID kept in your tab's sessionStorage (gone when the tab closes). Also clicks on download buttons (which system) and the Career sign-in method (Google or email). No cookies and no localStorage. Nothing is sent if your browser sends Do Not Track or Global Privacy Control.
+
+**Never collected:** song titles, artists, file paths, search text, usernames, names, email addresses or IP addresses (the server does not record them). Events can only carry the fixed properties above; the server rejects anything else.
+
+**Retention.** Raw events are deleted after 180 days. Only the site owner can read the aggregated figures, through an admin-only dashboard; individual events are not readable by anyone through the app or website.
 
 ## Deleting your data
 Open an issue at https://github.com/Cr4zySh4rk/clone-hero-companion/issues or email adithyam211@gmail.com asking for your account to be deleted; all your rows are removed with it.

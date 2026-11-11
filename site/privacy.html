@@ -25,9 +25,23 @@
 <p>This data is kept in <strong>Supabase</strong> (hosted in the US) with row-level security, so each account can only read its own rows, except for your favourites and setlists if you turn on sharing with friends (see below). It is used only to sync your data between your machines. It is never sold or shared.</p>
 <h2>Other services the app talks to</h2>
 <p>To do its job the app contacts YouTube (through yt-dlp), lyrics providers, Chorus Encore, RhythmVerse and the public CH Leaderboards API. These requests send only search terms, such as a song and artist name.</p>
+<h2>Anonymous usage statistics</h2>
+<p>The app (from 2.8.0) and this website count how they are used, so development can focus on what matters. It is anonymous and the app lets you opt out.</p>
+<p><b>App.</b> On by default; switch it off in Settings &gt; Privacy &gt; "Share anonymous usage statistics", or start the app with the environment variable <code>CHC_NO_TELEMETRY=1</code>. The first launch after updating shows a notice with a "Turn off" button, and nothing is sent until you have seen it. Turning it off stops sending and deletes anything still waiting to be sent. What is sent:</p>
+<ul>
+<li>A random install ID (a random UUID kept in the app's config folder, not derived from your hardware or account) and a random ID for each run of the app.</li>
+<li>The app version, operating system family (windows, macos, linux), CPU architecture, and the app language.</li>
+<li>At start: whether you are signed in (yes/no), a library size bucket (0, 1-50, 51-200, 201-1000, 1000+) and the kind of video acceleration (cpu, nvidia, apple, d3d11, vaapi).</li>
+<li>Which screen is open (a fixed list such as library, charts, settings), about every 5 minutes while the app is open, and when you switch screens; and the length of the run in seconds when you quit.</li>
+<li>Counts of actions, with at most a fixed choice attached: chart download (Encore or other), video added or failed, lyrics added or failed, video conversion (number bucket), Spotify import, setlist created, favourite on/off, stats shared (to which service), friend request sent, friend profile viewed, CH account link (ok or failed), app update (ok or failed), job cancelled, game launched.</li>
+</ul>
+<p><b>Website.</b> One page view per page load: the page path without any query, the domain you came from (if external), a screen-width bucket, and a random ID kept in your tab's sessionStorage (gone when the tab closes). Also clicks on download buttons (which system) and the Career sign-in method (Google or email). No cookies and no localStorage. Nothing is sent if your browser sends Do Not Track or Global Privacy Control.</p>
+<p><b>Never collected:</b> song titles, artists, file paths, search text, usernames, names, email addresses or IP addresses (the server does not record them). Events can only carry the fixed properties above; the server rejects anything else.</p>
+<p><b>Retention.</b> Raw events are deleted after 180 days. Only the site owner can read the aggregated figures, through an admin-only dashboard; individual events are not readable by anyone through the app or website.</p>
 <h2>Deleting your data</h2>
 <p>To have your data deleted, <a href="https://github.com/Cr4zySh4rk/clone-hero-companion/issues">open a GitHub issue</a> or email <a href="mailto:adithyam211@gmail.com">adithyam211@gmail.com</a>.</p>
 <p>The current version of this policy is also kept in the project's repository.</p>
 </div></main>
 <footer><div class="wrap"><nav aria-label="Footer"><a href="https://github.com/Cr4zySh4rk/clone-hero-companion">GitHub</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/issues">Issues</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/releases">Releases</a><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/LICENSE">GPL-3.0 licence</a><a href="/guide.html">Guide</a><a href="/career.html">Career</a><a href="/privacy.html">Privacy</a></nav><p>Clone Hero Companion is free and open source software under the GPL-3.0 licence. It is an independent community project and is <strong>not affiliated with, endorsed by or sponsored by Clone Hero</strong> or its developers. Clone Hero is a trademark of its respective owners.</p></div></footer>
+<script src="/t.js?v=26995653" defer></script>
 </body></html>

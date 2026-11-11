@@ -546,6 +546,7 @@
     var emailForm = $('cr-email-form'), codeForm = $('cr-code-form'), email = '';
     $('cr-google').addEventListener('click', function () {
       this.disabled = true;
+      if (root.chcTrack) root.chcTrack('career_signin', { method: 'google' });
       client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: REDIRECT_TO } }).then(function (r) {
         if (r.error) { $('cr-google').disabled = false; msg('cr-msg', r.error.message, true); }
       });
@@ -560,6 +561,7 @@
       client.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true } }).then(function (r) {
         $('cr-send').disabled = false;
         if (r.error) { msg('cr-msg', r.error.status === 429 ? 'Too many codes requested. Wait a few minutes and try again.' : r.error.message, true); return; }
+        if (root.chcTrack) root.chcTrack('career_signin', { method: 'email' });
         emailForm.hidden = true; codeForm.hidden = false;
         $('cr-sent-to').textContent = email;
         msg('cr-msg', 'Code sent. It can take a minute to arrive.');

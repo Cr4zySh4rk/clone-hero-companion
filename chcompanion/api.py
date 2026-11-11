@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import hwvideo, ytupdate
+from . import hwvideo, telemetry, ytupdate
 from . import __version__, youtube
 from .jobs import Job, PRIO_BATCH, PRIO_USER
 from .libmgr import find_game, launch_game, reveal, song_id
@@ -62,6 +62,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         n = 0
         if act == "favorite":
             lm.set_fav(lm.songs(ids), bool(body.get("value", True)))
+            telemetry.event("favourite", on=bool(body.get("value", True)))
         elif act == "fav_sync":
             n = lm.sync_fav_setlist()
         elif act == "rate":
@@ -111,7 +112,9 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         snap["convert"] = c.convert_status()
         return _json(h, snap) or True
     if path == "/api/videos/convert" and method == "POST":
-        return _json(h, {"queued": c.convert_videos()}) or True
+        n = c.convert_videos()
+        telemetry.event("convert_videos", count=telemetry.count_bucket(n))
+        return _json(h, {"queued": n}) or True
     if path == "/api/videos/convert/later" and method == "POST":
         c.update_settings({"video_convert_asked": __version__})
         return _json(h, c.convert_status()) or True
@@ -137,6 +140,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if "id" in body and not body["id"]:     # a per-job cancel without an id must never mean "all"
             return _json(h, {"ok": False}) or True
         c.jobs.cancel(body.get("id"), body.get("kind"))
+        telemetry.event("job_cancel")
         return _json(h, {"ok": True}) or True
     if path == "/api/jobs/retry" and method == "POST":
         c.jobs.retry_failed()
@@ -248,6 +252,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                               options={"process": body.get("process", c.settings()["auto_process_downloads"])},
                               priority=PRIO_USER))
             n += 1
+            telemetry.event("download_chart", source="encore" if it.get("source") == "encore" else "other")
         return _json(h, {"queued": n}) or True
     if path == "/api/spotify" and method == "POST":
         from .sources import encore, spotify
@@ -255,6 +260,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             pl = spotify.fetch_playlist(body.get("url", ""))
         except Exception as e:
             return _json(h, {"error": msg_of(e)}, 400) or True
+        telemetry.event("spotify_import")
         owned = {norm_key(f"{clean_title(s.artist)} {clean_title(s.name)}"): song_id(s) for s in c.library.songs}
 
         def base_title(title: str) -> str:
@@ -300,6 +306,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 sl.delete(c.data_dir, name)
             elif act == "create":
                 sl.save(c.data_dir, name, [])
+                telemetry.event("setlist_create")
         except ValueError as e:
             return _json(h, {"error": msg_of(e)}, 400) or True
         c.cloudsync.schedule()                  # signed in: the change reaches the cloud copy of the list (~3 s debounce)
@@ -431,6 +438,21 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
         return _json(h, {"settings": c.update_settings(s), "youtube": youtube.GATE.status()}) or True
+    if path == "/api/telemetry" and method == "GET":
+        return _json(h, _telemetry_state(c)) or True
+    if path == "/api/telemetry" and method == "POST":
+        vals = {}
+        if "enabled" in body:
+            vals["telemetry"] = bool(body["enabled"])
+        if body.get("seen"):
+            vals["telemetry_notice"] = True
+        if vals:
+            c.update_settings(vals)
+        return _json(h, _telemetry_state(c)) or True
+    if path == "/api/telemetry/event" and method == "POST":
+        if body.get("name") in telemetry.UI_EVENTS:      # the UI reports navigation, heartbeats and share clicks
+            telemetry.event(body["name"], **(body.get("props") if isinstance(body.get("props"), dict) else {}))
+        return _json(h, {"ok": True}) or True
     if path == "/api/ytdlp/check" and method == "POST":
         ytupdate.check_now_async()
         return _json(h, ytupdate.active_info()) or True
@@ -530,6 +552,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         if not game:
             return _json(h, {"error": _("api.game_not_found")}, 404) or True
         launch_game(game)
+        telemetry.event("launch_game")
         return _json(h, {"ok": True}) or True
     if path == "/api/share/save" and method == "POST":
         try:
@@ -554,6 +577,12 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
             reveal(target)
         return _json(h, {"ok": True}) or True
     return False
+
+
+def _telemetry_state(c) -> dict:
+    s = c.settings()
+    return {"enabled": bool(s["telemetry"]), "noticeSeen": bool(s["telemetry_notice"]),
+            "envOff": telemetry.env_disabled(), "active": telemetry.is_active()}
 
 
 def _link_songs(lm, res: dict):
@@ -769,13 +798,16 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
         if sub == "lookup" and method == "GET":
             return _json(h, {"profile": f.lookup(q.get("q", ""))}) or True
         if sub == "request" and method == "POST":
-            return _json(h, f.request(body.get("query", ""))) or True
+            r = f.request(body.get("query", ""))
+            telemetry.event("friend_request")
+            return _json(h, r) or True
         if sub == "respond" and method == "POST":
             return _json(h, f.respond(body.get("id", ""), bool(body.get("accept")))) or True
         if sub == "remove" and method == "POST":
             return _json(h, f.remove(body.get("id", ""))) or True
         if sub == "list" and method == "GET":
             d = f.friend_lists(q.get("friend", ""))
+            telemetry.event("friend_view_profile")
             d["favorites"] = f.annotate(d["favorites"])
             d["setlists"] = [{**x, "items": f.annotate(x["items"])} for x in d["setlists"]]
             return _json(h, d) or True
@@ -786,6 +818,7 @@ def _friends(h, c, method: str, path: str, q: dict, body: dict) -> bool:
             if not plays:       # not a friend, or the friend switched stats sharing off (RLS returns no rows)
                 return _json(h, {"error": "not_shared"}, 403) or True
             res = playstats.compute(plays, (q.get("instrument") or "").lower(), (q.get("difficulty") or "").lower())
+            telemetry.event("friend_view_profile")
             _link_songs(c.libmgr, res)
             p = f.friend(fid)
             res["friend"] = {"username": p.get("username"), "name": p.get("name"), "avatar": p.get("avatar")}

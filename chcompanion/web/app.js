@@ -54,9 +54,18 @@ function setFilter(f) {
 /* Which library filter a sidebar entry implies: "★ Favourites" -> fav, "Library" -> All, anything else keeps it. */
 function viewFilter(view, cur) { return view === "favs" ? "fav" : view === "library" ? "all" : cur; }
 function syncChips() { $$("#libFilters button").forEach((b) => b.classList.toggle("on", b.dataset.f === st.filter)); }
+/* Anonymous usage statistics (see PRIVACY.md): view names and a 5-minute heartbeat only; the backend enforces an allow-list. */
+const TELE_VIEWS = new Set(["library", "favs", "charts", "spotify", "setlists", "dupes", "jobs", "friends", "profile", "leaderboards", "now", "setup", "settings"]);
+let teleViewTimer = null;
+function teleEvent(name, props) { api("/api/telemetry/event", { name, props: props || {} }).catch(() => {}); }
+function teleView(view) {
+  clearTimeout(teleViewTimer);
+  teleViewTimer = setTimeout(() => teleEvent("view", { name: TELE_VIEWS.has(view) ? view : "other" }), 1500);
+}
+setInterval(() => teleEvent("heartbeat", { view: TELE_VIEWS.has(currentView) ? currentView : "other", focused: document.hasFocus() }), 300000);
 function show(view) {
   if (view === "favs") { show("library"); setFilter(viewFilter("favs")); $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === "favs")); return; }
-  currentView = view;
+  currentView = view; teleView(view);
   $$("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   $$(".view").forEach((v) => v.classList.toggle("on", v.id === "view-" + view));
   $("#detail").hidden = !(view === "library" && activeId);
@@ -838,6 +847,10 @@ async function loadSettings() {
       ${chk("prefetch", tr("settings.prefetch"), tr("settings.prefetch_help"))}
       ${chk("game_lyrics", tr("settings.game_lyrics"), tr("settings.game_lyrics_help"))}
     </section>
+    <section><h3>${esc(tr("settings.privacy"))}</h3>
+      <div class="row2"><span>${esc(tr("settings.telemetry"))}</span><label class="inline"><input type="checkbox" id="teleSw" ${s.telemetry ? "checked" : ""}> <span>${esc(tr("settings.telemetry_help"))}</span></label>
+        <small><a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/PRIVACY.md" target="_blank" rel="noopener">${esc(tr("telemetry.details"))}</a></small></div>
+    </section>
     <section><h3>${esc(tr("settings.youtube"))}</h3>
       <div class="row2"><span>${esc(tr("settings.cookies_from"))}</span><select data-k="yt_cookies">${[["none", tr("settings.cookies_none")], ["chrome", "Chrome"], ["edge", "Edge"], ["firefox", "Firefox"], ["safari", "Safari"], ["brave", "Brave"], ["file", tr("settings.cookies_file_opt")]].map(([v, l]) => `<option value="${v}"${(s.yt_cookies || "none") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>
         <small>${esc(tr("settings.cookies_note"))}</small></div>
@@ -867,6 +880,7 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.version"))}</span><span>${esc(tr("settings.version_line", { version: d.version, ytdlp: d.ytdlp, ffmpeg: d.ffmpeg ? tr("settings.included") : tr("settings.missing") }))}</span></div>
     </section>`;
   bindLangSelects();
+  $("#teleSw").onchange = (e) => api("/api/telemetry", { enabled: e.target.checked }).then(() => toast(tr("settings.saved"))).catch((err) => toast(err.message));
   bindShare($("#settingsForm")); paintShare();
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
@@ -1404,7 +1418,7 @@ async function openShare(d, cs) {
     ${canSys ? `<button data-a="sys">${esc(tr("share.system"))}</button>` : ""}
     <p class="hint">${esc(tr("share.platforms"))}</p>
     ${platforms.map((p) => `<button data-p="${p.id}">${esc(p.label)}</button>`).join("")}`;
-  $("[data-a=save]", dlg).onclick = guard(async () => { const p = await saveImage(true); toast(tr("share.saved", { folder: folderOf(p) || p }), 4500); });
+  $("[data-a=save]", dlg).onclick = guard(async () => { teleEvent("share_stats", { target: "save" }); const p = await saveImage(true); toast(tr("share.saved", { folder: folderOf(p) || p }), 4500); });
   const cp = $("[data-a=copy]", dlg);
   if (cp) cp.onclick = guard(async () => {
     try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); toast(tr("share.copied")); }
@@ -1414,6 +1428,7 @@ async function openShare(d, cs) {
   if (sys) sys.onclick = guard(async () => { try { await navigator.share({ files: [file], text: c.text }); } catch (e) { if (e.name !== "AbortError") throw e; } });
   platforms.forEach((p) => {
     $(`[data-p=${p.id}]`, dlg).onclick = guard(async () => {
+      teleEvent("share_stats", { target: p.id });
       const path = await saveImage(!!p.story);       // every platform button saves the image and copies the text first
       await copyText();
       await open(p.url());
@@ -1778,6 +1793,22 @@ function bindLangSelects() {
     };
   });
 }
+/* One-time, non-blocking notice about the anonymous statistics (nothing is sent until it has been shown). */
+async function teleNotice() {
+  try {
+    const t = await api("/api/telemetry");
+    if (t.noticeSeen || t.envOff) return;
+    const box = document.createElement("div");
+    box.id = "teleNotice"; box.setAttribute("role", "region"); box.setAttribute("aria-label", tr("telemetry.title"));
+    box.style.cssText = "position:fixed;right:16px;bottom:16px;max-width:min(420px,calc(100vw - 32px));z-index:60;padding:14px 16px;border-radius:12px;background:var(--panel,#1d2230);color:var(--text,#eee);border:1px solid var(--line,#3a4256);box-shadow:0 8px 30px rgba(0,0,0,.4);font-size:13px;line-height:1.45";
+    box.innerHTML = `<b>${esc(tr("telemetry.title"))}</b><p style="margin:6px 0 10px">${esc(tr("telemetry.body"))} <a href="https://github.com/Cr4zySh4rk/clone-hero-companion/blob/main/PRIVACY.md" target="_blank" rel="noopener">${esc(tr("telemetry.details"))}</a></p>
+      <span class="btnrow"><button class="primary" data-t="off">${esc(tr("telemetry.turn_off"))}</button> <button data-t="ok">${esc(tr("telemetry.ok"))}</button></span>`;
+    document.body.appendChild(box);
+    const done = async (body) => { try { await api("/api/telemetry", body); } catch (e) { /* ignore */ } box.remove(); };
+    box.querySelector("[data-t=off]").onclick = () => done({ enabled: false, seen: true });
+    box.querySelector("[data-t=ok]").onclick = () => done({ seen: true });
+  } catch (e) { /* ignore */ }
+}
 function refreshView() {
   switch (currentView) {
     case "settings": loadSettings(); break;
@@ -1812,6 +1843,7 @@ I18N.onChange(() => {
   $("#runBtn").textContent = tr("lib.run"); $("#plToggle").textContent = tr("player.pause");
   loadLibrary().then(() => { pollLibrary(); pollJobs(); });
   loadCloud(); pollFriends(); setInterval(pollFriends, 30000);
+  teleNotice();
   // First run (or the data folder vanished): open the setup screen.
   api("/api/setup").then((d) => {
     const need = !d.setupDone || !d.dataOk;   // ask once, even when everything was found

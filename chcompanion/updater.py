@@ -356,9 +356,16 @@ class Updater:
     def _run_install(self) -> None:
         try:
             {"win32": self._install_windows, "darwin": self._install_macos}.get(sys.platform, self._install_linux)()
+            from . import telemetry
+            telemetry.event("update_install", result="ok")
+            telemetry.get().flush(2.0)
         except UpdateError as e:
+            from . import telemetry
+            telemetry.event("update_install", result="fail")
             self._progress(phase="error", error=e.msg, message=None)
         except Exception as e:
+            from . import telemetry
+            telemetry.event("update_install", result="fail")
             log.exception("update failed")
             self._progress(phase="error", error=_("update.err.install", reason=msg_of(e)), message=None)
         finally:

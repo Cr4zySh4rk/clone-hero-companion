@@ -72,6 +72,9 @@ class ChLink:
     def _set(self, state: str, message: str = "", **extra):
         with self.lock:
             self._state = {"state": state, "message": message, **extra}
+        if state in ("done", "failed", "expired"):
+            from . import telemetry
+            telemetry.event("ch_link", result="ok" if state == "done" else "fail")
 
     def start(self) -> dict:
         """Begin a sign-in: returns the status (state 'waiting'). Raises ChLinkError when Companion is not signed in."""
