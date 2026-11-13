@@ -93,6 +93,46 @@ class CookieTests(unittest.TestCase):
         with mock.patch.object(youtube, "_find_tool", return_value=None), mock.patch.object(youtube, "hide_deno_console"):
             return youtube._ydl_opts()
 
+    def test_lazy_dpapi_failure_falls_back_to_no_cookies(self):
+        # 2.8.2 on Windows: yt-dlp reads browser cookies on the first request, so "Failed to decrypt with DPAPI"
+        # escaped make_ydl's fallback and failed the video job
+        made = []
+
+        class FakeYDL:
+            def __init__(self, opts):
+                self.opts = opts
+                made.append(opts)
+
+            @property
+            def cookiejar(self):
+                if "cookiesfrombrowser" in self.opts:
+                    raise RuntimeError("ERROR: Failed to decrypt with DPAPI. See  https://github.com/yt-dlp/yt-dlp/issues/10927")
+                return {}
+
+            def close(self):
+                pass
+
+        youtube.set_cookies("firefox")
+        with mock.patch("yt_dlp.YoutubeDL", FakeYDL):
+            ydl = youtube.make_ydl({"cookiesfrombrowser": ("firefox",), "quiet": True})
+        self.assertNotIn("cookiesfrombrowser", ydl.opts)
+        self.assertEqual(len(made), 2)
+        self.assertTrue(youtube._COOKIES["failed"])
+        self.assertEqual(youtube.cookie_opts(), {})          # not retried for every video
+
+    def test_chromium_browsers_are_not_tried_on_windows(self):
+        for b in ("chrome", "edge", "brave"):
+            youtube.set_cookies(b)
+            with mock.patch.object(youtube.sys, "platform", "win32"):
+                self.assertEqual(youtube.cookie_opts(), {})
+            self.assertTrue(youtube._COOKIES["error"])
+        youtube.set_cookies("firefox")
+        with mock.patch.object(youtube.sys, "platform", "win32"):
+            self.assertEqual(youtube.cookie_opts(), {"cookiesfrombrowser": ("firefox",)})
+        youtube.set_cookies("chrome")
+        with mock.patch.object(youtube.sys, "platform", "darwin"):
+            self.assertEqual(youtube.cookie_opts(), {"cookiesfrombrowser": ("chrome",)})
+
     def test_browser_is_passed_to_yt_dlp(self):
         youtube.set_cookies("firefox")
         self.assertEqual(self._opts()["cookiesfrombrowser"], ("firefox",))

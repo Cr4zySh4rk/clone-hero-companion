@@ -374,6 +374,7 @@ def download_slot(video_id: str | None = None):
 
 # ------------------------------------------------------------------ sign-in cookies
 COOKIE_BROWSERS = ("chrome", "edge", "firefox", "safari", "brave")
+CHROMIUM_BROWSERS = ("chrome", "edge", "brave")
 _COOKIES: dict = {"mode": "none", "file": "", "error": None, "failed": False}
 
 
@@ -396,6 +397,11 @@ def cookie_opts() -> dict:
             _COOKIES.update(failed=True, error=f"cookies.txt not found ({f or 'no file chosen'}). Continuing without sign-in.")
             return {}
         return {"cookiefile": f}
+    if sys.platform == "win32" and mode in CHROMIUM_BROWSERS:
+        # Chrome/Edge/Brave on Windows use app-bound encryption: no other program can decrypt their cookies
+        _COOKIES.update(failed=True, error=cookie_problem(RuntimeError("app-bound encryption"), mode))
+        log.warning("%s", _COOKIES["error"])
+        return {}
     return {"cookiesfrombrowser": (mode,)}
 
 
@@ -445,10 +451,21 @@ def _cancel_hook(d) -> None:
 
 
 def make_ydl(opts: dict):
-    """YoutubeDL(opts); if the sign-in cookies can't be read, say so once and carry on without them."""
+    """YoutubeDL(opts); if the sign-in cookies can't be read, say so once and carry on without them.
+
+    yt-dlp reads browser cookies lazily (on the first request), so a DPAPI / app-bound-encryption failure used to
+    surface mid-download as "ERROR: Failed to decrypt with DPAPI" and fail the job (2.8.2, Windows). Touching
+    `cookiejar` here makes it happen now, where it falls back to no cookies."""
     from yt_dlp import YoutubeDL
     try:
-        return YoutubeDL(opts)
+        ydl = YoutubeDL(opts)
+        if "cookiesfrombrowser" in opts or "cookiefile" in opts:
+            try:
+                ydl.cookiejar                     # load the cookies now
+            except Exception:
+                ydl.close()
+                raise
+        return ydl
     except Exception as e:
         if ("cookiesfrombrowser" in opts or "cookiefile" in opts) and is_cookie_error(e):
             _note_cookie_failure(e)
