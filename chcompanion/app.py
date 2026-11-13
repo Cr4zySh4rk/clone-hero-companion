@@ -79,6 +79,7 @@ class Companion:
         self.jobs = JobManager(self._run_job, workers=int(self.settings().get("workers") or 0) or None,
                                busy=self._job_busy, on_change=self._job_changed)
         self.game_yt.pref_p = int(self.settings().get("pref_p", 720))
+        self.game_yt.sd_min_p = self._sd_min_p()
         from .paths import config_dir
         youtube.GATE.attach(config_dir() / "youtube_activity.json")
         youtube.set_cookies(self.settings().get("yt_cookies"), self.settings().get("yt_cookies_file"))
@@ -354,7 +355,7 @@ class Companion:
     # ------------------------------------------------------------ settings / jobs
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
-                "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
+                "replace_low_res": True, "sd_fallback": True, "sd_min_p": 480, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
                 "ch_username": "", "ch_account_id": 0, "ch_verified": False, "launch_signed_in": True, "yt_cookies": "none", "yt_cookies_file": "",
                 "language": "auto", "terms_version": 0, "accepted_at": ""}
@@ -525,6 +526,11 @@ class Companion:
         s.update(self.store.get("settings", {}) or {})
         return s
 
+    def _sd_min_p(self) -> int:
+        """Lowest SD class to accept when a video has no HD version; 0 when the setting is off."""
+        s = self.settings()
+        return min(youtube.SD_CHOICES[0], max(youtube.SD_CHOICES[-1], int(s.get("sd_min_p") or 480))) if s.get("sd_fallback") else 0
+
     def update_settings(self, values: dict) -> dict:
         cur = self.store.get("settings", {}) or {}
         for k, v in values.items():
@@ -536,6 +542,7 @@ class Companion:
         self.prefetch = bool(s["prefetch"])
         self.game_lyrics = bool(s["game_lyrics"])
         self.game_yt.pref_p = int(s["pref_p"])
+        self.game_yt.sd_min_p = self._sd_min_p()
         if "yt_cookies" in values or "yt_cookies_file" in values:
             youtube.set_cookies(s.get("yt_cookies"), s.get("yt_cookies_file"))
             threading.Thread(target=youtube.check_cookies, daemon=True, name="cookie-check").start()
@@ -747,10 +754,11 @@ class Companion:
                 res = self.store.song(song.key).get("video_res")
                 if r.get("video"):
                     job.video_added = True
+                    sd = bool(self.store.song(song.key).get("video_sd") and res)
                     if song.is_sng:
-                        parts.append(_("job.video_sng_res", res=res) if res else _("job.video_sng"))
+                        parts.append(_("job.video_sng_sd" if sd else "job.video_sng_res", res=res) if res else _("job.video_sng"))
                     else:
-                        parts.append(_("job.video_saved_res", res=res, file=r["video"]) if res else _("job.video_saved", file=r["video"]))
+                        parts.append(_("job.video_saved_sd" if sd else "job.video_saved_res", res=res, file=r["video"]) if res else _("job.video_saved", file=r["video"]))
                 if r.get("lyrics") == "added":
                     parts.append(_("job.lyrics_added"))
                 if r.get("video_pending"):

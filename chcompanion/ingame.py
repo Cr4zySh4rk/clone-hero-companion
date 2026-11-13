@@ -30,7 +30,7 @@ from .paths import cache_dir, config_dir
 from .sng import open_sng, write_sng
 from .store import Store
 from .i18n import _, join
-from .youtube import MIN_P as MIN_HD, MIN_SCORE, YouTube
+from .youtube import MIN_P as MIN_HD, MIN_SCORE, YouTube, is_strong_official
 
 log = logging.getLogger(__name__)
 BACKUP = ".chc-backup"
@@ -477,7 +477,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
     offset is folded into the one encode (see padded_seconds). Raises InGameError if there is none.
     defer: while a YouTube cool-down runs, raise BotDetected at once instead of waiting it out.
     convert=False: return the original download (for the Now Playing preview), nothing is encoded."""
-    from .youtube import GATE, BotDetected, NoHDVideo, VideoProblem
+    from .youtube import GATE, BotDetected, NoHDVideo, StillImage, VideoProblem
 
     def gate_wait():
         if defer and GATE.remaining() > 0:
@@ -487,6 +487,11 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
     bkey = base_key(song)
     base = store.song(bkey)
     chosen = info.get("video_id") if info.get("video_manual") else None
+    cmap: dict = {}
+    sd_min = getattr(yt, "sd_min_p", 0)                 # 0: no SD fallback
+    sd_min = sd_min if isinstance(sd_min, int) else 0
+    best_sd = None                                      # (score, res, candidate id): best SD seen so far
+    known_sd = bool(info.get("video_sd") or base.get("video_sd"))
     known = None if force else (info.get("video_id") or base.get("video_id"))
     if not chosen and not known and not force:
         failed_at = max(float(info.get("video_failed_at") or 0), float(base.get("failed_at") or 0))
@@ -501,6 +506,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
             progress(_("yt.searching"))
         cands = yt.search(song)
         store.update_song(song.key, candidates=cands[:8])
+        cmap = {c["id"]: c for c in cands}
         order = [c["id"] for c in cands if c["score"] >= MIN_SCORE][:4]
         if known:                      # what this song (or another chart of it) got before
             order = [known] + [x for x in order if x != known][:3]
@@ -530,15 +536,30 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
                    "vcodec": "avc1" if codec == "h264" else codec}
             break
         gate_wait()
+        entry = cmap.get(cand) or {}
+        # a strong official match (or the SD video this song already got from it) takes its best SD at once
+        strong = bool(sd_min and (chosen == cand or (known_sd and cand == known)
+                                  or (entry and is_strong_official(entry, song, entry.get("score")))))
         try:
             if hasattr(yt, "fetch"):
                 # one lookup: the video stream, plus the audio stream when the video gets lined up
-                p, f, fetched_audio = yt.fetch(cand, str(tmpdir / "video"), with_audio=need_align, progress=prog)
+                kw = {"take_sd": True} if strong else {}
+                p, f, fetched_audio = yt.fetch(cand, str(tmpdir / "video"), with_audio=need_align, progress=prog, **kw)
             else:
                 p, f = yt.download(cand, str(tmpdir / "video"), progress=prog)
-        except NoHDVideo:
-            log.info("Skipping %s for %s: not available in %dp or better", cand, song.display, MIN_HD)
+        except NoHDVideo as e:
+            sd_p = int(getattr(e, "sd_p", 0) or 0)
+            if sd_min and sd_p >= sd_min:      # no HD, but an SD version exists: remember the best one
+                key = (float(entry.get("score", MIN_SCORE)), sd_p)
+                if best_sd is None or key > best_sd[:2]:
+                    best_sd = (*key, cand)
+            log.info("Skipping %s for %s: not available in %dp or better (best SD: %s)", cand, song.display,
+                     MIN_HD, sd_p or "none")
             reasons.append(_("ingame.reason_low", p=MIN_HD))
+            continue
+        except StillImage:
+            log.info("Skipping %s for %s: the stream list says it's a still image (nothing downloaded)", cand, song.display)
+            reasons.append(_("ingame.reason_still"))
             continue
         except BotDetected:
             # YouTube really is limiting us: every other candidate would be refused too. Stop, let the
@@ -566,6 +587,28 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
             continue
         path, vid, fmt = p, cand, f
         break
+    if path is None and best_sd:
+        # no HD anywhere: download the one best SD version (a second lookup of that video, nothing else)
+        cand = best_sd[2]
+        log.info("No HD video for %s: using the SD version of %s (%sp)", song.display, cand, best_sd[1])
+        fetched_audio = None
+        gate_wait()
+        try:
+            p, f, fetched_audio = yt.fetch(cand, str(tmpdir / "video"), with_audio=need_align, progress=prog, take_sd=True)
+            p = Path(p)
+            if looks_static(p):
+                reasons.append(_("ingame.reason_still"))
+                p.unlink(missing_ok=True)
+            else:
+                path, vid, fmt = p, cand, f
+        except BotDetected:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
+        except (NoHDVideo, StillImage):
+            pass
+        except Exception as e:
+            reasons.append(_("ingame.reason_failed", detail=str(e).strip()[:120] or type(e).__name__))
+            transient_seen = True
     if path is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
         why = join(dict.fromkeys(reasons)) if reasons else _("ingame.reason_none")
@@ -574,9 +617,12 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
             # charts of the song (errors like "age-restricted" or "download failed" are not remembered)
             _remember_failure(store, song, bkey, why)
         raise InGameError(_("ingame.no_hd", why=why))
-    store.update_song(bkey, video_id=vid, failed=None, failed_at=None)
+    res_now = int(fmt.get("res_class") or 0)
+    sd = bool(res_now and res_now < MIN_HD)        # accepted below HD because no HD version exists
+    store.update_song(bkey, video_id=vid, failed=None, failed_at=None, video_sd=sd or None)
     store.update_song(song.key, video_id=vid, video_res=fmt.get("res_class"), video_failed=None,
-                      video_failed_at=None, video_failed_reason=None)
+                      video_failed_at=None, video_failed_reason=None, video_sd=sd or None,
+                      video_sd_at=time.time() if sd else None)
     already_aligned = from_cache and info.get("video_id") == vid and "video_offset" in info
     if not per_manual_offset(store, song) and not already_aligned:
         try:
@@ -733,6 +779,12 @@ def has_video(song: Song) -> bool:
     return song.local_video() is not None
 
 
+def sd_is_final(per: dict) -> bool:
+    """The song's video is an SD one that was taken because no HD version exists: don't look for HD again
+    (every attempt costs lookups) until the "no HD" memory expires."""
+    return bool(per.get("video_sd")) and time.time() - float(per.get("video_sd_at") or 0) < FAIL_MEMORY_S
+
+
 def current_video_res(song: Song, store: Store) -> int:
     """Resolution class of the video the song already has (cached by size/mtime)."""
     try:
@@ -803,7 +855,8 @@ def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics
                 store.update_song(song.key, game_video=converted)
         unplayable = existing and video and converted is None and needs_vp8(song)
         want_video = video and (force_video or not existing or unplayable
-                                or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD))
+                                or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD
+                                    and not sd_is_final(per)))
         vpath = None
         if want_video:
             try:

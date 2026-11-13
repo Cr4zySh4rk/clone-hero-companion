@@ -1,0 +1,312 @@
+{
+ "_notes": "precheck fixtures. 'real' = recorded yt-dlp stream lists (2026-10-26, dQw4w9WgXcQ, tv_samsung client; yt-dlp left fps out, so an unknown frame rate counts as 25). 'modelled' = built by hand because live format lists could not be fetched from the build container (YouTube bot-check on the datacenter address): the SD-only list follows the 640x480 maximum measured on the user's Mac for xqds0B_meys, the still-image lists follow what a static frame costs an encoder (tens of kbps, any resolution).",
+ "cases": {
+  "music_video_hd": {
+   "source": "real",
+   "expect_still": false,
+   "expect_best_hd": true,
+   "formats": [
+    {
+     "format_id": "134",
+     "width": 640,
+     "height": 360,
+     "tbr": 315.092,
+     "vcodec": "avc1.4D401E",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/134"
+    },
+    {
+     "format_id": "243",
+     "width": 640,
+     "height": 360,
+     "tbr": 225.864,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "webm",
+     "protocol": "https",
+     "url": "https://v/243"
+    },
+    {
+     "format_id": "135",
+     "width": 854,
+     "height": 480,
+     "tbr": 529.61,
+     "vcodec": "avc1.4D401E",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/135"
+    },
+    {
+     "format_id": "244",
+     "width": 854,
+     "height": 480,
+     "tbr": 352.289,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "webm",
+     "protocol": "https",
+     "url": "https://v/244"
+    },
+    {
+     "format_id": "136",
+     "width": 1280,
+     "height": 720,
+     "tbr": 993.461,
+     "vcodec": "avc1.4D401F",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/136"
+    },
+    {
+     "format_id": "247",
+     "width": 1280,
+     "height": 720,
+     "tbr": 664.165,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "webm",
+     "protocol": "https",
+     "url": "https://v/247"
+    },
+    {
+     "format_id": "137",
+     "width": 1920,
+     "height": 1080,
+     "tbr": 3038.377,
+     "vcodec": "avc1.640028",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/137"
+    },
+    {
+     "format_id": "248",
+     "width": 1920,
+     "height": 1080,
+     "tbr": 1158.339,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "webm",
+     "protocol": "https",
+     "url": "https://v/248"
+    },
+    {
+     "format_id": "313",
+     "width": 3840,
+     "height": 2160,
+     "tbr": 13466.333,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "webm",
+     "protocol": "https",
+     "url": "https://v/313"
+    }
+   ]
+  },
+  "sd_only_640x480": {
+   "source": "modelled",
+   "expect_still": false,
+   "expect_best_hd": false,
+   "expect_sd_p": 480,
+   "formats": [
+    {
+     "format_id": "134",
+     "width": 480,
+     "height": 360,
+     "tbr": 255,
+     "vcodec": "avc1.4D401E",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/134",
+     "fps": 25
+    },
+    {
+     "format_id": "135",
+     "width": 640,
+     "height": 480,
+     "tbr": 520,
+     "vcodec": "avc1.4D401F",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/135",
+     "fps": 25
+    },
+    {
+     "format_id": "244",
+     "width": 640,
+     "height": 480,
+     "tbr": 330,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/244",
+     "fps": 25
+    },
+    {
+     "format_id": "243",
+     "width": 480,
+     "height": 360,
+     "tbr": 190,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/243",
+     "fps": 25
+    },
+    {
+     "format_id": "133",
+     "width": 320,
+     "height": 240,
+     "tbr": 150,
+     "vcodec": "avc1.4D4015",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/133",
+     "fps": 25
+    }
+   ]
+  },
+  "still_low_bitrate_1080p": {
+   "source": "modelled",
+   "expect_still": true,
+   "formats": [
+    {
+     "format_id": "137",
+     "width": 1920,
+     "height": 1080,
+     "tbr": 70,
+     "vcodec": "avc1.640028",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/137",
+     "fps": 25
+    },
+    {
+     "format_id": "248",
+     "width": 1920,
+     "height": 1080,
+     "tbr": 38,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/248",
+     "fps": 25
+    },
+    {
+     "format_id": "136",
+     "width": 1280,
+     "height": 720,
+     "tbr": 45,
+     "vcodec": "avc1.4D401F",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/136",
+     "fps": 25
+    }
+   ]
+  },
+  "still_one_fps": {
+   "source": "modelled",
+   "expect_still": true,
+   "formats": [
+    {
+     "format_id": "137",
+     "width": 1920,
+     "height": 1080,
+     "tbr": 420,
+     "vcodec": "avc1.640028",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/137",
+     "fps": 1
+    },
+    {
+     "format_id": "136",
+     "width": 1280,
+     "height": 720,
+     "tbr": 230,
+     "vcodec": "avc1.4D401F",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/136",
+     "fps": 1
+    }
+   ]
+  },
+  "square_album_art": {
+   "source": "modelled",
+   "expect_still": true,
+   "formats": [
+    {
+     "format_id": "137",
+     "width": 1080,
+     "height": 1080,
+     "tbr": 1500,
+     "vcodec": "avc1.640028",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/137",
+     "fps": 25
+    },
+    {
+     "format_id": "136",
+     "width": 720,
+     "height": 720,
+     "tbr": 800,
+     "vcodec": "avc1.4D401F",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/136",
+     "fps": 25
+    }
+   ]
+  },
+  "still_480p_sd_only": {
+   "source": "modelled",
+   "expect_still": true,
+   "expect_best_hd": false,
+   "formats": [
+    {
+     "format_id": "135",
+     "width": 854,
+     "height": 480,
+     "tbr": 40,
+     "vcodec": "avc1.4D401E",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/135",
+     "fps": 25
+    },
+    {
+     "format_id": "244",
+     "width": 854,
+     "height": 480,
+     "tbr": 22,
+     "vcodec": "vp9",
+     "acodec": "none",
+     "ext": "mp4",
+     "protocol": "https",
+     "url": "https://v/244",
+     "fps": 25
+    }
+   ]
+  }
+ }
+}

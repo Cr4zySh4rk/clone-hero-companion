@@ -216,7 +216,8 @@ window.addEventListener("resize", () => renderTable(false));
 function pills(s) {
   const v = videoState(s);
   const vid = v === "ok" ? `<span class="pill ok">${s.video ? s.video + "p" : esc(tr("pill.video"))}</span>`
-    : v === "low" ? `<span class="pill low" title="${esc(tr("pill.low_tip", { p: MIN_P }))}">${s.video}p</span>`
+    : v === "low" ? (s.videoSd ? `<span class="pill low" title="${esc(tr("pill.sd_tip"))}">${esc(tr("pill.sd", { p: s.video }))}</span>`
+      : `<span class="pill low" title="${esc(tr("pill.low_tip", { p: MIN_P }))}">${s.video}p</span>`)
     : v === "failed" ? `<span class="pill" title="${esc(tr("pill.none_found_tip"))}">${esc(tr("pill.none_found"))}</span>` : `<span class="pill">—</span>`;
   const ly = s.lyrics === "chart" ? `<span class="pill ok">${esc(tr("pill.lyrics_chart"))}</span>` : s.lyrics === "added" ? `<span class="pill ok">${esc(tr("pill.lyrics_added"))}</span>`
     : s.lyrics === "none" ? `<span class="pill">—</span>` : `<span class="pill">…</span>`;
@@ -849,6 +850,9 @@ async function loadSettings() {
       <div class="row2"><span>${esc(tr("settings.pref_quality"))}</span><select data-k="pref_p"><option value="720"${s.pref_p == 720 ? " selected" : ""}>720p</option><option value="1080"${s.pref_p == 1080 ? " selected" : ""}>1080p</option></select>
         <small>${esc(tr("settings.min_note", { p: d.minP }))}</small></div>
       ${chk("replace_low_res", tr("settings.low_res"), tr("settings.low_res_help"))}
+      ${chk("sd_fallback", tr("settings.sd_fallback"), tr("settings.sd_fallback_help"))}
+      <div class="row2"><span>${esc(tr("settings.sd_min"))}</span><select data-k="sd_min_p"><option value="480"${s.sd_min_p != 360 ? " selected" : ""}>480p</option><option value="360"${s.sd_min_p == 360 ? " selected" : ""}>360p</option></select>
+        <small>${esc(tr("settings.sd_min_note"))}</small></div>
       <div class="row2"><span>${esc(tr("settings.video_format"))}</span><span>${esc(tr("settings.format_webm"))}</span>
         <small>${esc(tr("settings.format_note"))}</small></div>
     </section>
@@ -896,7 +900,7 @@ async function loadSettings() {
   bindShare($("#settingsForm")); paintShare();
   $$("#settingsForm [data-k]").forEach((el) => el.addEventListener("change", async () => {
     const k = el.dataset.k; let v = el.type === "checkbox" ? el.checked : el.value;
-    if (["pref_p", "workers"].includes(k)) v = Number(v);
+    if (["pref_p", "workers", "sd_min_p"].includes(k)) v = Number(v);
     try { const r = await api("/api/settings", { settings: { [k]: v } }); toast(tr("settings.saved")); if (k === "yt_cookies") { loadSettings(); setTimeout(async () => { const e = $("#ytCookieState"); if (e) e.textContent = ytCookieText((await api("/api/settings")).youtube); }, 2500); } } catch (e) { toast(e.message); }
   }));
   $("#setChange").onclick = () => show("setup");

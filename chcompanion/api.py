@@ -52,7 +52,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         e.update({"meta": {k: v for k, v in s.meta.items() if len(str(v)) < 300},
                   "files": s.list_files(), "videoId": per.get("video_id"), "candidates": per.get("candidates", []),
                   "videoOffset": per.get("video_offset", 0.0), "lyricsOffset": per.get("lyrics_offset", 0.0),
-                  "videoRes": per.get("video_res"), "videoStart": s.video_start_s,
+                  "videoRes": per.get("video_res"), "videoSd": bool(per.get("video_sd")), "videoStart": s.video_start_s,
                   "videoOffsetWritten": per.get("video_offset_written", 0.0) or 0.0,
                   "skip": bool(per.get("game_skip")),
                   "status": c.song_job_status(s)})
@@ -442,6 +442,8 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
              if k not in ("ch_username", "ch_account_id", "ch_verified", "terms_version", "accepted_at")}       # only a CH sign-in (chlink.py) may link an account; only /api/terms/accept records acceptance
         if "pref_p" in s:
             s["pref_p"] = max(youtube.MIN_P, int(s["pref_p"]))
+        if "sd_min_p" in s:
+            s["sd_min_p"] = 360 if int(s["sd_min_p"]) <= 360 else 480
         return _json(h, {"settings": c.update_settings(s), "youtube": youtube.GATE.status()}) or True
     if path == "/api/telemetry" and method == "GET":
         return _json(h, _telemetry_state(c)) or True

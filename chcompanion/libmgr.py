@@ -154,6 +154,7 @@ class LibraryManager:
             "fav": self.is_fav(s, favsets), "copies": copies, "rating": int(per.get("rating", 0) or 0),
             "offset": per.get("video_offset"), "added": added,
             "videoFailed": bool(per.get("video_failed")),
+            "videoSd": bool(per.get("video_sd")),
         }
 
     def entries(self) -> list[dict]:

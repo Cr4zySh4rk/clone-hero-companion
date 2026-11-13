@@ -35,7 +35,12 @@ log = logging.getLogger(__name__)
 MIN_SCORE = 4.0
 REQUEST_SLEEP_S = 1.5            # yt-dlp's own pause between requests inside one extraction
 SEARCH_RESULTS = 5
-MIN_P = 640                      # hard floor: nothing below this is downloaded or accepted
+MIN_P = 640                      # HD floor: below this a video only counts as an SD fallback (see SD_CHOICES)
+SD_CHOICES = (480, 360)          # the lowest resolution the "use the best SD version" setting can accept
+STRONG_SCORE = 12.0              # score_candidate() of a strong official match (max 15; see is_strong_official)
+STILL_MAX_FPS = 1                # a "video" of 1 frame per second or less is a slideshow
+STILL_MIN_KBPS = 90              # the same absolute floor looks_static() applies to a downloaded file
+STILL_MIN_BPP = 0.005            # bits per pixel per frame; real music videos are >= 0.02 (see tests/fixtures/youtube/precheck.json)
 BAD_WORDS = ["lyric", "lyrics", "cover", "reaction", "karaoke", "tutorial", "lesson",
              "guitar", "drum", "drums", "bass", "instrumental", "remix", "slowed", "reverb",
              "8d", "sped up", "nightcore", "clone hero", "rock band", "guitar hero", "fortnite",
@@ -114,7 +119,15 @@ class ReducedFormats(VideoProblem):
 
 
 class NoHDVideo(Exception):
-    pass
+    """No stream at MIN_P or better. sd_p: the best SD resolution the video does offer (0: none or SD not
+    asked for), max_p: the best resolution of any kind, so the caller can still use it as an SD fallback."""
+    def __init__(self, *a, sd_p: int = 0, max_p: int = 0):
+        super().__init__(*a)
+        self.sd_p, self.max_p = sd_p, max_p
+
+
+class StillImage(Exception):
+    """The stream list says the upload is a picture with audio, not a music video (nothing was downloaded)."""
 
 
 def list_state(formats: list) -> str:
@@ -154,7 +167,7 @@ def classify_error(e: Exception, state: str | None = None, nformats: int = 0) ->
     """The exception to raise for what yt-dlp raised: BotDetected only for real throttling, a VideoProblem
     with the real message for a video that can't be had, `e` itself for everything else.
     state: what the selector saw ('sd' = full list without HD, 'reduced', 'empty')."""
-    if isinstance(e, (BotDetected, VideoProblem, NoHDVideo)):
+    if isinstance(e, (BotDetected, VideoProblem, NoHDVideo, StillImage)):
         return e
     if is_bot_error(e):
         return BotDetected(str(e))
@@ -164,6 +177,8 @@ def classify_error(e: Exception, state: str | None = None, nformats: int = 0) ->
         return VideoUnavailable(_short(e))
     if state == "sd":
         return NoHDVideo(f"no format at {MIN_P}p or better")
+    if state == "still":
+        return StillImage("looks like a still image")
     if state in ("reduced", "empty"):
         return ReducedFormats(_("yt.reduced_empty" if state == "empty" else "yt.reduced_nosep", count=nformats))
     return e
@@ -722,6 +737,62 @@ def pick_format(formats: list[dict], pref_p: int = 720, min_p: int = MIN_P, max_
     return best
 
 
+def pick_sd(formats: list[dict], min_p: int) -> dict | None:
+    """Best SD stream (min_p <= class < MIN_P): highest resolution first, then the usual codec/protocol order."""
+    best, best_key = None, None
+    for f in formats or []:
+        if (f.get("vcodec") in (None, "none")) or not f.get("url"):
+            continue
+        p = res_class(f.get("width"), f.get("height"))
+        if p < min_p or p >= MIN_P:
+            continue
+        proto = (f.get("protocol") or "")
+        key = (p, _codec_rank(f.get("vcodec"), True), proto.startswith("http") and "m3u8" not in proto,
+               f.get("acodec") in (None, "none"), f.get("tbr") or 0)
+        if best_key is None or key > best_key:
+            best, best_key = f, key
+    if best is not None:
+        best = dict(best)
+        best["res_class"] = res_class(best.get("width"), best.get("height"))
+    return best
+
+
+def max_res(formats: list[dict]) -> int:
+    return max((res_class(f.get("width"), f.get("height")) for f in formats or []
+                if f.get("vcodec") not in (None, "none") and f.get("protocol") != "mhtml"), default=0)
+
+
+def video_kbps(f: dict) -> float:
+    """Bitrate of the picture alone (a muxed stream also carries its audio)."""
+    if f.get("vbr"):
+        return float(f["vbr"])
+    t = float(f.get("tbr") or 0)
+    if t and f.get("acodec") not in (None, "none"):
+        t -= float(f.get("abr") or 96)
+    return max(t, 0.0)
+
+
+def still_reason(f: dict) -> str | None:
+    """Why this stream is probably an audio-plus-picture upload, from the stream list alone (no download).
+    Square frame (album art), 1 fps or less, an absolute picture bitrate under 90 kbps (what looks_static()
+    checks after a download), or bits per pixel per frame under 0.005: a moving video of any resolution or codec
+    needs at least 0.02 (recorded 144p-2160p lists of a real music video: 0.022 for 1080p VP9 up to 0.063)."""
+    w, h = f.get("width") or 0, f.get("height") or 0
+    if w and h and abs(w - h) <= 2:
+        return "square frame"
+    fps = f.get("fps")
+    if fps is not None and float(fps) <= STILL_MAX_FPS:
+        return f"{fps} fps"
+    kbps = video_kbps(f)
+    if kbps and kbps < STILL_MIN_KBPS and h >= 360:
+        return f"{kbps:.0f} kbps"
+    if kbps and w and h:
+        bpp = kbps * 1000 / (w * h * float(fps or 25))      # an unknown frame rate counts as 25: never flags more
+        if bpp < STILL_MIN_BPP:
+            return f"{bpp:.4f} bits/pixel/frame"
+    return None
+
+
 # ------------------------------------------------------------------ search
 def score_candidate(entry: dict, song: Song) -> float:
     title = norm_key(entry.get("title") or "")
@@ -769,10 +840,39 @@ def score_candidate(entry: dict, song: Song) -> float:
     return score
 
 
+def _compact_channel(name: str) -> str:
+    c = norm_key(name).split()
+    while c and c[0] == "the":
+        c = c[1:]
+    s = "".join(c)
+    for suf in ("officialchannel", "officialyoutube", "official", "vevo", "music", "tv"):
+        if s.endswith(suf) and len(s) > len(suf):
+            s = s[:-len(suf)]
+    return s
+
+
+def is_strong_official(entry: dict, song: Song, score: float | None = None) -> bool:
+    """An official upload for this song, sure enough to take its best SD version at once instead of trying other
+    uploads for HD. score_candidate() tops out at 15 (title 5, artist 3, "official music video" 4, "music video" 1,
+    VEVO/artist channel 2, minus up to 4 for a wrong duration); >= 12 needs the title, the artist and "official ...
+    video" all matching and an exact duration, or the artist/VEVO channel on top with a few seconds' slack. Beyond the score, one of: the channel is the
+    artist (or its VEVO/Topic channel), or the title says "official"."""
+    sc = score_candidate(entry, song) if score is None else score
+    if sc < STRONG_SCORE:
+        return False
+    title = norm_key(entry.get("title") or "")
+    chan = norm_key(entry.get("channel") or entry.get("uploader") or "")
+    artist = norm_key(clean_title(song.artist))
+    ac, cc = _compact_channel(artist), _compact_channel(chan)
+    return bool("official" in title.split() or "vevo" in chan or chan.endswith(" topic")
+                or (ac and cc and ac == cc))
+
+
 class YouTube:
-    def __init__(self, max_height: int = 1080, pref_p: int = 720):
+    def __init__(self, max_height: int = 1080, pref_p: int = 720, sd_min_p: int = 0):
         self.max_height = max_height
         self.pref_p = pref_p
+        self.sd_min_p = sd_min_p      # 0: never use SD; else the lowest SD class accepted when no HD exists
         self._streams: dict[str, tuple[float, dict]] = {}
         self._infos: dict[str, tuple[float, dict]] = {}
         self._searches: dict[str, tuple[float, list]] = {}
@@ -938,10 +1038,13 @@ class YouTube:
             fmt["res_class"] = got_res or fmt.get("res_class")
         return path, fmt
 
-    def fetch(self, video_id: str, dest_noext: str, with_audio: bool = False, progress=None) -> tuple[str, dict, str | None]:
+    def fetch(self, video_id: str, dest_noext: str, with_audio: bool = False, progress=None,
+              take_sd: bool = False) -> tuple[str, dict, str | None]:
         """One YouTube lookup, then the HD video stream (and the audio stream, for lining the
         video up) downloaded in the same session: (video_path, format, audio_path).
-        Raises NoHDVideo when the video has no >= 640p stream; BotDetected only when YouTube really
+        Raises NoHDVideo when the video has no >= 640p stream (its sd_p says what SD it does have, when
+        self.sd_min_p asks for SD; take_sd=True downloads that SD stream instead of raising), StillImage when
+        the stream list says it is a picture with audio (checked before anything is downloaded); BotDetected only when YouTube really
         limits us; a VideoProblem (age-restricted, unavailable, no video streams offered) with
         yt-dlp's own message otherwise. Exactly one extraction, whatever the answer."""
         from yt_dlp import YoutubeDL
@@ -960,6 +1063,23 @@ class YouTube:
             if not v:
                 st = list_state(fm)
                 state["why"] = "sd" if st == "full" else st
+                if st != "full":
+                    return
+                state["max_p"] = max_res(fm)
+                sd = pick_sd(fm, self.sd_min_p) if self.sd_min_p else None
+                if not sd:
+                    return
+                state["sd_p"] = sd["res_class"]
+                if take_sd:
+                    v = sd
+                    state["sd_taken"] = True
+                    state["why"] = None
+                else:
+                    return
+            state["max_p"] = state.get("max_p") or v["res_class"]
+            reason = still_reason(v)
+            if reason:                        # decided from the stream list: nothing is downloaded
+                state["why"], state["still"] = "still", reason
                 return
             state["fmt"] = v
             yield next(f for f in fm if f.get("format_id") == v["format_id"])
@@ -992,6 +1112,10 @@ class YouTube:
             if isinstance(c, BotDetected):
                 c.video_id = video_id
                 GATE.throttled(c, video_id)
+            if isinstance(c, NoHDVideo):
+                c.sd_p, c.max_p = state.get("sd_p", 0), state.get("max_p", 0)
+            if isinstance(c, StillImage):
+                log.info("%s: %s, skipped without downloading", video_id, state.get("still"))
             if c is e:
                 raise
             raise c from e
@@ -1015,7 +1139,7 @@ class YouTube:
             # Asking YouTube for the audio a second time is what used to trigger rate limiting.
             vpath, apath = _split_merged(vpath)
         got_res = res_class(got.get("width"), got.get("height"))
-        if got_res and got_res < MIN_P:
+        if got_res and got_res < (self.sd_min_p if state.get("sd_taken") else MIN_P):
             for x in (vpath, apath):
                 try:
                     Path(x).unlink()
@@ -1025,6 +1149,7 @@ class YouTube:
         fmt = dict(state.get("fmt") or {})
         fmt.update({k: got.get(k) for k in ("format_id", "vcodec", "width", "height", "ext") if got.get(k)})
         fmt["res_class"] = got_res or fmt.get("res_class")
+        fmt["sd"] = bool(fmt["res_class"] and fmt["res_class"] < MIN_P)
         return vpath, fmt, apath
 
     def download_audio(self, video_id: str, dest_noext: str) -> str:
