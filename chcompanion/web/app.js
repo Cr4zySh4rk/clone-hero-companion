@@ -851,7 +851,7 @@ async function loadSettings() {
         <small>${esc(tr("settings.min_note", { p: d.minP }))}</small></div>
       ${chk("replace_low_res", tr("settings.low_res"), tr("settings.low_res_help"))}
       ${chk("sd_fallback", tr("settings.sd_fallback"), tr("settings.sd_fallback_help"))}
-      <div class="row2"><span>${esc(tr("settings.sd_min"))}</span><select data-k="sd_min_p"><option value="480"${s.sd_min_p != 360 ? " selected" : ""}>480p</option><option value="360"${s.sd_min_p == 360 ? " selected" : ""}>360p</option></select>
+      <div class="row2"><span>${esc(tr("settings.sd_min"))}</span><select data-k="sd_min_p"><option value="480"${s.sd_min_p == 480 ? " selected" : ""}>480p</option><option value="360"${s.sd_min_p != 480 ? " selected" : ""}>360p</option></select>
         <small>${esc(tr("settings.sd_min_note"))}</small></div>
       <div class="row2"><span>${esc(tr("settings.video_format"))}</span><span>${esc(tr("settings.format_webm"))}</span>
         <small>${esc(tr("settings.format_note"))}</small></div>

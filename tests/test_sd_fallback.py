@@ -258,3 +258,31 @@ class FlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealStreamListTests(unittest.TestCase):
+    """Real YouTube stream lists recorded from a home connection (2026-11-13), URLs replaced."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        from pathlib import Path
+        cls.lists = json.loads((Path(__file__).parent / "fixtures" / "youtube" / "real_lists.json").read_text("utf-8"))
+
+    def best(self, vid):
+        fm = self.lists[vid]["formats"]
+        return youtube.pick_format(fm, 720, max_p=1080) or youtube.pick_sd(fm, 360)
+
+    def test_official_sd_only_videos_get_their_sd_stream(self):
+        self.assertIsNone(youtube.pick_format(self.lists["xqds0B_meys"]["formats"], 720, max_p=1080))
+        self.assertEqual(youtube.pick_sd(self.lists["xqds0B_meys"]["formats"], 480)["height"], 480)   # Animal I Have Become
+        self.assertIsNone(youtube.pick_sd(self.lists["0xyxtzD54rM"]["formats"], 480))
+        self.assertEqual(youtube.pick_sd(self.lists["0xyxtzD54rM"]["formats"], 360)["height"], 360)   # Given Up (default 360p)
+
+    def test_still_image_uploads_are_recognised_before_download(self):
+        for vid in ("j7rLdd8EiJQ", "71blIL2Dnl8", "D93vYwuMeUw"):
+            self.assertIsNotNone(youtube.still_reason(self.best(vid)), vid)
+
+    def test_real_music_videos_are_not_called_still(self):
+        for vid in ("xqds0B_meys", "0xyxtzD54rM", "FVovq9TGBw0", "tMDFv5m18Pw", "n9h7hU6_VI4"):
+            self.assertIsNone(youtube.still_reason(self.best(vid)), vid)

@@ -355,7 +355,7 @@ class Companion:
     # ------------------------------------------------------------ settings / jobs
     DEFAULTS = {"workers": 0, "pref_p": 720, "in_game": True, "prefetch": True, "game_lyrics": True,
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
-                "replace_low_res": True, "sd_fallback": True, "sd_min_p": 480, "game_path": "", "data_dir": "", "song_dirs": [],
+                "replace_low_res": True, "sd_fallback": True, "sd_min_p": 360, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
                 "ch_username": "", "ch_account_id": 0, "ch_verified": False, "launch_signed_in": True, "yt_cookies": "none", "yt_cookies_file": "",
                 "language": "auto", "terms_version": 0, "accepted_at": ""}
@@ -529,7 +529,7 @@ class Companion:
     def _sd_min_p(self) -> int:
         """Lowest SD class to accept when a video has no HD version; 0 when the setting is off."""
         s = self.settings()
-        return min(youtube.SD_CHOICES[0], max(youtube.SD_CHOICES[-1], int(s.get("sd_min_p") or 480))) if s.get("sd_fallback") else 0
+        return min(youtube.SD_CHOICES[0], max(youtube.SD_CHOICES[-1], int(s.get("sd_min_p") or 360))) if s.get("sd_fallback") else 0
 
     def update_settings(self, values: dict) -> dict:
         cur = self.store.get("settings", {}) or {}
