@@ -142,7 +142,9 @@ class PotServer:
             port = free_port()
             self._errfile = tempfile.NamedTemporaryFile("w+b", prefix="chc-pot-", suffix=".log", delete=False)
             try:
-                self._proc = popen(command(deno, port), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self._errfile)
+                # stdin is a lifeline: the server exits when this pipe closes, i.e. when the app exits, even if killed
+                self._proc = popen(command(deno, port), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self._errfile,
+                                   env=dict(os.environ, CHC_POT_LIFELINE="1"))
             except Exception as e:                      # OSError, ToolStartError
                 self._fail(f"could not start Deno ({type(e).__name__})")
                 return False

@@ -43,5 +43,7 @@ await build({
   entryPoints: [path.join(serverDir, "src/main.ts")],
   bundle: true, platform: "node", format: "esm", target: "es2022", minify: true, legalComments: "none",
   external: ["canvas"], plugins: [inlineStylesheet, noSyncXhrWorker, cssTreeCjs], outfile: outFile, logLevel: "warning",
-  banner: { js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);' },
+  // Lifeline (CHC 2.9.0): the app keeps our stdin open; when the app exits (even if killed) the pipe closes and we exit,
+  // so no orphaned server is left behind. Only with CHC_POT_LIFELINE=1, so manual runs are unaffected.
+  banner: { js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);if(globalThis.Deno?.env.get("CHC_POT_LIFELINE")==="1"){(async()=>{try{const b=new Uint8Array(64);while((await Deno.stdin.read(b))!==null){}}catch(_){}Deno.exit(0)})();}' },
 });
