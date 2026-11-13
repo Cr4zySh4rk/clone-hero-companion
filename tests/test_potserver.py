@@ -171,7 +171,8 @@ class PotServerTests(unittest.TestCase):
                 mock.patch.object(potserver, "ping", lambda port, timeout=2.0: {"version": "2.0.2"}):
             self.assertIsNotNone(self.server.ensure())
         self.assertTrue(captured["creationflags"] & 0x08000000)
-        self.assertEqual(captured["stdin"], subprocess.DEVNULL)
+        self.assertEqual(captured["stdin"], subprocess.PIPE)          # lifeline: the server exits when the app does
+        self.assertEqual(captured["env"]["CHC_POT_LIFELINE"], "1")
         self.assertEqual(captured["stdout"], subprocess.DEVNULL)
 
     # ---- yt-dlp options ----
