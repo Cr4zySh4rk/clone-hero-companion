@@ -34,6 +34,72 @@ def _is_cancel_error(e: BaseException) -> bool:
     return getattr(msg_of(e), "key", "") == "job.cancelled"
 
 
+class Deferred:
+    """What a runner may return instead of a result: the rest of the job ("convert the video, then pack it")
+    to run on the conversion stage so the job worker can start the next song. run(progress) does the work and
+    returns the result string (cleaning up after itself, also when it raises); abort() is for a continuation that
+    never runs (app quit) and must clean up the same way."""
+
+    def __init__(self, run, abort=None):
+        self.run, self.abort = run, abort or (lambda: None)
+
+
+class ConversionStage:
+    """A bounded, process-wide pool: `slots` threads run the deferred conversions of jobs, at most `slots * 2`
+    more wait in line (put() blocks, cancel-aware, when full, so downloaded files cannot pile up). Lines are
+    ordered by job priority, then arrival, like the main queue."""
+
+    def __init__(self, slots: int, run_one):
+        self.slots = max(1, int(slots))
+        self.cap = self.slots * 2
+        self.run_one = run_one
+        self.cv = threading.Condition()
+        self.heap: list = []
+        self.seq = itertools.count()
+        self.closed = False
+        self.threads = [threading.Thread(target=self._loop, daemon=True, name=f"convert-{i}")
+                        for i in range(self.slots)]
+        for t in self.threads:
+            t.start()
+
+    def put(self, job, deferred) -> None:
+        """Queue the job's continuation; waits while the line is full. Raises Cancelled if the job is cancelled
+        meanwhile (the caller aborts the continuation)."""
+        with self.cv:
+            while len(self.heap) >= self.cap and not self.closed:
+                if job.cancel.is_set():
+                    raise Cancelled()
+                self.cv.wait(0.2)
+            if self.closed:
+                raise Cancelled()
+            heapq.heappush(self.heap, (job.priority, next(self.seq), job, deferred))
+            self.cv.notify_all()
+
+    def waiting(self) -> int:
+        with self.cv:
+            return len(self.heap)
+
+    def _loop(self):
+        while True:
+            with self.cv:
+                while not self.heap and not self.closed:
+                    self.cv.wait()
+                if self.closed:
+                    return
+                _, _, job, deferred = heapq.heappop(self.heap)
+                self.cv.notify_all()          # room in the line: a blocked worker may hand off
+            self.run_one(job, deferred)
+
+    def shutdown(self) -> list:
+        """Stop the threads; returns the continuations that never ran (the caller aborts them)."""
+        with self.cv:
+            self.closed = True
+            left = [(j, d) for _p, _s, j, d in self.heap]
+            self.heap.clear()
+            self.cv.notify_all()
+        return left
+
+
 @dataclass
 class Job:
     kind: str                      # media | metadata | full | download
@@ -65,7 +131,8 @@ class Job:
 
 
 class JobManager:
-    def __init__(self, runner, workers: int | None = None, busy=None, on_change=None):
+    def __init__(self, runner, workers: int | None = None, busy=None, on_change=None,
+                 conversion_slots: int | None = None):
         """runner(job, progress) does the work and returns a result string.
         busy(job) -> True while the job's song is in use (playing)."""
         self.runner = runner
@@ -77,8 +144,43 @@ class JobManager:
         self.order = itertools.count()
         self.threads: list[threading.Thread] = []
         self.target_workers = workers or min(4, os.cpu_count() or 2)
-        self.active = 0
+        self.active = 0          # jobs running, including those in the conversion stage
         self.paused = False
+        self._slots = conversion_slots
+        self._stage: ConversionStage | None = None
+        self._closed = False
+
+    def stage(self) -> ConversionStage:
+        with self.lock:
+            if self._closed:
+                raise Cancelled()
+            if self._stage is None:
+                n = self._slots
+                if n is None:
+                    from .hwvideo import encode_slots
+                    n = encode_slots()
+                self._stage = ConversionStage(n, self._convert_one)
+            return self._stage
+
+    def shutdown(self):
+        """App quit: stop the workers and the conversion stage; queued conversions clean up and end cancelled."""
+        with self.lock:
+            self._closed = True
+            self.target_workers = 0
+            stage = self._stage
+            self.lock.notify_all()
+        left = stage.shutdown() if stage else []
+        for job, d in left:
+            try:
+                d.abort()
+            except Exception as e:
+                log.warning("Could not clean up the queued conversion of %s: %s", job.title, e)
+            with self.lock:
+                if job.status == "running":
+                    job.status, job.step = "cancelled", ""
+                job.finished = job.finished or time.time()
+                self.active -= 1
+            self.on_change(job)
 
     # ------------------------------------------------------------ control
     def start(self):
@@ -206,7 +308,16 @@ class JobManager:
             if job is None:
                 return
             self.on_change(job)
+            self._process(job, lambda progress: self.runner(job, progress), may_defer=True)
 
+    def _convert_one(self, job: Job, deferred: Deferred):
+        """A conversion-stage thread: finish the job exactly as a worker would have."""
+        self._process(job, deferred.run, may_defer=False)
+
+    def _process(self, job: Job, fn, may_defer: bool):
+        """Run fn(progress) for the job and settle its final state. A runner may return a Deferred: the job then
+        stays "running" (visible as converting) and moves to the conversion stage, freeing this worker."""
+        if True:
             def progress(msg, job=job):
                 if job.cancel.is_set():
                     raise Cancelled()
@@ -216,11 +327,23 @@ class JobManager:
                 if getattr(msg, "key", "") not in ("job.wait_cooldown", "yt.pacing"):
                     job.work_step = msg
                 self.on_change(job)
+            handed = False
             try:
-                if job.cancel.is_set():
+                if may_defer and job.cancel.is_set():
                     raise Cancelled()
                 with _bind_cancel(job.cancel):
-                    job.result = self.runner(job, progress) or _("job.done")
+                    res = fn(progress)
+                    if may_defer and isinstance(res, Deferred):
+                        job.step = _("ingame.waiting_encoder")
+                        try:
+                            self.stage().put(job, res)
+                        except BaseException:
+                            res.abort()
+                            raise
+                        handed = True       # the stage finishes the job; active stays counted
+                        self.on_change(job)
+                        return
+                    job.result = res or _("job.done")
                 job.status = "cancelled" if job.cancel.is_set() else "done"
                 job.step = ""
             except Cancelled:
@@ -244,7 +367,7 @@ class JobManager:
                             heapq.heappush(self.heap, (job.priority, next(self.order), job.id))
                             self.active -= 1
                         self.on_change(job)
-                        continue
+                        return
                     sig = youtube.SIGNAL_LABELS.get((youtube.GATE.last_limit or {}).get("signal"), "")
                     why = (_("job.yt_limited_sig", count=job.cooldowns - 1, signal=sig) if sig
                            else _("job.yt_limited", count=job.cooldowns - 1))
@@ -262,7 +385,7 @@ class JobManager:
                     job.status = "failed"
                     job.error = _("job.error_in_step", step=job.step, detail=detail) if job.step else detail
             finally:
-                if job.status != "waiting":
+                if not handed and job.status != "waiting":
                     job.finished = job.finished if job.status == "cancelled" and job.finished else time.time()
             with self.lock:
                 if job.status != "waiting":

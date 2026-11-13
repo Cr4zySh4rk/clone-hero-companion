@@ -487,11 +487,14 @@ def _failure_still_applies(info: dict, base: dict, sd_min: int) -> bool:
 
 
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False,
-                   defer: bool = False, convert: bool = True) -> Path:
-    """See _download_video. A cancel removes the work folder (partial downloads, half-written WebM)."""
+                   defer: bool = False, convert: bool = True, later: list | None = None) -> Path:
+    """See _download_video. A cancel removes the work folder (partial downloads, half-written WebM).
+    later: a list; when the video still needs the VP8 encode, the encode is not run but appended to it as
+    convert(progress) -> Path (the finished video.webm) and the downloaded original is returned. The caller then
+    owns the work folder (path.parent)."""
     made: list[Path] = []
     try:
-        return _download_video(song, yt, store, progress, force, defer, convert, made)
+        return _download_video(song, yt, store, progress, force, defer, convert, made, later)
     except _cancel.Cancelled:
         for d in made:
             shutil.rmtree(d, ignore_errors=True)
@@ -499,7 +502,7 @@ def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: 
 
 
 def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool, defer: bool,
-                    convert: bool, made: list) -> Path:
+                    convert: bool, made: list, later: list | None = None) -> Path:
     """Download the best matching HD (>= 640p) music video for the song, lined up and as VP8 WebM (plays in
     Clone Hero on every OS). A video that is already VP8 is used as it is; a lead-in of black for a negative
     offset is folded into the one encode (see padded_seconds). Raises InGameError if there is none.
@@ -682,12 +685,17 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
         height = (video_res(path) or int(fmt.get("res_class") or 0)) if codec.startswith("vp8") else 0
         if path.suffix.lower() == ".webm" and codec.startswith("vp8") and not pad and 0 < height <= MAX_HEIGHT + 20:
             return path          # YouTube offered VP8 (rare) or the cache had it: no re-encode
-        out = tmpdir / "video_vp8.webm"
-        encode_vp8(path, out, pad, progress)
-        path.unlink(missing_ok=True)
-        if pad:
-            (tmpdir / PAD_MARK).write_text(f"{pad:.3f}")
-        return out.rename(tmpdir / "video.webm")
+        def run_convert(progress=progress, path=path, pad=pad, tmpdir=tmpdir) -> Path:
+            out = tmpdir / "video_vp8.webm"
+            encode_vp8(path, out, pad, progress)
+            path.unlink(missing_ok=True)
+            if pad:
+                (tmpdir / PAD_MARK).write_text(f"{pad:.3f}")
+            return out.rename(tmpdir / "video.webm")
+        if later is not None:
+            later.append(run_convert)
+            return path
+        return run_convert()
     if path.suffix.lower() in (".mp4", ".m4v"):
         with open(path, "rb") as f:
             head = f.read(16)
@@ -851,83 +859,140 @@ def current_video_res(song: Song, store: Store) -> int:
 
 def prepare(song: Song, yt: YouTube, store: Store, *, video: bool = True, lyrics: bool = True,
             force_video: bool = False, replace_low_res: bool = True, progress=None,
-            defer_video: bool = False) -> dict:
+            defer_video: bool = False, stage: bool = False) -> dict:
     """Put video and lyrics into the song for Clone Hero. Returns a summary dict.
     defer_video: when YouTube is limiting requests, don't fail or wait: lyrics still go in and the result
-    carries 'video_pending' (the YouTube limit signal) so the video step can run later."""
-    with _lock_for(song.key):
-        if not song.path.exists():      # waited behind another chart of the song; this one may have gone meanwhile
-            raise InGameError(chart_gone())
-        result = {"video": None, "lyrics": None, "video_pending": None}
-        per = store.song(song.key)
-        lines: list[dict] = []
-        want_lyrics = lyrics and not per.get("game_lyrics") and not song.chart_lyrics()
-        if want_lyrics:
-            if progress:
-                progress(_("ingame.finding_lyrics"))
-            entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
-            lines = entry["lines"] if entry else []
-            if not lines:
-                result["lyrics"] = "none found"
-            elif "lyrics_offset" not in per or per.get("lyrics_offset_auto"):
-                if progress:
-                    progress(_("ingame.aligning_lyrics"))
-                shift = auto_lyrics_offset(song, entry, yt)
-                if shift is not None:
-                    store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
-                    per = store.song(song.key)
-        existing = has_video(song)
-        converted = None
-        if existing and video and not force_video and needs_vp8(song):
-            # a video from before (MP4): convert it in place instead of downloading it again
-            try:
-                converted = convert_song_video(song, store, progress)
-            except Exception as e:
-                log.warning("Could not convert the video of %s (%s); getting a new one", song.display, e)
-            if converted:
-                result["video"] = converted
-                store.update_song(song.key, game_video=converted)
-        unplayable = existing and video and converted is None and needs_vp8(song)
-        want_video = video and (force_video or not existing or unplayable
-                                or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD
-                                    and not sd_is_final(per)))
-        vpath = None
-        if want_video:
-            try:
-                vpath = download_video(song, yt, store, progress, force=force_video or unplayable,
-                                       defer=defer_video)
-            except Exception as e:
-                if not (defer_video and type(e).__name__ == "BotDetected"):
-                    raise
-                result["video_pending"] = getattr(e, "signal", "unknown")
-                log.info("Video for %s deferred: YouTube is limiting requests (%s)", song.display,
-                         result["video_pending"])
-            per = store.song(song.key)
-        off_v = float(per.get("video_offset", 0.0) or 0.0)
-        write_v = off_v  # value for video_start_time
-        if vpath and padded_seconds(vpath):     # the black lead-in is already in the file (one encode)
-            write_v = 0.0
-        off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
-        _cancel.check()
+    carries 'video_pending' (the YouTube limit signal) so the video step can run later.
+    stage: stop before the VP8 encode: the result then carries 'continuation', a callable(progress) that encodes,
+    packs and returns the finished result dict (call abort() instead if it will never run). Until one of the two
+    happens the song stays locked, so the pack can't race another job on the same song."""
+    lock = _lock_for(song.key)
+    lock.acquire()
+    handed = False
+    try:
+        r = _prepare_locked(song, yt, store, video, lyrics, force_video, replace_low_res, progress,
+                            defer_video, stage, lock)
+        handed = "continuation" in r
+        return r
+    finally:
+        if not handed:
+            lock.release()
+
+
+class PendingConversion:
+    """The 'encode, then pack' rest of prepare(), runnable later on another thread. Holds the song's lock until
+    it has run or been aborted."""
+
+    def __init__(self, song, store, lines, result, convert, workdir: Path, lock):
+        self.song, self.store, self.lines, self.result = song, store, lines, result
+        self.convert, self.workdir, self.lock = convert, workdir, lock
+        self._done = threading.Lock()
+        self._released = False
+
+    def _release(self):
+        with self._done:
+            if self._released:
+                return
+            self._released = True
+        shutil.rmtree(self.workdir, ignore_errors=True)
+        self.lock.release()
+
+    def abort(self):
+        self._release()
+
+    def __call__(self, progress=None) -> dict:
         try:
-            if song.is_sng:
-                _apply_sng(song, vpath, lines, off_l, write_v, result)
-            else:
-                _apply_folder(song, vpath, lines, off_l, write_v, result)
+            self.result.pop("continuation", None)
+            _cancel.check()
+            vpath = self.convert(progress)
+            return _finish_prepare(self.song, self.store, vpath, self.lines, self.result)
         finally:
-            if vpath:
-                shutil.rmtree(vpath.parent, ignore_errors=True)
-        changes = {}
-        if result["video"] and vpath:
-            changes["game_video"] = result["video"]
-            changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
-            changes["video_padded"] = round(off_v - write_v, 3) or None
-        if result["lyrics"] == "added":
-            changes["game_lyrics"] = True
-            changes["lyrics_offset_written"] = off_l
-        if changes:
-            store.update_song(song.key, **changes)
+            self._release()
+
+
+def _prepare_locked(song, yt, store, video, lyrics, force_video, replace_low_res, progress, defer_video,
+                    stage, lock) -> dict:
+    if not song.path.exists():      # waited behind another chart of the song; this one may have gone meanwhile
+        raise InGameError(chart_gone())
+    result = {"video": None, "lyrics": None, "video_pending": None}
+    per = store.song(song.key)
+    lines: list[dict] = []
+    want_lyrics = lyrics and not per.get("game_lyrics") and not song.chart_lyrics()
+    if want_lyrics:
+        if progress:
+            progress(_("ingame.finding_lyrics"))
+        entry = lyr.fetch_lrclib_entry(song.artist, song.name, song.length_s)
+        lines = entry["lines"] if entry else []
+        if not lines:
+            result["lyrics"] = "none found"
+        elif "lyrics_offset" not in per or per.get("lyrics_offset_auto"):
+            if progress:
+                progress(_("ingame.aligning_lyrics"))
+            shift = auto_lyrics_offset(song, entry, yt)
+            if shift is not None:
+                store.update_song(song.key, lyrics_offset=round(shift, 3), lyrics_offset_auto=True)
+                per = store.song(song.key)
+    existing = has_video(song)
+    converted = None
+    if existing and video and not force_video and needs_vp8(song):
+        # a video from before (MP4): convert it in place instead of downloading it again
+        try:
+            converted = convert_song_video(song, store, progress)
+        except Exception as e:
+            log.warning("Could not convert the video of %s (%s); getting a new one", song.display, e)
+        if converted:
+            result["video"] = converted
+            store.update_song(song.key, game_video=converted)
+    unplayable = existing and video and converted is None and needs_vp8(song)
+    want_video = video and (force_video or not existing or unplayable
+                            or (replace_low_res and 0 < current_video_res(song, store) < MIN_HD
+                                and not sd_is_final(per)))
+    vpath = None
+    later: list = []
+    if want_video:
+        try:
+            vpath = download_video(song, yt, store, progress, force=force_video or unplayable,
+                                   defer=defer_video, **({"later": later} if stage else {}))
+        except Exception as e:
+            if not (defer_video and type(e).__name__ == "BotDetected"):
+                raise
+            result["video_pending"] = getattr(e, "signal", "unknown")
+            log.info("Video for %s deferred: YouTube is limiting requests (%s)", song.display,
+                     result["video_pending"])
+        per = store.song(song.key)
+    if stage and later:
+        result["continuation"] = PendingConversion(song, store, lines, result, later[0], vpath.parent, lock)
         return result
+    return _finish_prepare(song, store, vpath, lines, result)
+
+
+def _finish_prepare(song, store, vpath, lines, result) -> dict:
+    per = store.song(song.key)
+    off_v = float(per.get("video_offset", 0.0) or 0.0)
+    write_v = off_v  # value for video_start_time
+    if vpath and padded_seconds(vpath):     # the black lead-in is already in the file (one encode)
+        write_v = 0.0
+    off_l = float(per.get("lyrics_offset", 0.0) or 0.0) + float(store.get("lyrics_offset", 0.0) or 0.0)
+    _cancel.check()
+    try:
+        if song.is_sng:
+            _apply_sng(song, vpath, lines, off_l, write_v, result)
+        else:
+            _apply_folder(song, vpath, lines, off_l, write_v, result)
+    finally:
+        if vpath:
+            shutil.rmtree(vpath.parent, ignore_errors=True)
+    changes = {}
+    if result["video"] and vpath:
+        changes["game_video"] = result["video"]
+        changes["video_offset_written"] = off_v if abs(off_v) >= 0.05 else 0.0
+        changes["video_padded"] = round(off_v - write_v, 3) or None
+    if result["lyrics"] == "added":
+        changes["game_lyrics"] = True
+        changes["lyrics_offset_written"] = off_l
+    if changes:
+        store.update_song(song.key, **changes)
+    return result
 
 
 def convert_song_video(song: Song, store: Store, progress=None) -> str | None:

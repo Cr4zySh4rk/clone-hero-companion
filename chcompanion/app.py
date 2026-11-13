@@ -23,7 +23,7 @@ from .cloud import Cloud, CloudSync
 from .friends import Friends, POLL_S as FRIENDS_POLL_S
 from .playstats import PlayLog, PlayWatcher, candidate_files
 from .scoredata import ScoreDataCache, candidate_files as scoredata_candidates
-from .jobs import Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
+from .jobs import Deferred, Job, JobManager, PRIO_BATCH, PRIO_HOVER, PRIO_LIBRARY, PRIO_PLAYED, PRIO_USER
 from .libmgr import LibraryManager, song_id
 from .library import Library, Song, norm_key
 from .logwatch import ClockState, LogWatcher
@@ -742,31 +742,23 @@ class Companion:
                                    video=o.get("video", True), lyrics=o.get("lyrics", self.game_lyrics),
                                    force_video=bool(o.get("force")),
                                    replace_low_res=o.get("replace_low_res", self.settings()["replace_low_res"]),
-                                   progress=progress, defer_video=True)
-                if r.get("lyrics") == "none found":
-                    self.store.update_song(song.key, lyrics_none=True)
-                if r.get("video"):
-                    telemetry.event("add_video", result="ok")
-                elif o.get("video", True) and self.store.song(song.key).get("video_failed"):
-                    telemetry.event("add_video", result="fail")
-                if r.get("lyrics") in ("added", "none found"):
-                    telemetry.event("add_lyrics", result="ok" if r["lyrics"] == "added" else "fail")
-                res = self.store.song(song.key).get("video_res")
-                if r.get("video"):
-                    job.video_added = True
-                    sd = bool(self.store.song(song.key).get("video_sd") and res)
-                    if song.is_sng:
-                        parts.append(_("job.video_sng_sd" if sd else "job.video_sng_res", res=res) if res else _("job.video_sng"))
-                    else:
-                        parts.append(_("job.video_saved_sd" if sd else "job.video_saved_res", res=res, file=r["video"]) if res else _("job.video_saved", file=r["video"]))
-                if r.get("lyrics") == "added":
-                    parts.append(_("job.lyrics_added"))
-                if r.get("video_pending"):
-                    parts.append(self._video_pending(song, job, r["video_pending"]))
-                else:
-                    self.store.update_song(song.key, video_pending=None)
-                if not r.get("video") and not r.get("lyrics") == "added" and not r.get("video_pending"):
-                    parts.append(_("job.already_set_up"))
+                                   progress=progress, defer_video=True, stage=True)
+                cont = r.pop("continuation", None)
+                if cont is not None:
+                    # the VP8 encode runs on the conversion stage; this worker moves on to the next song
+                    def finish(progress, cont=cont, song=song, job=job, o=o, parts=parts):
+                        try:
+                            r = cont(progress)
+                            self._media_result(song, job, o, r, parts)
+                        except FileNotFoundError as e:
+                            if str(song.path) in str(e.filename or "") or not song.path.exists():
+                                raise RuntimeError(ingame.chart_gone()) from e
+                            raise
+                        finally:
+                            self._refresh_quietly(song)
+                        return join(parts) if parts else _("job.done")
+                    return Deferred(finish, cont.abort)
+                self._media_result(song, job, o, r, parts)
         except FileNotFoundError as e:
             if str(song.path) in str(e.filename or "") or not song.path.exists():
                 raise RuntimeError(ingame.chart_gone()) from e
@@ -780,6 +772,39 @@ class Companion:
         return join(parts) if parts else _("job.done")
 
     MAX_VIDEO_RESUMES = 4
+
+    def _refresh_quietly(self, song: Song):
+        try:
+            if song.path.exists():
+                self.libmgr.refresh_song(song)
+        except Exception as e:      # bookkeeping only; the song itself is done
+            log.warning("Could not refresh %s in the library view: %s", song.display, e)
+
+    def _media_result(self, song: Song, job: Job, o: dict, r: dict, parts: list) -> None:
+        if r.get("lyrics") == "none found":
+            self.store.update_song(song.key, lyrics_none=True)
+        if r.get("video"):
+            telemetry.event("add_video", result="ok")
+        elif o.get("video", True) and self.store.song(song.key).get("video_failed"):
+            telemetry.event("add_video", result="fail")
+        if r.get("lyrics") in ("added", "none found"):
+            telemetry.event("add_lyrics", result="ok" if r["lyrics"] == "added" else "fail")
+        res = self.store.song(song.key).get("video_res")
+        if r.get("video"):
+            job.video_added = True
+            sd = bool(self.store.song(song.key).get("video_sd") and res)
+            if song.is_sng:
+                parts.append(_("job.video_sng_sd" if sd else "job.video_sng_res", res=res) if res else _("job.video_sng"))
+            else:
+                parts.append(_("job.video_saved_sd" if sd else "job.video_saved_res", res=res, file=r["video"]) if res else _("job.video_saved", file=r["video"]))
+        if r.get("lyrics") == "added":
+            parts.append(_("job.lyrics_added"))
+        if r.get("video_pending"):
+            parts.append(self._video_pending(song, job, r["video_pending"]))
+        else:
+            self.store.update_song(song.key, video_pending=None)
+        if not r.get("video") and not r.get("lyrics") == "added" and not r.get("video_pending"):
+            parts.append(_("job.already_set_up"))
 
     def _video_pending(self, song: Song, job: Job, signal: str) -> str:
         """YouTube is limiting requests: the rest of the job is done; mark the video as pending and queue

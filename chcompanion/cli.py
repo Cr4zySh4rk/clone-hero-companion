@@ -403,6 +403,7 @@ def cmd_run(args) -> int:
         except KeyboardInterrupt:
             pass
     from . import potserver, telemetry
+    comp.jobs.shutdown()
     potserver.stop()
     telemetry.shutdown()
     logging.info("Bye!")
