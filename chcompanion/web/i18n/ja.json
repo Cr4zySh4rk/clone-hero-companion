@@ -998,11 +998,7 @@
  "share.err_write": "画像を保存できませんでした。",
  "share.card_player": "プレイヤー",
  "share.card_sub": "私の Clone Hero 統計",
- "share.card_highlights": "最近のハイライト",
- "share.card_none": "曲をプレイするとハイライトが貯まります",
- "share.text": "私の Clone Hero 統計：プレイ {plays} 回 · {hours} 時間 · FC {fcs} · 連続 {streak} 日",
- "share.text_latest": "最新：{what}。",
- "share.text_end": "Clone Hero Companion で記録 — cloneherocompanion.com",
+ "share.text_end": "Clone Hero Companion で記録：cloneherocompanion.com",
  "share.reddit_title": "私の Clone Hero 統計",
  "profile.acc.fc": "{name} でフルコンボ",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1028,5 +1024,9 @@
  "terms.accept_label": "利用規約とプライバシーポリシーを読み、同意します",
  "terms.accept": "同意して続ける",
  "terms.decline": "同意せず終了",
- "api.terms_required": "続けるには利用規約とプライバシーポリシーに同意してください。"
+ "api.terms_required": "続けるには利用規約とプライバシーポリシーに同意してください。",
+ "share.text_head": "私の Clone Hero 統計（{name}、ランク {rank}）：",
+ "share.card_filter": "フィルター：{filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }

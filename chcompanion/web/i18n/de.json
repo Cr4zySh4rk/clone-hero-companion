@@ -1040,11 +1040,7 @@
  "share.err_write": "Das Bild konnte nicht gespeichert werden.",
  "share.card_player": "Spieler",
  "share.card_sub": "Meine Clone-Hero-Statistiken",
- "share.card_highlights": "Neueste Highlights",
- "share.card_none": "Spiele ein paar Songs, um Highlights zu sammeln",
- "share.text": "Meine Clone-Hero-Statistiken: Plays {plays} · Stunden {hours} · FCs {fcs} · Serie {streak} T.",
- "share.text_latest": "Zuletzt: {what}.",
- "share.text_end": "Erfasst mit Clone Hero Companion — cloneherocompanion.com",
+ "share.text_end": "Erfasst mit Clone Hero Companion: cloneherocompanion.com",
  "share.reddit_title": "Meine Clone-Hero-Statistiken",
  "profile.acc.fc": "Full Combo bei {name}",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1072,5 +1068,9 @@
  "terms.accept_label": "Ich habe die Nutzungsbedingungen und die Datenschutzerklärung gelesen und akzeptiere sie",
  "terms.accept": "Akzeptieren und fortfahren",
  "terms.decline": "Ablehnen und beenden",
- "api.terms_required": "Akzeptiere die Nutzungsbedingungen und die Datenschutzerklärung, um fortzufahren."
+ "api.terms_required": "Akzeptiere die Nutzungsbedingungen und die Datenschutzerklärung, um fortzufahren.",
+ "share.text_head": "Meine Clone-Hero-Statistiken ({name}, Rang {rank}):",
+ "share.card_filter": "Filter: {filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }

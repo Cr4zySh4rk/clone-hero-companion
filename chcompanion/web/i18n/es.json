@@ -1040,11 +1040,7 @@
  "share.err_write": "No se pudo guardar la imagen.",
  "share.card_player": "Jugador",
  "share.card_sub": "Mis estadísticas de Clone Hero",
- "share.card_highlights": "Logros recientes",
- "share.card_none": "Juega algunas canciones para conseguir logros",
- "share.text": "Mis estadísticas de Clone Hero: partidas {plays} · horas {hours} · FC {fcs} · racha {streak} d.",
- "share.text_latest": "Lo último: {what}.",
- "share.text_end": "Registrado con Clone Hero Companion — cloneherocompanion.com",
+ "share.text_end": "Registrado con Clone Hero Companion: cloneherocompanion.com",
  "share.reddit_title": "Mis estadísticas de Clone Hero",
  "profile.acc.fc": "Full combo en {name}",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1072,5 +1068,9 @@
  "terms.accept_label": "He leído y acepto los Términos de uso y la Política de privacidad",
  "terms.accept": "Aceptar y continuar",
  "terms.decline": "Rechazar y salir",
- "api.terms_required": "Acepta los Términos de uso y la Política de privacidad para continuar."
+ "api.terms_required": "Acepta los Términos de uso y la Política de privacidad para continuar.",
+ "share.text_head": "Mis estadísticas de Clone Hero ({name}, Nivel {rank}):",
+ "share.card_filter": "Filtro: {filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }

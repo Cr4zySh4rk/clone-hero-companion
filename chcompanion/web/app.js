@@ -1283,14 +1283,7 @@ async function renderFriendPage() {
 
 /* ================================================================ share your stats (card image + social buttons) */
 const SITE = "cloneherocompanion.com";
-const CARD_W = 1080, CARD_H = 1350;
-/* A highlight from /api/stats (catalog keys + raw vars) as translated { title, detail }. */
-function accText(a) {
-  const v = { ...(a.vars || {}) };
-  if (v.diff != null) v.diff = dn(v.diff);
-  if (v.inst != null) v.inst = inn(v.inst);
-  return { title: tr(a.title, v), detail: tr(a.detail, v) };
-}
+const CARD_W = 1080, CARD_H = 1350, CARD_TALL = 1920;
 /* Text drawn on the canvas always fits its box: shrink the font down to minPx, then cut with an ellipsis. */
 function fitText(ctx, text, maxW, px, weight, family, minPx = 0.6) {
   let size = px;
@@ -1317,18 +1310,52 @@ function loadAvatar(url) {
     img.src = url;
   });
 }
+/* Wrap `text` into at most `maxLines` lines of at most maxW px (word-wise; CJK and long words break by character); the last line gets an ellipsis if cut. */
+function wrapLines(ctx, text, maxW, maxLines) {
+  const words = String(text).split(/\s+/).filter(Boolean), lines = [];
+  let cur = "";
+  const push = (w) => {
+    const t = cur ? cur + " " + w : w;
+    if (ctx.measureText(t).width <= maxW) { cur = t; return; }
+    if (cur) { lines.push(cur); cur = ""; }
+    if (ctx.measureText(w).width <= maxW) { cur = w; return; }
+    for (const ch of Array.from(w)) {               // a word wider than the box: break by character
+      if (cur && ctx.measureText(cur + ch).width > maxW) { lines.push(cur); cur = ""; }
+      cur += ch;
+    }
+  };
+  words.forEach(push);
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    const rest = lines.splice(maxLines - 1).join(" ");
+    lines.push(rest);
+  }
+  return lines;
+}
 function drawStatsCard(canvas, c) {
   const ctx = canvas.getContext("2d"), css = getComputedStyle(document.documentElement);
   const col = (n, d) => css.getPropertyValue(n).trim() || d;
   const stage = col("--stage", "#160d2b"), panel = col("--panel", "#1e1338"), panel3 = col("--panel-3", "#352460"),
-    ink = col("--ink", "#f6f1e7"), dim = "rgba(246,241,231,.62)", spot = col("--spot", "#ffb52e"), spotInk = col("--spot-ink", "#241500");
+    ink = col("--ink", "#f6f1e7"), dim = "rgba(246,241,231,.64)", spot = col("--spot", "#ffb52e"), spotInk = col("--spot-ink", "#241500");
   const UI = col("--ui", "sans-serif"), DISP = col("--display", "sans-serif");
-  const M = 72, W = CARD_W, H = CARD_H;
+  const accent = (v) => { const m = /var\((--[\w-]+)\)/.exec(v || ""); return m ? col(m[1], spot) : spot; };
+  const M = 64, W = CARD_W, COLS = 3, GAP = 16, CW = (W - M * 2 - GAP * (COLS - 1)) / COLS, FOOT = 110;
+  // layout: header block, then the stat grid; the card is 1080x1350, or 1080x1920 (taller still for a very long list) when the stats would be cramped
+  const HEAD = 540, rows = Math.max(1, Math.ceil(c.stats.length / COLS)), IW = CW - 24 * 2 - 6;
+  ctx.font = `500 23px ${UI}`;
+  c.stats.forEach((k) => { k.lines = wrapLines(ctx, k.label, IW, 2); k.need = 104 + (k.lines.length - 1) * 27 + (k.sub ? 30 : 0) + 18; });
+  const rowH = Array.from({ length: rows }, (_, r) => Math.max(150, ...c.stats.slice(r * COLS, r * COLS + COLS).map((k) => k.need)));
+  const need = HEAD + rowH.reduce((a, b) => a + b, 0) + (rows - 1) * GAP + FOOT;
+  const H = need <= CARD_H ? CARD_H : Math.max(CARD_TALL, need);
+  const extra = Math.max(0, Math.min(40, Math.floor((H - need) / rows)));      // spare height is shared out, so the grid fills the card
+  const rowY = []; let acc = HEAD - 56;
+  rowH.forEach((h) => { rowY.push(acc); acc += h + extra + GAP; });
   canvas.width = W; canvas.height = H;
   ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
   ctx.fillStyle = stage; ctx.fillRect(0, 0, W, H);
-  const g = ctx.createLinearGradient(0, 0, 0, 420); g.addColorStop(0, panel3); g.addColorStop(1, stage);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 420);
+  const g = ctx.createLinearGradient(0, 0, 0, 460); g.addColorStop(0, panel3); g.addColorStop(1, stage);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 460);
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
   const text = (s, x, y, maxW, px, weight, family, color, align = "left") => {
     const t = fitText(ctx, s, maxW, px, weight, family);
     ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(t, x, y); ctx.textAlign = "left";
@@ -1336,66 +1363,79 @@ function drawStatsCard(canvas, c) {
   // brand: the five fret dots of the sidebar logo + the app name
   ["--green", "--red", "--yellow", "--blue", "--orange"].forEach((n, i) => {
     ctx.fillStyle = col(n, ["#3cc85a", "#e8413a", "#f2d23a", "#3a8ee8", "#f08a2a"][i]);
-    ctx.beginPath(); ctx.arc(M + 14 + i * 34, M + 8, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(M + 12 + i * 30, M + 4, 12, 0, Math.PI * 2); ctx.fill();
   });
-  text("Clone Hero Companion", M + 5 * 34 + 14, M + 22, W - M * 2 - 5 * 34 - 14, 46, 800, DISP, ink);
-  // identity
-  const R = 84, cx = M + R, cy = 270;
+  text("Clone Hero Companion", M + 5 * 30 + 12, M + 18, W - M * 2 - 5 * 30 - 12 - (c.filter ? 360 : 0), 40, 800, DISP, ink);
+  // identity: avatar, name, CH account line
+  const R = 70, cx = M + R, cy = 238;
   ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
   if (c.avatar) ctx.drawImage(c.avatar, cx - R, cy - R, R * 2, R * 2);
   else { ctx.fillStyle = panel3; ctx.fillRect(cx - R, cy - R, R * 2, R * 2); }
   ctx.restore();
+  ctx.strokeStyle = spot; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
   if (!c.avatar) {
-    ctx.fillStyle = spot; ctx.textAlign = "center"; ctx.font = `900 96px ${DISP}`;
-    ctx.fillText(Array.from(c.name || "?")[0].toUpperCase(), cx, cy + 32); ctx.textAlign = "left";
+    ctx.fillStyle = spot; ctx.textAlign = "center"; ctx.font = `900 80px ${DISP}`;
+    ctx.fillText(c.initial, cx, cy + 28); ctx.textAlign = "left";
   }
-  const tx = M + R * 2 + 36, tw = W - M - tx;
-  text(c.name, tx, cy + 6, tw, 84, 900, DISP, ink);
-  text(c.sub, tx, cy + 56, tw, 34, 500, UI, dim);
-  // headline tiles (2 x 2)
-  const gap = 24, tw2 = (W - M * 2 - gap) / 2, th = 190, ty0 = 410;
-  c.tiles.forEach((t, i) => {
-    const x = M + (i % 2) * (tw2 + gap), y = ty0 + Math.floor(i / 2) * (th + gap);
-    ctx.fillStyle = panel; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, tw2, th, 24); else ctx.rect(x, y, tw2, th); ctx.fill();
+  const tx = M + R * 2 + 32, tw = W - M - tx;
+  text(c.name, tx, cy - 2, tw, 72, 900, DISP, ink);
+  if (c.chLine) text(c.chLine, tx, cy + 48, tw, 32, 600, UI, c.verified ? spot : dim);
+  // rank + XP bar (same numbers as the Profile header)
+  const ry = 340;
+  rr(M, ry, W - M * 2, 120, 24); ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fill();
+  ctx.fillStyle = dim; ctx.font = `600 22px ${UI}`; ctx.textAlign = "center"; ctx.fillText(c.rankLabel.toUpperCase(), M + 80, ry + 44);
+  text(c.rankValue, M + 80, ry + 96, 120, 56, 900, DISP, spot, "center");
+  const bx = M + 176, bw = W - M - 36 - bx;
+  rr(bx, ry + 36, bw, 24, 12); ctx.fillStyle = "rgba(246,241,231,.14)"; ctx.fill();
+  if (c.pct > 0) { rr(bx, ry + 36, Math.max(24, bw * Math.min(1, c.pct)), 24, 12); ctx.fillStyle = spot; ctx.fill(); }
+  text(c.xpLine, bx, ry + 94, bw, 26, 500, UI, dim);
+  // active filter
+  if (c.filter) text(c.filter, W - M, M + 14, 340, 28, 700, UI, spot, "right");
+  // stat grid
+  c.stats.forEach((k, i) => {
+    const r = Math.floor(i / COLS), CH = rowH[r] + extra, x = M + (i % COLS) * (CW + GAP), y = rowY[r], a = accent(k.c), pad = 24, iw = IW;
+    rr(x, y, CW, CH, 20); ctx.fillStyle = panel; ctx.fill();
     ctx.strokeStyle = "rgba(246,241,231,.09)"; ctx.lineWidth = 2; ctx.stroke();
-    text(t.value, x + 32, y + 108, tw2 - 64, 100, 900, DISP, ink);
-    text(t.label, x + 32, y + 158, tw2 - 64, 34, 500, UI, dim);
-  });
-  // highlights
-  let y = ty0 + th * 2 + gap + 78;
-  text(c.accTitle, M, y, W - M * 2, 38, 800, DISP, spot);
-  y += 18;
-  const kindColor = { fc: "#3cc85a", five_star: "#f2d23a", pb: "#3a8ee8", streak: "#f08a2a", milestone: "#e8413a" };
-  if (!c.acc.length) text(c.accNone, M, y + 60, W - M * 2, 32, 500, UI, dim);
-  c.acc.slice(0, 3).forEach((a, i) => {
-    const ry = y + i * 108;
-    ctx.fillStyle = kindColor[a.kind] || spot; ctx.beginPath(); ctx.arc(M + 14, ry + 54, 14, 0, Math.PI * 2); ctx.fill();
-    text(a.title, M + 48, ry + 52, W - M * 2 - 48, 38, 700, UI, ink);
-    text(a.detail, M + 48, ry + 92, W - M * 2 - 48, 30, 500, UI, dim);
+    ctx.save(); rr(x, y, CW, CH, 20); ctx.clip(); ctx.fillStyle = a; ctx.fillRect(x, y, 6, CH); ctx.restore();
+    const vx = x + pad + 6;
+    text(k.value, vx, y + 66, iw, 58, 900, DISP, ink);
+    let ly = y + 104;
+    k.lines.forEach((ln) => { text(ln, vx, ly, iw, 23, 500, UI, dim); ly += 27; });
+    if (k.sub) text(k.sub, vx, ly + 3, iw, 20, 600, UI, a);
   });
   // footer
-  ctx.fillStyle = spot; ctx.fillRect(M, H - 100, W - M * 2, 3);
-  text(SITE, W / 2, H - 42, W - M * 2, 42, 700, UI, spot, "center");
+  ctx.fillStyle = spot; ctx.fillRect(M, H - 96, W - M * 2, 3);
+  text(SITE, W / 2, H - 38, W - M * 2, 40, 700, UI, spot, "center");
   void spotInk;
 }
-function shareData(d, cs) {
-  const T = d.totals, name = (cs && cs.signedIn && (cs.name || cs.email)) || tr("share.card_player");
+/* One object feeds both the card and the message: the Overview cards (overviewCards, same as the Profile tab), the header numbers, the text. */
+function shareData(d, cs, o) {
+  const R = d.rank || { rank: 1, xp: 0, lo: 0, hi: 500, pct: 0 };
+  const name = (cs && cs.signedIn && (cs.name || cs.email)) || tr("share.card_player");
   const inst = d.instrument ? inn(d.instrument) : "", diff = d.difficulty ? dn(d.difficulty) : "";
-  const acc = (d.accomplishments || []).map((a) => ({ kind: a.kind, ...accText(a) }));
-  const latest = acc[0] ? acc[0].title : "";
-  const text = [tr("share.text", { plays: nf(T.plays), hours: T.hours, fcs: nf(T.fcs), streak: T.streak }),
-    latest ? tr("share.text_latest", { what: latest }) : "", tr("share.text_end")].filter(Boolean).join(" ");
+  const filter = [inst, diff].filter(Boolean).join(" · ");
+  const stats = overviewCards(d, o.linked, false, o.filtered);
+  const chName = o.linked && d.ch ? d.ch.username || "" : "";
+  const lines = stats.map((k) => tr(k.rank ? "share.line_rank" : "share.line", { label: k.label, value: k.value, rank: nf(k.rank || 0) }));
+  const text = [tr("share.text_head", { name, rank: nf(R.rank) }), ...lines, tr("share.text_end")].join("\n");
+  // wa.me / Facebook cap the link length: the clipboard keeps the full text, the link carries the head, as many stat lines as fit (measured URL-encoded) and the site
+  const enc = (t) => encodeURIComponent(t).length;
+  const short = (max) => {
+    const head = tr("share.text_head", { name, rank: nf(R.rank) }), tail = tr("share.text_end"), keep = [head];
+    let n = enc(head) + enc(tail) + 6;
+    for (const ln of lines) { n += enc(ln) + 3; if (n > max) break; keep.push(ln); }
+    return [...keep, tail].join("\n");
+  };
   return {
-    name, avatarUrl: cs && cs.signedIn ? cs.avatar : "", acc, text,
-    sub: [inst, diff].filter(Boolean).join(" · ") || tr("share.card_sub"),
-    tiles: [{ value: nf(T.plays), label: tr("profile.tile.plays") }, { value: String(T.hours), label: tr("profile.tile.hours") },
-      { value: nf(T.fcs), label: tr("profile.tile.fcs") }, { value: String(T.streak), label: tr("profile.tile.streak") }],
-    accTitle: tr("share.card_highlights"), accNone: tr("share.card_none"),
+    name, initial: Array.from(name || "?")[0].toUpperCase(), avatarUrl: cs && cs.signedIn ? cs.avatar : "", text, short, stats, pct: R.pct,
+    filter: filter ? tr("share.card_filter", { filter }) : "", verified: !!chName,
+    chLine: chName ? tr("profile.ch_verified_as", { name: chName }) : tr("share.card_sub"),
+    rankLabel: tr("profile.rank"), rankValue: nf(R.rank), xpLine: tr("profile.xp_line", { have: nf(R.xp - R.lo), need: nf(R.hi - R.lo), next: nf(R.rank + 1) }),
   };
 }
-async function openShare(d, cs) {
+async function openShare(d, cs, o) {
   let dlg = $("#shareDlg"); const form = $("#shareForm");
-  const c = shareData(d, cs);
+  const c = shareData(d, cs, o);
   form.innerHTML = `<h2>${esc(tr("share.title"))}</h2>
     <div class="shareBox"><div class="sharePrev"><canvas id="shareCanvas" role="img" aria-label="${esc(tr("share.preview_alt"))}"></canvas></div>
       <div class="shareBtns" id="shareBtns"><p class="hint">${esc(tr("common.loading"))}</p></div></div>
@@ -1417,9 +1457,9 @@ async function openShare(d, cs) {
   };
   const open = (url) => api("/api/open", { url });
   const platforms = [
-    { id: "whatsapp", label: "WhatsApp", url: () => `https://wa.me/?text=${encodeURIComponent(c.text)}` },
+    { id: "whatsapp", label: "WhatsApp", url: () => `https://wa.me/?text=${encodeURIComponent(c.short(1800))}` },
     { id: "reddit", label: "Reddit", url: () => `https://www.reddit.com/submit?title=${encodeURIComponent(tr("share.reddit_title"))}&url=https://${SITE}` },
-    { id: "facebook", label: "Facebook", url: () => `https://www.facebook.com/sharer/sharer.php?u=https://${SITE}&quote=${encodeURIComponent(c.text)}` },
+    { id: "facebook", label: "Facebook", url: () => `https://www.facebook.com/sharer/sharer.php?u=https://${SITE}&quote=${encodeURIComponent(c.short(1500))}` },
     { id: "instagram", label: "Instagram", url: () => "https://www.instagram.com/", story: true },
     { id: "snapchat", label: "Snapchat", url: () => "https://www.snapchat.com/", story: true },
   ];
@@ -1465,6 +1505,36 @@ function openSong(it) {
     toast(tr("toast.not_in_library"), 3000);
   }
 }
+/* Profile helpers shared by the Overview tab and the share card, so both show exactly the same stats. */
+const PCOL = ["var(--green)", "var(--red)", "var(--yellow)", "var(--blue)", "var(--orange)"];
+const profDur = (s) => { const m = Math.round((s || 0) / 60); return m < 60 ? tr("profile.dur_min", { n: nf(m) }) : tr("profile.dur_h", { n: new Intl.NumberFormat(I18N.lang, { maximumFractionDigits: 1 }).format(s / 3600) }); };
+/* The Overview cards, in display order: [{ label, value, sub, rank, c }]. `rank` is the CH leaderboard rank (number) or null; `sub` is the sub-label shown under the value.
+   When a verified CH Leaderboards account is linked (and no filter is on) its values win; the app-only stats come from the app. */
+function overviewCards(d, linked, ro, filtered) {
+  const T = d.totals, A = d.account || null, AS = (A && A.stats) || {}, AR = (A && A.ranks) || {}, C = PCOL;
+  const useCh = linked && !!A && !filtered;
+  const rankOf = (...rkeys) => rkeys.map((k) => AR[k]).find((x) => typeof x === "number" && x > 0) || null;
+  const mk = (label, value, c, sub, rank) => ({ label: tr(label), value, c, rank: rank || null, sub: rank ? tr("profile.ch_rank", { n: nf(rank) }) : sub || "" });
+  const card = (chV, chLabel, appV, appLabel, c, ranks, appSub) => (useCh && typeof chV === "number" ? mk(chLabel, nf(chV), c, "", rankOf(...ranks)) : mk(appLabel, appV, c, appSub));
+  const chOnly = (v, label, c, ...ranks) => (useCh && typeof v === "number" ? mk(label, nf(v), c, "", rankOf(...ranks)) : null);
+  const hrs = typeof AS.totalTimePlayedMs === "number" ? Math.round(AS.totalTimePlayedMs / 3600000) : null;
+  const sc = T.starCounts || {};
+  return [
+    card(AS.totalFcs, "profile.tile.fcs", nf(T.fcs), "profile.tile.fcs", C[0], ["totalFcs"], tr("profile.sub.charts")),
+    chOnly(AS.totalPfcs, "profile.tile.pfcs", C[3], "totalPfcs"),
+    card(AS.totalScore, "profile.tile.score", nf(T.totalScore), "profile.tile.score", C[4], ["totalScore"]),
+    card(AS.songsPlayed, "profile.tile.songs", nf(T.songs), "profile.tile.songs", C[2], []),
+    card(hrs, "profile.tile.hours", profDur(T.seconds), "profile.tile.time", C[0], ["hoursPlayed"]),
+    ...(ro ? [] : [card(AS.notesHit, "profile.tile.notes", nf(T.notesHit), "profile.tile.notes", C[1], ["notesHit"])]),
+    chOnly(AS.totalStarsEarned, "profile.tile.stars_earned", C[2], "starsEarned", "totalStarsEarned"),
+    chOnly(AS.highestCombo, "profile.tile.combo", C[1]),
+    chOnly(A && A.submissionCount, "profile.tile.submissions", C[4], "submissions"),
+    mk("profile.tile.plays", nf(T.plays), C[1]), mk("profile.tile.accuracy", pct(T.avgAccuracy), C[3]),
+    mk("profile.tile.stars5", nf(sc[5] || 0), C[2], tr("profile.sub.best_charts")), mk("profile.tile.stars6", nf(sc[6] || 0), C[4], tr("profile.sub.gold")),
+    mk("profile.tile.stars7", nf(sc[7] || 0), C[1], tr("profile.sub.best_charts")),
+    mk("profile.tile.streak", nf(T.streak), C[4]), mk("profile.tile.longest", nf(T.longestStreak), C[2])].filter(Boolean);
+}
+
 /* The Profile view. opts.friendId shows that friend's shared stats read-only (no sign-in, CH account, share or edit controls). */
 async function loadProfile(opts = {}) {
   const body = $("#profileBody"), fid = opts.friendId || "", P = fid ? profF : prof;
@@ -1491,11 +1561,11 @@ function renderProfile(body, d, cs, fv, opts) {
   const T = d.totals, f = d.facets, H = d.heatmap, X = d.extras || {}, R = d.rank || { rank: 1, xp: 0, lo: 0, hi: 500, pct: 0 };
   const linked = !ro && !!(d.ch && d.ch.verified);      // only a CH account verified by a CH sign-in counts
   // The CH Leaderboards account exactly as its website shows it (stats and ranks verbatim); never merged into the app's own tiles.
-  const A = d.account || null, AS = (A && A.stats) || {}, AR = (A && A.ranks) || {};
-  const COL = ["var(--green)", "var(--red)", "var(--yellow)", "var(--blue)", "var(--orange)"];
+  const A = d.account || null, AS = (A && A.stats) || {};
+  const COL = PCOL;
   const stat = (label, value, c, sub) => `<div class="p-stat" style="--c:${c}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd>${sub ? `<span class="p-sub">${esc(sub)}</span>` : ""}</div>`;
   const grid = (items) => `<dl class="p-grid">${items.join("")}</dl>`;
-  const dur = (s) => { const m = Math.round((s || 0) / 60); return m < 60 ? tr("profile.dur_min", { n: nf(m) }) : tr("profile.dur_h", { n: new Intl.NumberFormat(I18N.lang, { maximumFractionDigits: 1 }).format(s / 3600) }); };
+  const dur = profDur;
   const nf1 = (v) => new Intl.NumberFormat(I18N.lang, { maximumFractionDigits: 1 }).format(v);
   const instName = (i) => (i === "unknown" ? tr("profile.inst_other") : inn(i));
   const songTitle = (p) => (p.artist ? p.artist + " – " : "") + (p.name || tr("profile.unknown_song"));
@@ -1508,37 +1578,17 @@ function renderProfile(body, d, cs, fv, opts) {
   // ---- CH Leaderboards: when linked (and no filter is active) its live values are the source for every stat it has
   const filtered = !!(P.inst || P.diff);
   const useCh = linked && !!A && !filtered;
-  const rankOf = (...rkeys) => rkeys.map((k) => AR[k]).find((x) => typeof x === "number" && x > 0);
   const chUrl = A && A.accountId != null ? `https://leaderboards.clonehero.net/users/${encodeURIComponent(A.accountId)}` : "";
   const chSince = A && A.createdAt && !isNaN(new Date(A.createdAt)) ? " · " + tr("profile.ch_since", { date: new Date(A.createdAt).toLocaleDateString(I18N.lang, { year: "numeric", month: "short", day: "numeric" }) }) : "";
   const asOf = A && typeof A.fetchedAt === "number" ? tr("profile.ch_asof", { time: new Date(A.fetchedAt * 1000).toLocaleTimeString(I18N.lang, { hour: "numeric", minute: "2-digit", second: "2-digit" }) }) : "";
   const chList = (rows, key, fmt, label) => (rows && rows.length ? `<p class="p-note"><b>${esc(tr(label))}:</b> ${rows.map((x) => esc(fmt(x[key]) + " (" + nf(x.plays) + ")")).join(" · ")}</p>` : "");
-  // One card per concept: the CH value (verbatim, with its "Rank #n") when CH is the source, else this app's own number.
-  const card = (chV, chLabel, appV, appLabel, c, ranks, appSub) => (useCh && typeof chV === "number"
-    ? stat(tr(chLabel), nf(chV), c, rankOf(...ranks) ? tr("profile.ch_rank", { n: nf(rankOf(...ranks)) }) : "")
-    : stat(tr(appLabel), appV, c, appSub));
-  const chOnly = (v, label, c, ...ranks) => (useCh && typeof v === "number" ? stat(tr(label), nf(v), c, rankOf(...ranks) ? tr("profile.ch_rank", { n: nf(rankOf(...ranks)) }) : "") : "");
-  const hrs = typeof AS.totalTimePlayedMs === "number" ? Math.round(AS.totalTimePlayedMs / 3600000) : null;
   const chNote = useCh ? [asOf].filter(Boolean).join(" · ") : linked && filtered ? tr("profile.filtered_note") : "";
 
   // ---- panels
   const none = !T.plays && !P.inst && !P.diff && !(useCh && AS.totalFcs != null);
   const overview = () => (none
     ? `<div class="p-empty"><h3>${esc(tr("profile.empty_title"))}</h3><p>${esc(tr("profile.empty_text"))}</p></div>`
-    : (chNote ? `<p class="p-note">${esc(chNote)}</p>` : "") + grid([
-        card(AS.totalFcs, "profile.tile.fcs", nf(T.fcs), "profile.tile.fcs", COL[0], ["totalFcs"], tr("profile.sub.charts")),
-        chOnly(AS.totalPfcs, "profile.tile.pfcs", COL[3], "totalPfcs"),
-        card(AS.totalScore, "profile.tile.score", nf(T.totalScore), "profile.tile.score", COL[4], ["totalScore"]),
-        card(AS.songsPlayed, "profile.tile.songs", nf(T.songs), "profile.tile.songs", COL[2], []),
-        card(hrs, "profile.tile.hours", dur(T.seconds), "profile.tile.time", COL[0], ["hoursPlayed"]),
-        ...(ro ? [] : [card(AS.notesHit, "profile.tile.notes", nf(T.notesHit), "profile.tile.notes", COL[1], ["notesHit"])]),
-        chOnly(AS.totalStarsEarned, "profile.tile.stars_earned", COL[2], "starsEarned", "totalStarsEarned"),
-        chOnly(AS.highestCombo, "profile.tile.combo", COL[1]),
-        chOnly(A && A.submissionCount, "profile.tile.submissions", COL[4], "submissions"),
-        stat(tr("profile.tile.plays"), nf(T.plays), COL[1]), stat(tr("profile.tile.accuracy"), pct(T.avgAccuracy), COL[3]),
-        stat(tr("profile.tile.stars5"), nf((T.starCounts || {})[5] || 0), COL[2], tr("profile.sub.best_charts")), stat(tr("profile.tile.stars6"), nf((T.starCounts || {})[6] || 0), COL[4], tr("profile.sub.gold")),
-        stat(tr("profile.tile.stars7"), nf((T.starCounts || {})[7] || 0), COL[1], tr("profile.sub.best_charts")),
-        stat(tr("profile.tile.streak"), nf(T.streak), COL[4]), stat(tr("profile.tile.longest"), nf(T.longestStreak), COL[2])].filter(Boolean))
+    : (chNote ? `<p class="p-note">${esc(chNote)}</p>` : "") + grid(overviewCards(d, linked, ro, filtered).map((k) => stat(k.label, k.value, k.c, k.sub)))
     ) + (!ro && !linked ? `<section class="p-link" id="chAcct"><h3 class="p-h">${esc(tr("profile.ch_account"))}</h3><div id="chBody"><p class="hint">${esc(tr("common.loading"))}</p></div></section>` : "");
   const performance = () => grid([
     stat(tr("profile.stat.five_or_gold"), nf(T.fiveStars), COL[2], tr("profile.sub.charts")),
@@ -1648,7 +1698,7 @@ function renderProfile(body, d, cs, fv, opts) {
   $("#pInst").onchange = (e) => { P.inst = e.target.value; reload(); };
   $("#pDiff").onchange = (e) => { P.diff = e.target.value; reload(); };
   if (ro) { $("#pBack").onclick = () => show("friends"); return; }
-  $("#pShare").onclick = () => openShare(d, cs);
+  $("#pShare").onclick = () => openShare(d, cs, { linked, filtered });
   if ($("#pUserBox")) bindUsernameBox($("#pUserBox"), () => loadProfile());
   if (cs.signedIn) {
     $("#pOut").onclick = signOut; $("#pSync").onclick = syncNow;

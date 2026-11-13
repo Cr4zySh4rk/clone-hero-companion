@@ -998,11 +998,7 @@
  "share.err_write": "이미지를 저장할 수 없습니다.",
  "share.card_player": "플레이어",
  "share.card_sub": "내 Clone Hero 통계",
- "share.card_highlights": "최근 하이라이트",
- "share.card_none": "곡을 플레이하면 하이라이트가 쌓입니다",
- "share.text": "내 Clone Hero 통계: 플레이 {plays}회 · {hours}시간 · FC {fcs} · 연속 {streak}일",
- "share.text_latest": "최근: {what}.",
- "share.text_end": "Clone Hero Companion으로 기록 — cloneherocompanion.com",
+ "share.text_end": "Clone Hero Companion으로 기록: cloneherocompanion.com",
  "share.reddit_title": "내 Clone Hero 통계",
  "profile.acc.fc": "{name} 풀 콤보",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1028,5 +1024,9 @@
  "terms.accept_label": "이용약관과 개인정보 처리방침을 읽었으며 동의합니다",
  "terms.accept": "동의하고 계속",
  "terms.decline": "거부하고 종료",
- "api.terms_required": "계속하려면 이용약관과 개인정보 처리방침에 동의해 주세요."
+ "api.terms_required": "계속하려면 이용약관과 개인정보 처리방침에 동의해 주세요.",
+ "share.text_head": "내 Clone Hero 통계 ({name}, 랭크 {rank}):",
+ "share.card_filter": "필터: {filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }

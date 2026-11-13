@@ -998,11 +998,7 @@
  "share.err_write": "无法保存图片。",
  "share.card_player": "玩家",
  "share.card_sub": "我的 Clone Hero 统计",
- "share.card_highlights": "近期亮点",
- "share.card_none": "多玩几首歌就能获得亮点",
- "share.text": "我的 Clone Hero 统计：游玩 {plays} 次 · {hours} 小时 · 全连 {fcs} · 连续 {streak} 天",
- "share.text_latest": "最新：{what}。",
- "share.text_end": "由 Clone Hero Companion 记录 — cloneherocompanion.com",
+ "share.text_end": "由 Clone Hero Companion 记录：cloneherocompanion.com",
  "share.reddit_title": "我的 Clone Hero 统计",
  "profile.acc.fc": "{name} 全连",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1028,5 +1024,9 @@
  "terms.accept_label": "我已阅读并接受使用条款和隐私政策",
  "terms.accept": "接受并继续",
  "terms.decline": "拒绝并退出",
- "api.terms_required": "请接受使用条款和隐私政策以继续。"
+ "api.terms_required": "请接受使用条款和隐私政策以继续。",
+ "share.text_head": "我的 Clone Hero 统计（{name}，等级 {rank}）：",
+ "share.card_filter": "筛选：{filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }

@@ -1124,11 +1124,7 @@
  "share.err_write": "Не удалось сохранить картинку.",
  "share.card_player": "Игрок",
  "share.card_sub": "Моя статистика Clone Hero",
- "share.card_highlights": "Последние достижения",
- "share.card_none": "Сыграйте несколько песен, чтобы получить достижения",
- "share.text": "Моя статистика Clone Hero: игр {plays} · часов {hours} · FC {fcs} · серия {streak} дн.",
- "share.text_latest": "Последнее: {what}.",
- "share.text_end": "Учёт ведётся в Clone Hero Companion — cloneherocompanion.com",
+ "share.text_end": "Учёт ведётся в Clone Hero Companion: cloneherocompanion.com",
  "share.reddit_title": "Моя статистика Clone Hero",
  "profile.acc.fc": "Фулл-комбо: {name}",
  "profile.acc.fc_detail": "{artist} · {diff} {inst}",
@@ -1160,5 +1156,9 @@
  "terms.accept_label": "Я прочитал(а) и принимаю Условия использования и политику конфиденциальности",
  "terms.accept": "Принять и продолжить",
  "terms.decline": "Отклонить и выйти",
- "api.terms_required": "Примите Условия использования и политику конфиденциальности, чтобы продолжить."
+ "api.terms_required": "Примите Условия использования и политику конфиденциальности, чтобы продолжить.",
+ "share.text_head": "Моя статистика Clone Hero ({name}, уровень {rank}):",
+ "share.card_filter": "Фильтр: {filter}",
+ "share.line": "• {label}: {value}",
+ "share.line_rank": "• {label}: {value} (#{rank})"
 }
