@@ -654,8 +654,16 @@ def _ydl_opts(clients=None, **extra) -> dict:
         opts["ffmpeg_location"] = ff
     if runtimes:
         opts["js_runtimes"] = runtimes
+    ea: dict = {}
     if clients:
-        opts["extractor_args"] = {"youtube": {"player_client": clients}}
+        ea["youtube"] = {"player_client": clients}
+    try:
+        from . import potserver
+        ea.update(potserver.extractor_args() or {})      # anonymous PO tokens (bgutil); None: as before
+    except Exception:
+        log.debug("PO token server unavailable", exc_info=True)
+    if ea:
+        opts["extractor_args"] = ea
     opts.update(extra)
     return opts
 

@@ -23,6 +23,8 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      CHC_NO_POT: "1"       # unit tests never start the PO token server (test_potserver.py builds its own)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -65,7 +67,7 @@ jobs:
           $PY -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip wheel
-          pip install pyinstaller delocate pillow "yt-dlp>=2026.8.19" yt-dlp-ejs certifi send2trash pywebview
+          pip install pyinstaller delocate pillow "yt-dlp>=2026.8.19" yt-dlp-ejs "bgutil-ytdlp-pot-provider==2.0.2" certifi send2trash pywebview
           # numpy has no universal2 wheel: fuse the arm64 and x86_64 wheels
           mkdir -p wheels/arm wheels/x86 wheels/fused
           pip download numpy==2.2.6 --no-deps --only-binary=:all: --platform macosx_11_0_arm64 -d wheels/arm
@@ -81,6 +83,7 @@ jobs:
           source venv/bin/activate
           python scripts/make_icon.py build/icon
           iconutil -c icns build/icon/icon.iconset -o build/icon/icon.icns
+          python scripts/stage_ytdlp_plugins.py
           pyinstaller --noconfirm --windowed --onedir --target-arch universal2 \
             --name "Clone Hero Companion" --icon build/icon/icon.icns \
             --osx-bundle-identifier com.cr4zysh4rk.clonehero-companion \
@@ -88,6 +91,10 @@ jobs:
             --add-binary "build/bin/ffmpeg:bin" \
             --add-binary "build/bin/deno:bin" \
             --add-data "packaging/licenses:licenses" \
+            --add-data "chcompanion/vendor/bgutil:chcompanion/vendor/bgutil" \
+            --add-data "build/ytdlp_plugins/yt_dlp_plugins:yt_dlp_plugins" \
+            --hidden-import yt_dlp.extractor.youtube.pot.provider --hidden-import yt_dlp.extractor.youtube.pot.utils \
+            --hidden-import yt_dlp.utils.traversal --hidden-import yt_dlp.networking.exceptions \
             --collect-data yt_dlp_ejs --hidden-import yt_dlp \
             --exclude-module tkinter run.py
           APP="dist/Clone Hero Companion.app"
@@ -116,6 +123,8 @@ jobs:
           grep -q "ffmpeg      : /" doctor.txt
           grep -q "^Languages   : 9 catalogs$" doctor.txt
           grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
+          grep -q "^PO tokens   : .*plugin loaded" doctor.txt
+          grep -q "^PO tokens   : .*server ok" doctor.txt
           grep -q "Contents/.*/bin/deno" doctor.txt
           (softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true)
           if arch -x86_64 true 2>/dev/null; then
@@ -174,11 +183,16 @@ jobs:
           mkdir -p build/bin
           python -c "import imageio_ffmpeg, shutil; shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), 'build/bin/ffmpeg.exe')"
           python scripts/fetch_deno.py windows build/bin/deno.exe
+          python scripts/stage_ytdlp_plugins.py
           pyinstaller --noconfirm --onedir --windowed --name CloneHeroCompanion --icon build/icon/icon.ico \
             --add-data "chcompanion/web:chcompanion/web" \
             --add-binary "build/bin/ffmpeg.exe:bin" \
             --add-binary "build/bin/deno.exe:bin" \
             --add-data "packaging/licenses:licenses" \
+            --add-data "chcompanion/vendor/bgutil:chcompanion/vendor/bgutil" \
+            --add-data "build/ytdlp_plugins/yt_dlp_plugins:yt_dlp_plugins" \
+            --hidden-import yt_dlp.extractor.youtube.pot.provider --hidden-import yt_dlp.extractor.youtube.pot.utils \
+            --hidden-import yt_dlp.utils.traversal --hidden-import yt_dlp.networking.exceptions \
             --collect-data yt_dlp_ejs --exclude-module imageio_ffmpeg \
             --hidden-import yt_dlp --exclude-module tkinter run.py
       - name: Authenticate for release signing
@@ -269,9 +283,14 @@ jobs:
           python scripts/fetch_deno.py linux build/bin/deno
           python scripts/make_icon.py build/icon
           # onedir (no per-launch unpacking); scripts/qt_excludes.py keeps unused Qt modules out of the bundle
+          python scripts/stage_ytdlp_plugins.py
           pyinstaller --noconfirm --onedir --console --name CloneHeroCompanion \
             --add-binary "build/bin/deno:bin" --add-data "packaging/licenses:licenses" \
             --add-data "chcompanion/web:chcompanion/web" --add-data "build/icons:icons" \
+            --add-data "chcompanion/vendor/bgutil:chcompanion/vendor/bgutil" \
+            --add-data "build/ytdlp_plugins/yt_dlp_plugins:yt_dlp_plugins" \
+            --hidden-import yt_dlp.extractor.youtube.pot.provider --hidden-import yt_dlp.extractor.youtube.pot.utils \
+            --hidden-import yt_dlp.utils.traversal --hidden-import yt_dlp.networking.exceptions \
             --collect-data yt_dlp_ejs --collect-binaries imageio_ffmpeg --collect-data imageio_ffmpeg \
             --hidden-import yt_dlp --hidden-import qtpy --hidden-import PySide6.QtWebEngineWidgets \
             --hidden-import PySide6.QtWebChannel --exclude-module tkinter $(python scripts/qt_excludes.py) run.py
@@ -300,6 +319,8 @@ jobs:
           grep -q "Songs       : 1" doctor.txt
           grep -q "^Languages   : 9 catalogs$" doctor.txt
           grep -Eq "^JS runtime  : deno [0-9.]+ \(bundled\)" doctor.txt
+          grep -q "^PO tokens   : .*plugin loaded" doctor.txt
+          grep -q "^PO tokens   : .*server ok" doctor.txt
           grep -q "^ffmpeg check: OK" doctor.txt
           grep -q "^ffmpeg media: OK" doctor.txt
           grep -q "^Window      : native (qt/xcb)" doctor.txt

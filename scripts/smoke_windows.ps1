@@ -72,6 +72,9 @@ foreach ($expected in @('Songs       : 1', 'ffmpeg check: OK', 'ffmpeg media: OK
 }
 # The bundled Deno must be the runtime in use, and it must run through the app's process helper.
 if ($text -notmatch '(?m)^JS runtime  : deno \d+\.\d+\.\d+ \(bundled\)') { throw 'Doctor did not report the bundled Deno' }
+# Anonymous PO tokens: the bgutil plugin is loaded and its bundled server answered under the bundled Deno.
+if ($text -notmatch '(?m)^PO tokens   : .*plugin loaded') { throw 'Doctor did not report the bgutil plugin' }
+if ($text -notmatch '(?m)^PO tokens   : .*server ok') { throw 'Doctor did not report the PO token server' }
 # Uninstall removes the program but must preserve the library and user settings.
 $settings = Join-Path $env:APPDATA 'CloneHeroCompanion\keep-settings.txt'
 Set-Content $settings 'Keep user settings'

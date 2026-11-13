@@ -181,6 +181,11 @@ def cmd_doctor(args) -> int:
     else:
         say(f"JS runtime  : none - {youtube.JS_HELP}")
     say(f"yt-dlp-ejs  : {youtube.ejs_status()}")
+    from . import potserver
+    try:
+        say(f"PO tokens   : {potserver.status_line()}")
+    finally:
+        potserver.stop()
     from . import ytupdate
     ai = ytupdate.active_info()
     say(f"yt-dlp ver  : {ai['version']} ({ai['source']})")
@@ -397,7 +402,8 @@ def cmd_run(args) -> int:
                 stop.wait(1)
         except KeyboardInterrupt:
             pass
-    from . import telemetry
+    from . import potserver, telemetry
+    potserver.stop()
     telemetry.shutdown()
     logging.info("Bye!")
     return 0

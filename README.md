@@ -274,6 +274,10 @@ The apps ship these third-party programs next to the Companion code (not used wh
 | [FFmpeg](https://ffmpeg.org) | static build from imageio-ffmpeg | LGPL/GPL, see ffmpeg.org/legal.html | video and audio conversion, lyric alignment |
 | [Deno](https://deno.com) | 2.9.5 (pinned, SHA-256 verified in `scripts/deno.lock.json`) | MIT, Copyright 2018-2026 the Deno authors; full text in `licenses/DENO-LICENSE.txt` inside the app and `packaging/licenses/DENO-LICENSE.txt` | the JavaScript runtime yt-dlp needs to solve YouTube's challenges |
 
+| [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) | 2.0.2 (yt-dlp plugin from PyPI, plus its server bundled as `chcompanion/vendor/bgutil/bgutil-server.js`, rebuilt with `scripts/build_bgutil.sh`) | GPL-3.0, full text in `chcompanion/vendor/bgutil/LICENSE`; the server file bundles its npm dependencies (see `NOTICE` there) | anonymous YouTube Proof-of-Origin (PO) tokens |
+
+**PO tokens.** YouTube wants a PO token with many video requests. On the first YouTube request Companion starts the bgutil server with the bundled Deno, on a random free port of `127.0.0.1` only (never reachable from the network), and yt-dlp asks it for tokens. Tokens are generated on your computer, the server only talks to YouTube and Google the way a browser does, and no account or browser cookies are involved. Deno gets only `--allow-net` and `--allow-env`. The server stops when Companion quits. If it cannot start, downloads simply continue without tokens; `doctor` prints a `PO tokens` line with the status. Set `CHC_NO_POT=1` to turn it off.
+
 Companion uses the bundled Deno first and your own Deno, Node or Bun only if it is missing. Deno's cache lives in the Companion settings folder (`DENO_DIR`), never in the install folder.
 
 ## License

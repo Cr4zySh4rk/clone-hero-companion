@@ -1,0 +1,9 @@
+bgutil-server.js is the server of bgutil-ytdlp-pot-provider 2.0.2
+(https://github.com/Brainicism/bgutil-ytdlp-pot-provider, tag 2.0.2, commit 26475e9d3665b972c4aeb83b4dbaafcf64b88438),
+Copyright (c) Brainicism and contributors, licensed under the GNU General Public License v3.0 (see LICENSE).
+
+It is bundled together with its npm dependencies (axios, bgutils-js, commander, express, jsdom, proxy-agent,
+youtubei.js and their dependencies, each under its own permissive license) into one minified ES module by
+scripts/build_bgutil.sh. Changes to upstream: none to its source. The optional native "canvas" module is left out,
+jsdom's default stylesheet is inlined, css-tree is taken from its CommonJS build, and jsdom's synchronous-XHR worker
+lookup is disabled. Companion app: it runs the file with Deno on 127.0.0.1 only.

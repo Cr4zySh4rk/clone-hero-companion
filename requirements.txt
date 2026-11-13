@@ -1,4 +1,5 @@
 yt-dlp[default]>=2026.8.19
+bgutil-ytdlp-pot-provider==2.0.2
 certifi
 numpy
 imageio-ffmpeg

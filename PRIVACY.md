@@ -20,6 +20,8 @@ Sharing is off by default. If you turn on sharing, all your friends can see your
 ## Other services the app talks to
 YouTube (through yt-dlp), lyrics providers, Chorus Encore, RhythmVerse and the public CH Leaderboards API, to find videos, lyrics, charts and public scores. Only search terms such as song titles are sent.
 
+**YouTube PO tokens.** To get HD video, the app runs a small local server (bgutil) that creates anonymous Proof-of-Origin tokens. It listens on `127.0.0.1` only and talks to YouTube and Google directly, the way a web browser does, without your account or cookies. Nothing about this goes to us.
+
 ## Anonymous usage statistics
 The app and this website count how they are used, so development can focus on what matters. It is anonymous.
 
