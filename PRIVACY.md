@@ -1,6 +1,6 @@
 # Privacy policy — Clone Hero Companion
 
-_Last updated: 11 November 2026_
+_Last updated: 13 November 2026_
 
 Clone Hero Companion runs on your own computer. Signing in is optional; everything except cloud sync works without an account.
 
@@ -8,7 +8,7 @@ Clone Hero Companion runs on your own computer. Signing in is optional; everythi
 - Your email address, and for Google sign-in your name and profile picture, used only to show who is signed in.
 - Your favourite songs (artist, title, charter, chart checksum and where the chart can be downloaded from).
 - Your play history read from Clone Hero's `scorestats.json` after each song: song, instrument, difficulty, score, stars, accuracy, notes hit and streak, the time played, and your computer's name.
-- An optional CH Leaderboards account link. You sign in on CH Leaderboards' own page; the server verifies it with CH, stores your CH account id, username and public profile, and ends the CH session. Your CH password and sign-in token are never stored.
+- An optional CH Leaderboards account link. You sign in on CH Leaderboards' own page; the server verifies it with CH, stores your CH account id, username and public profile, and does not keep your CH session. Your CH password is never stored, and our servers never store your CH sign-in token. The CH session itself is kept on your computer, in the system's secure storage (Keychain on macOS, Windows data protection on Windows, the Secret Service keyring on Linux, or a private file only you can read if there is none), not on our servers, so that Clone Hero can be launched signed in to your account, like the official launcher. You can turn this off in Profile. Unlinking, signing out of Companion, or the session expiring signs it out and deletes it.
 - A career snapshot on your profile row (your totals, star and full combo counts; the public stats and ranks of your verified CH Leaderboards account are stored separately by the server), uploaded by the app so the Career page can show them. Only your own account can read it.
 - A username and a short friend code, your friend requests, and, if you turn on sharing, your favourites and setlists as seen by your friends.
 

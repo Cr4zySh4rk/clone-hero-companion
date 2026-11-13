@@ -93,7 +93,15 @@ $("#nav").addEventListener("click", (e) => {
   if (b.dataset.view === "library" && st.filter !== viewFilter("library")) setFilter(viewFilter("library"));
   show(b.dataset.view);
 });
-$("#launchGame").onclick = async () => { try { await api("/api/game/launch", {}); toast(tr("toast.starting_game")); } catch (e) { toast(e.message, 4000); } };
+$("#launchGame").onclick = async () => {
+  try {
+    const r = await api("/api/game/launch", {}); toast(tr("toast.starting_game"));
+    if (r.needsSignIn) setTimeout(() => toast(`${tr("profile.launch_needs_signin")} · ${tr("profile.launch_resignin")}`, 9000, chResignIn), 1800);   // the game started; offer the sign-in
+  } catch (e) { toast(e.message, 4000); }
+};
+async function chResignIn() {
+  try { await api("/api/ch/start", {}); profTab = "ch"; show("profile"); } catch (e) { toast(e.message, 4500); }
+}
 
 /* ================================================================ library */
 const lib = { songs: [], byId: new Map(), version: -1 };
@@ -1703,15 +1711,24 @@ async function loadChAccount(signedIn) {
       return;
     }
     const note = st && ["failed", "expired", "cancelled"].includes(st.state) ? st.message : "";
+    if (base.linked) { if (note) toast(note, 4500); return loadChAccount(signedIn); }       // a re-sign-in that did not finish: back to the linked view
     box.innerHTML = signIn(note, base.unverifiedUsername); bind(render);
   };
   try {
-    const [p, st] = await Promise.all([api("/api/lb/profile"), api("/api/ch/status")]);
+    const [p, st, ls] = await Promise.all([api("/api/lb/profile"), api("/api/ch/status"), api("/api/ch/session").catch(() => ({}))]);
     base = p;
-    if (p.linked) {
+    if (p.linked && !["waiting", "pendingAccountCreation", "linking"].includes(st.state)) {
+      const sd = (ls.expires ? new Date(ls.expires * 1000) : null);
+      const when = sd && !isNaN(sd) ? sd.toLocaleDateString(I18N.lang, { year: "numeric", month: "long", day: "numeric" }) : "";
+      const launchState = ls.state === "ready" ? (when ? tr("profile.launch_ready", { name: ls.username || p.username || "", date: when }) : tr("profile.launch_ready_nodate", { name: ls.username || p.username || "" }))
+        : ls.state === "needs_signin" ? tr("profile.launch_needs_signin") : ls.state === "off" ? tr("profile.launch_off") : "";
       box.innerHTML = `<p class="hint"><b>${esc(tr("profile.ch_verified_as", { name: p.username || "" }))}</b>${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(tr("lb.open_on"))}</a>` : ""}</p>
-        <div class="d-row"><button id="chUnlink">${esc(tr("profile.unlink"))}</button></div>
+        <div class="row2"><span>${esc(tr("profile.launch_signed_in"))}</span><label class="inline"><input type="checkbox" id="chLaunchSw"${ls.state === "off" ? "" : " checked"}> <span>${esc(tr("profile.launch_signed_in_help"))}</span></label></div>
+        ${launchState ? `<p class="hint" id="chLaunchState">${esc(launchState)}</p>` : ""}
+        <div class="d-row">${ls.state === "needs_signin" ? `<button id="chSignIn" class="primary">${esc(tr("profile.launch_resignin"))}</button>` : ""}<button id="chUnlink">${esc(tr("profile.unlink"))}</button></div>
         ${(p.recent || []).length ? `<ul class="plist">${p.recent.map((r) => `<li class="static"><div class="t">${esc(r.name)}<small>${esc(r.artist)}</small></div><div class="v">${nf(r.score)}<small>${esc(dn(r.difficulty))} ${esc(inn(r.instrument))}${r.fc ? " · " + esc(tr("profile.fc")) : ""}</small></div></li>`).join("")}</ul>` : ""}`;
+      const sw = $("#chLaunchSw");
+      if (sw) sw.onchange = async () => { try { await api("/api/settings", { settings: { launch_signed_in: sw.checked } }); loadChAccount(signedIn); } catch (e) { toast(e.message, 4500); sw.checked = !sw.checked; } };
       return bind(render);
     }
     render(st);

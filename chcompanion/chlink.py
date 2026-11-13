@@ -4,20 +4,24 @@ Flow (all against https://api.clonehero.net):
   POST /v2/auth/start?clientType=launcher   -> {authRequestId, authorizationUrl}   (opened in the system browser)
   GET  /v2/auth/status?authRequestId=X       -> pending | pendingAccountCreation | complete | failed | expired
   POST /v2/auth/complete?authRequestId=X     -> {sessionToken, ...}
-The session token is handed straight to the `ch-link` Edge Function (which checks it with CH, stores the verified link
-and logs the CH session out). The token lives only in a local variable for those few seconds: it is never written to
-disk, to the settings, to the log, nor kept on any object.
+The session token is handed to the `ch-link` Edge Function with keepSession=true (which checks it with CH and stores
+the verified link, but leaves the CH session logged in). The app then keeps the token and its expiry ONLY in the
+operating system's secure storage (secrets.py), so Clone Hero can be launched signed in (`--lbsToken`), like the
+official launcher. It is never written to the settings, to the log, nor kept on any object; unlinking, signing out of
+Companion and expiry delete it (and unlinking / signing out also end the CH session).
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
+from datetime import datetime, timezone
 import time
 import urllib.error
 import urllib.request
 from typing import Callable
 
+from . import secrets
 from .i18n import _
 from .net import urlopen
 
@@ -25,6 +29,7 @@ log = logging.getLogger(__name__)
 
 API = "https://api.clonehero.net"
 UA = "CloneHeroCompanion"
+SECRET_NAME = "ch-session"
 POLL_S = 2.0
 TIMEOUT_S = 600.0
 
@@ -50,6 +55,65 @@ def _json(raw: bytes) -> dict:
     except ValueError:
         d = {}
     return d if isinstance(d, dict) else {}
+
+
+# ---------------------------------------------------------------- the kept CH session (OS secure storage only)
+def parse_expiry(v) -> float | None:
+    """sessionTokenExpirationDate (ISO 8601 text, or epoch seconds / milliseconds) -> epoch seconds, None if unknown."""
+    if v is None or v == "":
+        return None
+    try:
+        if isinstance(v, (int, float)) or (isinstance(v, str) and v.strip().replace(".", "", 1).isdigit()):
+            n = float(v)
+            return n / 1000.0 if n > 1e11 else n
+        d = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.timestamp()
+    except (ValueError, OverflowError):
+        return None
+
+
+def save_session(token: str, expires: float | None) -> bool:
+    return secrets.set(SECRET_NAME, json.dumps({"token": token, "expires": expires}))
+
+
+def forget_session() -> str | None:
+    """Delete the kept session; returns the token that was stored (so the caller can log it out), or None."""
+    tok = None
+    try:
+        raw = secrets.get(SECRET_NAME)
+        tok = (json.loads(raw) or {}).get("token") if raw else None
+    except (ValueError, AttributeError):
+        pass
+    secrets.delete(SECRET_NAME)
+    return tok if isinstance(tok, str) and tok else None
+
+
+def load_session(now: float | None = None) -> dict:
+    """{"token", "expires"} of a kept, unexpired session; {} when none. An expired one is deleted on the spot."""
+    try:
+        raw = secrets.get(SECRET_NAME)
+        d = json.loads(raw) if raw else {}
+    except ValueError:
+        d = {}
+    tok = d.get("token") if isinstance(d, dict) else None
+    if not isinstance(tok, str) or not tok:
+        return {}
+    exp = d.get("expires")
+    exp = float(exp) if isinstance(exp, (int, float)) else None
+    if exp is not None and exp <= (time.time() if now is None else now):
+        secrets.delete(SECRET_NAME)
+        return {}
+    return {"token": tok, "expires": exp}
+
+
+def ch_logout(token: str) -> None:
+    """End a CH session at CH (best effort; the token goes in a header only)."""
+    try:
+        _http("POST", f"{API}/v2/auth/logout", {"User-Agent": UA, "Authorization": f"Bearer {token}"}, None, timeout=8.0)
+    except ChLinkError:
+        pass
 
 
 class ChLink:
@@ -109,12 +173,26 @@ class ChLink:
 
     def unlink(self) -> None:
         """Remove the verified link (server first, so a failure leaves everything as it was) and forget it locally."""
+        kept = load_session().get("token")
         if self.app.cloud.signed_in:
-            status, data = self.app.cloud.call_function("ch-link", {"unlink": True})
+            body = {"unlink": True}
+            if kept:
+                body["sessionToken"] = kept                    # the server logs this CH session out
+            status, data = self.app.cloud.call_function("ch-link", body)
             if status >= 400:
                 raise ChLinkError(_("chlink.unlink_failed"))
+        elif kept:
+            ch_logout(kept)
+        kept = None
+        forget_session()
         self.app.set_ch_link("", 0, False)
         self._set("idle", "")
+
+    def discard_session(self, logout: bool = True) -> None:
+        """Companion sign-out: the kept CH session is deleted (and ended at CH). The link itself stays."""
+        tok = forget_session()
+        if tok and logout:
+            ch_logout(tok)
 
     @staticmethod
     def _failed(detail: str) -> str:
@@ -152,16 +230,24 @@ class ChLink:
 
     def _finish(self, rid: str):
         self._set("linking", _("chlink.linking"))
-        token = None
+        token, expires = None, None
         try:
             status, raw = self.http("POST", f"{API}/v2/auth/complete?authRequestId={rid}",
                                     {"User-Agent": UA, "Accept": "application/json"}, None)
-            token = _json(raw).get("sessionToken")
+            done = _json(raw)
+            token = done.get("sessionToken")
+            expires = parse_expiry(done.get("sessionTokenExpirationDate"))
             if status >= 400 or not token:
                 return self._set("failed", self._failed(""))
             if self._cancel.is_set():
                 return                                         # cancelled right now: never hand the token on
-            status, data = self.app.cloud.call_function("ch-link", {"sessionToken": token})
+            status, data = self.app.cloud.call_function("ch-link", {"sessionToken": token, "keepSession": True})
+            kept = False
+            if status < 400 and data.get("accountId") and data.get("sessionKept") is True:
+                # Only an up-to-date server leaves the CH session logged in; an older one answers without sessionKept.
+                kept = save_session(token, expires)
+                if not kept:
+                    log.info("The CH session could not be saved to the system's secure storage")
         finally:
             token = None                                       # the only copy goes out of scope
         if status == 401 and data.get("error") == "ch_session_invalid":
@@ -170,4 +256,5 @@ class ChLink:
             return self._set("failed", _("chlink.link_failed"))
         self.app.set_ch_link(str(data.get("username") or ""), int(data["accountId"]), True)
         self._set("done", _("chlink.done", name=data.get("username") or ""), username=data.get("username") or "",
-                  accountId=int(data["accountId"]), alsoLinkedElsewhere=bool(data.get("alsoLinkedElsewhere")))
+                  accountId=int(data["accountId"]), alsoLinkedElsewhere=bool(data.get("alsoLinkedElsewhere")),
+                  launchSignedIn=kept)

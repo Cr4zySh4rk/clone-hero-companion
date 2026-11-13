@@ -5,7 +5,9 @@ import logging
 import tempfile
 import threading
 import time
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from chcompanion import chlink
@@ -15,6 +17,8 @@ from chcompanion.cloud import Cloud
 from chcompanion.store import Store
 
 TOKEN = "SECRET-CH-SESSION-TOKEN-0123456789"
+EXPIRY_ISO = "2099-01-02T03:04:05.000Z"
+EXPIRY_TS = 4071006245.0
 SESSION = {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600, "user": {"id": "u1"}}
 
 
@@ -63,14 +67,15 @@ def ch_http(script, calls):
         if "/v2/auth/status" in url:
             return 200, json.dumps(script.pop(0) if len(script) > 1 else script[0]).encode()
         if "/v2/auth/complete" in url:
-            return 200, json.dumps({"sessionToken": TOKEN, "purpose": "launcher"}).encode()
+            return 200, json.dumps({"sessionToken": TOKEN, "purpose": "launcher", "sessionTokenExpirationDate": EXPIRY_ISO}).encode()
         return 404, b"{}"
     return http
 
 
 def link_ok(name, body):
     if name == "ch-link" and body.get("sessionToken") == TOKEN:
-        return 200, {"accountId": 83556, "username": "W4RL0CKM0NK3Y", "profile": {}, "alsoLinkedElsewhere": False}
+        return 200, {"accountId": 83556, "username": "W4RL0CKM0NK3Y", "profile": {}, "alsoLinkedElsewhere": False,
+                     "sessionKept": body.get("keepSession") is True}
     if name == "ch-link" and body.get("unlink"):
         return 200, {"unlinked": True}
     return 400, {"error": "bad"}
@@ -102,6 +107,13 @@ class ChLinkTests(unittest.TestCase):
         class H(logging.Handler):
             def emit(h, rec):
                 self.logs.append(rec.getMessage())
+        self.secret_store = {}                                       # the OS secure storage, in memory (never the real one)
+        fake = types.SimpleNamespace(get=lambda n: self.secret_store.get(n),
+                                     set=lambda n, v: self.secret_store.__setitem__(n, v) or True,
+                                     delete=lambda n: self.secret_store.pop(n, None) and None)
+        p = mock.patch.object(chlink, "secrets", fake)
+        p.start()
+        self.addCleanup(p.stop)
         self.handler = H(level=logging.DEBUG)
         logging.getLogger().addHandler(self.handler)
         self.old_level = logging.getLogger().level
@@ -191,7 +203,8 @@ class ChLinkTests(unittest.TestCase):
         cl.start()
         wait_for(cl, {"done"})
         cl.unlink()
-        self.assertEqual(app.fn_calls[-1], ("ch-link", {"unlink": True}))
+        self.assertEqual(app.fn_calls[-1], ("ch-link", {"unlink": True, "sessionToken": TOKEN}))   # the server logs the kept session out
+        self.assertEqual(self.secret_store, {})                                                    # and the local copy is deleted
         s = app.settings()
         self.assertEqual((s["ch_username"], s["ch_account_id"], s["ch_verified"]), ("", 0, False))
         self.assertEqual(app.ch_account_id(), 0)
@@ -209,6 +222,85 @@ class ChLinkTests(unittest.TestCase):
         app, cl, _ = self.make([{"status": "pending"}])
         app.update_settings({"ch_username": "typed", "ch_account_id": 5})       # saved before 2.7.0, never verified
         self.assertEqual(app.ch_account_id(), 0)
+
+    # ------------------------------------------------------------ 2.10.0: the kept session
+    def link(self, fn=link_ok):
+        app, cl, calls = self.make([{"status": "complete"}], fn=fn)
+        cl.start()
+        wait_for(cl, {"done", "failed"})
+        return app, cl, calls
+
+    def test_keepsession_is_requested_and_the_session_is_kept_only_in_secure_storage(self):
+        app, cl, _ = self.link()
+        self.assertEqual(app.fn_calls[0], ("ch-link", {"sessionToken": TOKEN, "keepSession": True}))
+        self.assertTrue(cl.status()["launchSignedIn"])
+        self.assertEqual(json.loads(self.secret_store[chlink.SECRET_NAME]), {"token": TOKEN, "expires": EXPIRY_TS})
+        self.assertEqual(chlink.load_session(now=1.0), {"token": TOKEN, "expires": EXPIRY_TS})
+        self.assertNotIn(TOKEN, files_text(self.tmp.name))
+        self.assertNotIn(TOKEN, "\n".join(self.logs))
+        self.assertNotIn(TOKEN, json.dumps(app.settings()) + json.dumps(cl.status()) + json.dumps(vars(cl), default=str))
+
+    def test_an_older_server_that_logged_the_session_out_stores_nothing(self):
+        app, cl, _ = self.link(fn=lambda n, b: (200, {"accountId": 83556, "username": "W4RL0CKM0NK3Y"}))     # no sessionKept
+        self.assertEqual(cl.status()["state"], "done")
+        self.assertFalse(cl.status()["launchSignedIn"])
+        self.assertEqual(self.secret_store, {})
+
+    def test_a_storage_failure_still_links_and_logs_no_token(self):
+        with mock.patch.object(chlink.secrets, "set", lambda n, v: False):
+            app, cl, _ = self.link()
+        self.assertEqual(cl.status()["state"], "done")
+        self.assertFalse(cl.status()["launchSignedIn"])
+        self.assertNotIn(TOKEN, "\n".join(self.logs))
+
+    def test_a_failed_link_keeps_nothing(self):
+        self.link(fn=lambda n, b: (401, {"error": "ch_session_invalid"}))
+        self.assertEqual(self.secret_store, {})
+
+    def test_expired_session_is_deleted_when_read(self):
+        chlink.save_session(TOKEN, 1000.0)
+        self.assertEqual(chlink.load_session(now=999.0)["token"], TOKEN)
+        self.assertEqual(chlink.load_session(now=1000.0), {})
+        self.assertEqual(self.secret_store, {})
+
+    def test_parse_expiry(self):
+        self.assertEqual(chlink.parse_expiry("2099-01-02T03:04:05Z"), EXPIRY_TS)
+        self.assertEqual(chlink.parse_expiry("2099-01-02T03:04:05+00:00"), EXPIRY_TS)
+        self.assertEqual(chlink.parse_expiry(EXPIRY_TS), EXPIRY_TS)
+        self.assertEqual(chlink.parse_expiry(int(EXPIRY_TS * 1000)), EXPIRY_TS)
+        self.assertIsNone(chlink.parse_expiry(None))
+        self.assertIsNone(chlink.parse_expiry("soon"))
+
+    def test_unlink_while_signed_out_of_companion_logs_out_directly_and_deletes(self):
+        app, cl, _ = self.link()
+        app.cloud.session = None
+        sent = []
+        with mock.patch.object(chlink, "_http", lambda m, u, h, b, timeout=20.0: sent.append((m, u, h.get("Authorization"))) or (200, b"{}")):
+            cl.unlink()
+        self.assertEqual(sent, [("POST", chlink.API + "/v2/auth/logout", "Bearer " + TOKEN)])
+        self.assertEqual(self.secret_store, {})
+        self.assertEqual(app.ch_account_id(), 0)
+
+    def test_failed_unlink_keeps_the_session(self):
+        app, cl, _ = self.link()
+        cl.app.cloud.http = lambda *a, **k: (500, b"{}")
+        with self.assertRaises(ChLinkError):
+            cl.unlink()
+        self.assertIn(chlink.SECRET_NAME, self.secret_store)
+
+    def test_companion_sign_out_ends_and_deletes_the_session_but_keeps_the_link(self):
+        app, cl, _ = self.link()
+        sent = []
+        with mock.patch.object(chlink, "_http", lambda m, u, h, b, timeout=20.0: sent.append((u, h.get("Authorization"))) or (200, b"{}")):
+            cl.discard_session()
+        self.assertEqual(sent, [(chlink.API + "/v2/auth/logout", "Bearer " + TOKEN)])
+        self.assertEqual(self.secret_store, {})
+        self.assertTrue(app.settings()["ch_verified"])
+        sent.clear()
+        with mock.patch.object(chlink, "_http", lambda *a, **k: sent.append(1) or (200, b"{}")):
+            cl.discard_session()                                          # nothing kept: no network call
+        self.assertEqual(sent, [])
+        self.assertNotIn(TOKEN, "\n".join(self.logs))
 
 
 if __name__ == "__main__":

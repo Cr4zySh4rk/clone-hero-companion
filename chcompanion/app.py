@@ -356,7 +356,7 @@ class Companion:
                 "auto_process_downloads": True, "download_subdir": "", "metadata_overwrite": False,
                 "replace_low_res": True, "game_path": "", "data_dir": "", "song_dirs": [],
                 "setup_done": False, "fav_setlist": True, "video_convert_asked": "",
-                "ch_username": "", "ch_account_id": 0, "ch_verified": False, "yt_cookies": "none", "yt_cookies_file": "",
+                "ch_username": "", "ch_account_id": 0, "ch_verified": False, "launch_signed_in": True, "yt_cookies": "none", "yt_cookies_file": "",
                 "language": "auto", "terms_version": 0, "accepted_at": ""}
 
     # ------------------------------------------------------------ videos that don't play everywhere
@@ -463,6 +463,21 @@ class Companion:
         """The VERIFIED CH Leaderboards account id (0 = none). A username saved before 2.7.0 without a CH sign-in does not count."""
         st = self.settings()
         return int(st.get("ch_account_id") or 0) if st.get("ch_verified") else 0
+
+    def ch_launch_session(self) -> dict:
+        """How Clone Hero would be launched: {"state": "unlinked" | "off" | "ready" | "needs_signin", "username", "expires", "token"}.
+        `token` is only present for "ready" and is for launch_game() alone: never log it or send it to the UI."""
+        st = self.settings()
+        if not self.ch_account_id():
+            return {"state": "unlinked"}
+        base = {"username": st.get("ch_username") or ""}
+        if not st.get("launch_signed_in", True):
+            return dict(base, state="off")
+        from . import chlink
+        sess = chlink.load_session()           # an expired session is deleted here
+        if not sess:
+            return dict(base, state="needs_signin")
+        return dict(base, state="ready", expires=sess["expires"], token=sess["token"])
 
     def refresh_ch_profile(self) -> None:
         """Fetch the verified CH Leaderboards profile live (Sync now): Profile uses it."""

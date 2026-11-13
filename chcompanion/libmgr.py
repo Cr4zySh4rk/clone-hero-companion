@@ -982,11 +982,24 @@ def find_game(data_dir: Path, configured: str | None = None) -> Path | None:
     return None
 
 
-def launch_game(path: Path):
+def launch_game(path: Path, lbs_token: str | None = None):
+    """Start Clone Hero. With `lbs_token` (a CH Leaderboards session) the game starts signed in (`--lbsToken <token>`,
+    like the official launcher). Always list arguments, never a shell. The token is visible to this user's other
+    processes in the game's command line, which is how the game takes it; it is never logged."""
+    extra = ["--lbsToken", lbs_token] if lbs_token else []
     if sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
+        if path.suffix == ".app":
+            subprocess.Popen(["open", "-a", str(path), "--args", *extra] if extra else ["open", str(path)])
+        elif extra:
+            subprocess.Popen([str(path), *extra], cwd=str(path.parent), start_new_session=True)
+        else:
+            subprocess.Popen(["open", str(path)])
     elif sys.platform == "win32":
-        os.startfile(str(path))  # type: ignore[attr-defined]
+        if extra:
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen([str(path), *extra], cwd=str(path.parent), creationflags=flags, close_fds=True)
+        else:
+            os.startfile(str(path))  # type: ignore[attr-defined]
     else:
-        subprocess.Popen([str(path)], cwd=str(path.parent), start_new_session=True)
+        subprocess.Popen([str(path), *extra], cwd=str(path.parent), start_new_session=True)
     time.sleep(0.1)

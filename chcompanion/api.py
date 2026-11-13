@@ -340,6 +340,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/logout" and method == "POST":
         c.cloud.logout()
+        c.chlink.discard_session()        # the kept CH session is ended and deleted with the Companion sign-out
         c.cloudsync.reset_account_state()
         c.friends.reset()
         return _json(h, c.cloudsync.status()) or True
@@ -397,6 +398,10 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
                 return _json(h, c.chlink.start()) or True
             if path == "/api/ch/cancel" and method == "POST":
                 return _json(h, c.chlink.cancel()) or True
+            if path == "/api/ch/session" and method == "GET":
+                sess = c.ch_launch_session()
+                sess.pop("token", None)                                       # never leaves the app
+                return _json(h, sess) or True
             if path == "/api/ch/unlink" and method == "POST":
                 c.chlink.unlink()
                 return _json(h, {"ok": True}) or True
@@ -548,9 +553,11 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         game = find_game(c.data_dir, c.settings().get("game_path"))
         if not game:
             return _json(h, {"error": _("api.game_not_found")}, 404) or True
-        launch_game(game)
+        sess = c.ch_launch_session()
+        launch_game(game, sess.get("token"))
         telemetry.event("launch_game")
-        return _json(h, {"ok": True}) or True
+        # A linked account whose kept session is gone or expired: the game still starts, the UI offers a new sign-in.
+        return _json(h, {"ok": True, "signedIn": sess["state"] == "ready", "needsSignIn": sess["state"] == "needs_signin"}) or True
     if path == "/api/share/save" and method == "POST":
         try:
             out = _save_share_image(c, body)

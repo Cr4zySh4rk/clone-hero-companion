@@ -61,6 +61,61 @@ Deno.test("valid CH session: returns the account and always logs out", async () 
   globalThis.fetch = realFetch;
 });
 
+Deno.test("keepSession: links, reports sessionKept, and does NOT log the CH session out", async () => {
+  mockFetch(); calls.length = 0; chMe = { ok: true, body: { accountId: 83556, username: "W4RL0CKM0NK3Y" } };
+  const { handler } = await import("./index.ts");
+  const r = await handler(new Request("https://x/ch-link", {
+    method: "POST", headers: { Authorization: "Bearer jwt" }, body: JSON.stringify({ sessionToken: "SECRET-TOKEN", keepSession: true }),
+  }));
+  assertEquals(r.status, 200);
+  const b = await r.json();
+  assertEquals(b.accountId, 83556);
+  assertEquals(b.sessionKept, true);
+  assertEquals(calls.some((c) => c.url.endsWith("/v1/account/@me") && c.auth === "Bearer SECRET-TOKEN"), true);
+  assertEquals(calls.some((c) => c.url.endsWith("/v2/auth/logout")), false);
+  assertEquals(JSON.stringify(b).includes("SECRET-TOKEN"), false);
+  globalThis.fetch = realFetch;
+});
+
+Deno.test("keepSession with an invalid CH session: 401, and the session is still logged out", async () => {
+  mockFetch(); calls.length = 0; chMe = { ok: false, body: {} as never };
+  const { handler } = await import("./index.ts");
+  const r = await handler(new Request("https://x/ch-link", {
+    method: "POST", headers: { Authorization: "Bearer jwt" }, body: JSON.stringify({ sessionToken: "SECRET-TOKEN", keepSession: true }),
+  }));
+  assertEquals(r.status, 401);
+  assertEquals(calls.some((c) => c.url.endsWith("/v2/auth/logout") && c.auth === "Bearer SECRET-TOKEN"), true);
+  globalThis.fetch = realFetch;
+});
+
+Deno.test("without keepSession the answer says sessionKept: false", async () => {
+  mockFetch(); calls.length = 0; chMe = { ok: true, body: { accountId: 83556, username: "W4RL0CKM0NK3Y" } };
+  const { handler } = await import("./index.ts");
+  const r = await handler(new Request("https://x/ch-link", {
+    method: "POST", headers: { Authorization: "Bearer jwt" }, body: JSON.stringify({ sessionToken: "SECRET-TOKEN" }),
+  }));
+  assertEquals((await r.json()).sessionKept, false);
+  globalThis.fetch = realFetch;
+});
+
+Deno.test("unlink with the kept sessionToken logs that CH session out; without it, no logout call", async () => {
+  const { handler } = await import("./index.ts");
+  mockFetch(); calls.length = 0;
+  let r = await handler(new Request("https://x/ch-link", {
+    method: "POST", headers: { Authorization: "Bearer jwt" }, body: JSON.stringify({ unlink: true, sessionToken: "SECRET-TOKEN" }),
+  }));
+  assertEquals(r.status, 200);
+  assertEquals((await r.json()).unlinked, true);
+  assertEquals(calls.some((c) => c.url.endsWith("/v2/auth/logout") && c.auth === "Bearer SECRET-TOKEN"), true);
+  calls.length = 0;
+  r = await handler(new Request("https://x/ch-link", {
+    method: "POST", headers: { Authorization: "Bearer jwt" }, body: JSON.stringify({ unlink: true }),
+  }));
+  assertEquals(r.status, 200);
+  assertEquals(calls.some((c) => c.url.endsWith("/v2/auth/logout")), false);
+  globalThis.fetch = realFetch;
+});
+
 Deno.test("no Authorization header: 401", async () => {
   mockFetch();
   const { handler } = await import("./index.ts");
