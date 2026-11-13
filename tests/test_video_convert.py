@@ -41,9 +41,9 @@ class EncodeArgs(unittest.TestCase):
         a = hwvideo.vp8_args(threads=4)
         self.assertEqual(a[a.index("-c:v") + 1], "libvpx")
         self.assertEqual(a[a.index("-threads") + 1], "4")
-        self.assertEqual(a[a.index("-deadline") + 1], "good")
-        self.assertEqual(a[a.index("-cpu-used") + 1], "5")
-        self.assertEqual(a[a.index("-slices") + 1], "4")      # token partitions: what lets libvpx VP8 use threads
+        self.assertEqual(a[a.index("-deadline") + 1], "realtime")   # 1.65x faster than good/5 at SSIM 0.972 vs 0.974
+        self.assertEqual(a[a.index("-cpu-used") + 1], "16")
+        self.assertEqual(a[a.index("-slices") + 1], "8")      # token partitions: what lets libvpx VP8 use threads
         self.assertEqual(a[a.index("-lag-in-frames") + 1], "0")
         self.assertEqual(a[a.index("-map") + 1], "0:v:0")      # video only, no audio
         vf = a[a.index("-vf") + 1]

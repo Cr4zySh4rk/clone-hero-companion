@@ -20,6 +20,26 @@ def gate(**kw):
     return g
 
 
+class AdaptivePacingTests(unittest.TestCase):
+    def test_fast_by_default_careful_after_a_limit(self):
+        import time as _t
+        g = youtube.RateGate()
+        self.assertEqual(g.gap, (4.0, 9.0))
+        self.assertEqual(g.current_gap(), (2.0, 5.0))
+        self.assertEqual(g.request_sleep(), youtube.REQUEST_SLEEP_FAST_S)
+        g.last_limit = {"at": _t.time() - 60}                  # YouTube limited us a minute ago
+        self.assertEqual(g.current_gap(), (4.0, 9.0))
+        self.assertEqual(g.request_sleep(), youtube.REQUEST_SLEEP_S)
+        g.last_limit = {"at": _t.time() - youtube.SLOW_FOR_S - 1}   # long ago: fast again
+        self.assertEqual(g.current_gap(), (2.0, 5.0))
+        g.strikes = 1                                           # a cool-down still counting down: careful
+        self.assertEqual(g.current_gap(), (4.0, 9.0))
+
+    def test_explicit_spacing_has_no_separate_fast_pace(self):
+        g = youtube.RateGate(spacing=0.0)
+        self.assertEqual(g.current_gap(), (0.0, 0.0))
+
+
 class PacingTests(unittest.TestCase):
     def test_gap_between_lookups_is_randomised_4_to_9(self):
         g = gate(rng=lambda a, b: (a, b) and 6.0)
@@ -35,7 +55,7 @@ class PacingTests(unittest.TestCase):
         g = gate(rng=lambda a, b: got.append((a, b)) or 4.0)
         with g.slot():
             pass
-        self.assertEqual(got, [(4.0, 9.0)])
+        self.assertEqual(got, [(2.0, 5.0)])   # the fast pace (no recent limit)
 
     def test_concurrency_is_one(self):
         g = youtube.RateGate(spacing=0.0)
@@ -81,7 +101,7 @@ class PacingTests(unittest.TestCase):
     def test_ydl_opts_sleep_between_requests(self):
         with mock.patch.object(youtube, "_find_tool", return_value=None), \
                 mock.patch.object(youtube, "hide_deno_console"):
-            self.assertEqual(youtube._ydl_opts()["sleep_interval_requests"], youtube.REQUEST_SLEEP_S)
+            self.assertEqual(youtube._ydl_opts()["sleep_interval_requests"], youtube.GATE.request_sleep())
         self.assertEqual(youtube.SEARCH_RESULTS, 5)
 
 

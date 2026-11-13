@@ -33,7 +33,9 @@ from .lyrics import clean_title
 log = logging.getLogger(__name__)
 
 MIN_SCORE = 4.0
-REQUEST_SLEEP_S = 1.5            # yt-dlp's own pause between requests inside one extraction
+REQUEST_SLEEP_S = 1.5            # yt-dlp's own pause between requests inside one extraction (careful pace)
+REQUEST_SLEEP_FAST_S = 0.5       # ... and at the normal, fast pace (2.10.3: the pauses were ~16 s of an 87 s song)
+SLOW_FOR_S = 6 * 3600            # after any sign of YouTube limiting, stay at the careful pace this long
 SEARCH_RESULTS = 5
 MIN_P = 640                      # HD floor: below this a video only counts as an SD fallback (see SD_CHOICES)
 SD_CHOICES = (480, 360)          # the lowest resolution the "use the best SD version" setting can accept
@@ -186,16 +188,22 @@ def classify_error(e: Exception, state: str | None = None, nformats: int = 0) ->
 
 # ------------------------------------------------------------------ rate gate
 class RateGate:
-    """Paces YouTube metadata lookups like one human client: one at a time, a random 4-9 s gap between
-    them, a soft hourly budget, and a global pause after a genuine limit (2, 5, 15, 30 min). Jobs wait
-    for the pause and retry (or defer just their video step); see ingame.prepare."""
+    """Paces YouTube metadata lookups like one human client: one at a time, a random gap between them, a soft
+    hourly budget, and a global pause after a genuine limit (2, 5, 15, 30 min). Jobs wait for the pause and
+    retry (or defer just their video step); see ingame.prepare.
+
+    Adaptive (2.10.3): a 2-5 s gap normally; the careful 4-9 s gap (and slower requests inside yt-dlp) for
+    SLOW_FOR_S after any limit, or while strikes remain."""
     BACKOFF = [120, 300, 900, 1800]
     HOUR = 3600.0
 
-    def __init__(self, concurrent: int = 1, spacing=(4.0, 9.0), budget: int = 60, rng=None):
+    def __init__(self, concurrent: int = 1, spacing=(4.0, 9.0), budget: int = 60, rng=None, fast_spacing=None):
         self.concurrent = concurrent
         self.sem = threading.BoundedSemaphore(concurrent)
         self.gap = (float(spacing), float(spacing)) if isinstance(spacing, (int, float)) else tuple(spacing)
+        if fast_spacing is None:          # explicit spacing (tests) means: no separate fast pace
+            fast_spacing = (2.0, 5.0) if self.gap == (4.0, 9.0) else self.gap
+        self.fast_gap = (float(fast_spacing), float(fast_spacing)) if isinstance(fast_spacing, (int, float)) else tuple(fast_spacing)
         self.budget = budget
         self.rng = rng or random.uniform
         self.lock = threading.Lock()
@@ -261,11 +269,22 @@ class RateGate:
                 progress(_("yt.pacing", time=f"{left // 60}:{left % 60:02d}"))
             self._sleep(min(left, 1.0))
 
+    def careful(self) -> bool:
+        """True while YouTube recently showed signs of limiting us: use the slower pace."""
+        lim = self.last_limit or {}
+        return bool(self.strikes) or (bool(lim.get("at")) and time.time() - float(lim["at"]) < SLOW_FOR_S)
+
+    def current_gap(self) -> tuple:
+        return self.gap if self.careful() else self.fast_gap
+
+    def request_sleep(self) -> float:
+        return REQUEST_SLEEP_S if self.careful() else REQUEST_SLEEP_FAST_S
+
     def _begin(self, video_id=None):
         """Called once the concurrency slot is held: budget, then a random gap since the last lookup."""
         self.wait_budget()
         with self.lock:
-            gap = self.last + self.rng(*self.gap) - time.time()
+            gap = self.last + self.rng(*self.current_gap()) - time.time()
         if gap > 0:
             self._sleep(gap)
         with self.lock:
@@ -658,7 +677,7 @@ def _ydl_opts(clients=None, **extra) -> dict:
             runtimes["quickjs" if rt == "qjs" else rt] = {"path": p}
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
             "retries": 5, "fragment_retries": 5, "noprogress": True,
-            "sleep_interval_requests": REQUEST_SLEEP_S}
+            "sleep_interval_requests": GATE.request_sleep()}
     opts.update(cookie_opts())
     # Frozen apps carry ffmpeg outside PATH (imageio also uses a versioned filename).
     # yt-dlp must use the same executable as alignment and video conversion. Note that with

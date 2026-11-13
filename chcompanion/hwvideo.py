@@ -25,11 +25,12 @@ from .process import run as run_process
 log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------- VP8 settings (CPU)
-# Measured on a 2-core box with a 720p30 H.264 test clip (see the 2.3.1 notes): `good`, cpu-used 5 with no
-# alt-ref/lag and token partitions (-slices, which is what makes libvpx VP8 use several threads in ffmpeg)
-# is the fastest setting whose quality stays at the old one.
+# Measured 2026-11-13 on a real 720p30 music video (60 s clip, 4 threads), same bitrate settings:
+#   good/cpu-used 5/4 slices      15.1 s   SSIM 0.974   (2.3.1 - 2.10.2)
+#   realtime/cpu-used 16/8 slices  9.2 s   SSIM 0.972   (now: 1.65x faster, same size, no visible change)
+# No alt-ref/lag; token partitions (-slices, max 8) are what let libvpx VP8 use several threads in ffmpeg.
 VP8_RATE = ("-b:v", "2500k", "-crf", "10")
-VP8_SPEED = ("-deadline", "good", "-cpu-used", "5", "-auto-alt-ref", "0", "-lag-in-frames", "0", "-slices", "4")
+VP8_SPEED = ("-deadline", "realtime", "-cpu-used", "16", "-auto-alt-ref", "0", "-lag-in-frames", "0", "-slices", "8")
 MAX_HEIGHT = 720          # larger sources are scaled down; the source frame rate is kept
 
 
