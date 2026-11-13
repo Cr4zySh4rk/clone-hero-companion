@@ -295,9 +295,52 @@ class StaleVerdictTests(unittest.TestCase):
         old = {"video_failed": True}                                   # recorded before 2.10.0: no rule stored
         self.assertFalse(ingame._failure_still_applies(old, {}, 360))
         self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 0}, {}, 360))
-        self.assertTrue(ingame._failure_still_applies(old, {}, 0))      # HD-only now: the old verdict stands
+        self.assertFalse(ingame._failure_still_applies(old, {}, 0))     # no rules recorded: older than MATCH_REV
 
     def test_verdicts_under_an_equal_or_more_lenient_rule_stand(self):
-        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360}, {"failed_sd_min": 360}, 360))
-        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360}, {}, 480))
-        self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 480}, {}, 360))  # stricter then
+        R = ingame.MATCH_REV
+        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360, "video_failed_rev": R}, {"failed_sd_min": 360, "failed_rev": R}, 360))
+        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360, "video_failed_rev": R}, {}, 480))
+        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 0, "video_failed_rev": R}, {}, 0))
+        self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 480, "video_failed_rev": R}, {}, 360))  # stricter then
+        self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 360, "video_failed_rev": R - 1}, {}, 360))  # older matching
+
+
+class VersionSuffixTests(unittest.TestCase):
+    """2.10.1 on the user's Mac: "Prayer In C - Robin Schulz Radio Edit" scored the official video -3 (< MIN_SCORE)."""
+
+    def song(self, name, secs=191):
+        from pathlib import Path
+        from chcompanion.library import Song
+        return Song(path=Path("/x"), is_sng=True, meta={"artist": "Lilly Wood and the Prick", "name": name, "song_length": str(secs * 1000)})
+
+    def test_release_version_suffixes_are_ignored_for_matching(self):
+        for raw, want in [("Prayer In C - Robin Schulz Radio Edit", "Prayer In C"), ("Hey Jude - Remastered 2015", "Hey Jude"),
+                          ("Song (Single Version)", "Song"), ("Song (Radio Edit)", "Song"), ("Song - 2011 Remaster", "Song"),
+                          ("Thunderstruck (Live)", "Thunderstruck (Live)"), ("Free Bird", "Free Bird")]:
+            self.assertEqual(youtube.match_name(raw), want, raw)
+
+    def test_official_remix_video_wins_for_a_remix_chart(self):
+        s = self.song("Prayer In C - Robin Schulz Radio Edit")
+        official = {"id": "fiore9Z5iUg", "title": "Lilly Wood & The Prick and Robin Schulz - Prayer In C (Robin Schulz Remix) (Official)",
+                    "channel": "Robin Schulz", "duration": 190}
+        lyrics = {"id": "vVcRSFzW_D8", "title": "Lilly Wood & The Prick - Prayer In C (Lyrics)", "channel": "Rachel Gardner", "duration": 190}
+        self.assertGreaterEqual(youtube.score_candidate(official, s), youtube.MIN_SCORE)
+        self.assertGreater(youtube.score_candidate(official, s), youtube.score_candidate(lyrics, s))
+
+    def test_remix_still_penalised_for_an_original_chart(self):
+        s = self.song("Prayer In C", 233)
+        remix = {"id": "r", "title": "Lilly Wood & The Prick - Prayer In C (Some DJ Remix)", "channel": "x", "duration": 233}
+        orig = {"id": "o", "title": "Lilly Wood & The Prick - Prayer In C (Official Video)", "channel": "x", "duration": 233}
+        self.assertLess(youtube.score_candidate(remix, s), youtube.score_candidate(orig, s))
+
+    def test_a_remembered_still_image_is_forgotten(self):
+        from unittest import mock
+        store = mock.Mock()
+        s = self.song("Prayer In C - Robin Schulz Radio Edit")
+        ingame._forget_still(store, s, "base", "Xin1tuov224", known="Xin1tuov224", chosen=None)
+        self.assertEqual(store.update_song.call_count, 2)
+        store.reset_mock()
+        ingame._forget_still(store, s, "base", "Xin1tuov224", known="Xin1tuov224", chosen="Xin1tuov224")   # the user picked it
+        ingame._forget_still(store, s, "base", "other", known="Xin1tuov224", chosen=None)
+        store.update_song.assert_not_called()

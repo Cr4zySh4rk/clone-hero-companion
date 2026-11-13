@@ -452,16 +452,34 @@ def base_key(song: Song) -> str:
 FAIL_MEMORY_S = 14 * 86400      # how long a real "no HD video" result is trusted
 
 
+# Bump when the video search/matching rules change, so "no video" verdicts made by older rules are searched again.
+# 2: release-version suffixes ignored when matching ("Prayer In C - Robin Schulz Radio Edit"), 2.10.2.
+MATCH_REV = 2
+
+
 def _remember_failure(store: Store, song: Song, bkey: str, why: str, sd_min: int = 0) -> None:
-    """Remember "no usable video" for a while, with the SD rule it was judged under (0 = HD only)."""
+    """Remember "no usable video" for a while, with the SD rule (0 = HD only) and matching rules it was judged under."""
     now = time.time()
-    store.update_song(song.key, video_failed=True, video_failed_at=now, video_failed_reason=why, video_failed_sd_min=sd_min)
-    store.update_song(bkey, failed=why, failed_at=now, failed_sd_min=sd_min)
+    store.update_song(song.key, video_failed=True, video_failed_at=now, video_failed_reason=why,
+                      video_failed_sd_min=sd_min, video_failed_rev=MATCH_REV)
+    store.update_song(bkey, failed=why, failed_at=now, failed_sd_min=sd_min, failed_rev=MATCH_REV)
+
+
+def _forget_still(store: Store, song: Song, bkey: str, cand: str, known: str | None, chosen: str | None) -> None:
+    """The video remembered for this song turned out to be a still image: forget it, so later searches don't keep
+    trying it first (2.10.1: a remembered square-frame upload stood in front of the official video)."""
+    if cand and cand == known and cand != chosen:
+        store.update_song(song.key, video_id=None, video_sd=None)
+        store.update_song(bkey, video_id=None, video_sd=None)
+        log.info("Forgot %s for %s: it's a still image", cand, song.display)
 
 
 def _failure_still_applies(info: dict, base: dict, sd_min: int) -> bool:
     """An earlier "no video" verdict only stands if it was judged under a rule at least as lenient as today's:
     verdicts from before SD fallback (2.10.0), or made at 480p when 360p is now allowed, are searched again."""
+    revs = [v for v in (info.get("video_failed_rev"), base.get("failed_rev")) if v is not None]
+    if not revs or any(int(v) < MATCH_REV for v in revs):
+        return False                   # judged by older search/matching rules: search again
     if not sd_min:
         return True
     judged = [v for v in (info.get("video_failed_sd_min"), base.get("failed_sd_min")) if v is not None]
@@ -571,6 +589,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
         except StillImage:
             log.info("Skipping %s for %s: the stream list says it's a still image (nothing downloaded)", cand, song.display)
             reasons.append(_("ingame.reason_still"))
+            _forget_still(store, song, bkey, cand, known, chosen)
             continue
         except BotDetected:
             # YouTube really is limiting us: every other candidate would be refused too. Stop, let the
@@ -595,6 +614,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
             log.info("Skipping %s for %s: it's a still image, not a music video", cand, song.display)
             reasons.append(_("ingame.reason_still"))
             p.unlink(missing_ok=True)
+            _forget_still(store, song, bkey, cand, known, chosen)
             continue
         path, vid, fmt = p, cand, f
         break
@@ -610,12 +630,15 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
             if looks_static(p):
                 reasons.append(_("ingame.reason_still"))
                 p.unlink(missing_ok=True)
+                _forget_still(store, song, bkey, cand, known, chosen)
             else:
                 path, vid, fmt = p, cand, f
         except BotDetected:
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise
-        except (NoHDVideo, StillImage):
+        except StillImage:
+            _forget_still(store, song, bkey, cand, known, chosen)
+        except NoHDVideo:
             pass
         except Exception as e:
             reasons.append(_("ingame.reason_failed", detail=str(e).strip()[:120] or type(e).__name__))

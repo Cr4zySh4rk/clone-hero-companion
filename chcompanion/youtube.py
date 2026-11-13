@@ -794,11 +794,33 @@ def still_reason(f: dict) -> str | None:
 
 
 # ------------------------------------------------------------------ search
+# A release-version suffix on a chart's song name ("Prayer In C - Robin Schulz Radio Edit", "Song - Remastered 2011",
+# "Song (Single Version)") is not in the music video's title, and made official videos score below MIN_SCORE (2.10.1).
+_VERSION_WORDS = (r"(?:radio\s+edit|single\s+edit|edit|remaster(?:ed)?(?:\s+\d{4})?|\d{4}\s+remaster(?:ed)?|"
+                  r"single\s+version|album\s+version|radio\s+version|original\s+mix|extended\s+mix|club\s+mix|"
+                  r"mono|stereo|explicit|clean(?:\s+version)?|remix)")
+_VERSION_DASH_RE = re.compile(r"\s+[-\u2013\u2014]\s+(?:[^-\u2013\u2014]*?\s)?" + _VERSION_WORDS + r"\b[^-\u2013\u2014]*$", re.I)
+_VERSION_PAREN_RE = re.compile(r"\s*[\(\[][^\)\]]*\b" + _VERSION_WORDS + r"\b[^\)\]]*[\)\]]", re.I)
+
+
+def match_name(name: str) -> str:
+    """The song name as a music video would title it: chart tags and release-version suffixes removed."""
+    s = clean_title(name)
+    for _ in range(2):
+        s = _VERSION_PAREN_RE.sub("", _VERSION_DASH_RE.sub("", s)).strip()
+    return s or clean_title(name)
+
+
+def is_version_of_remix(song_name: str) -> bool:
+    """The chart is itself an edit/remix ("- Robin Schulz Radio Edit"), so a "Remix" video can be the right one."""
+    return bool(re.search(r"\b(?:remix|edit|mix)\b", song_name or "", re.I))
+
+
 def score_candidate(entry: dict, song: Song) -> float:
     title = norm_key(entry.get("title") or "")
     chan = norm_key(entry.get("channel") or entry.get("uploader") or "")
     artist = norm_key(clean_title(song.artist))
-    name = norm_key(re.sub(r"\s*[\(\[].*?[\)\]]", "", clean_title(song.name))) or norm_key(song.name)
+    name = norm_key(re.sub(r"\s*[\(\[].*?[\)\]]", "", match_name(song.name))) or norm_key(song.name)
     full_name = norm_key(song.name)
     score = 0.0
     name_toks = [t for t in name.split() if t]
@@ -824,7 +846,8 @@ def score_candidate(entry: dict, song: Song) -> float:
     if "visualizer" in title or "visualiser" in title:
         score -= 2
     for w in BAD_WORDS:
-        if f" {w} " in f" {title} " and w not in full_name:
+        if f" {w} " in f" {title} " and w not in full_name \
+                and not (w in ("remix", "mix") and is_version_of_remix(song.name)):
             score -= 4
     if " live" in f" {title}" and "live" not in full_name:
         score -= 2
@@ -881,7 +904,7 @@ class YouTube:
     # -------------------------------------------------------------- search
     def search(self, song: Song, n: int = SEARCH_RESULTS) -> list[dict]:
         from yt_dlp import YoutubeDL
-        q = f"{clean_title(song.artist)} - {clean_title(song.name)} official music video"
+        q = f"{clean_title(song.artist)} - {match_name(song.name)} official music video"
         with self._lock:                     # one search per song per session (retries, other charts)
             hit = self._searches.get(norm_key(q))
             if hit and hit[0] > time.time():
