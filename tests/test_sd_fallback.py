@@ -286,3 +286,18 @@ class RealStreamListTests(unittest.TestCase):
     def test_real_music_videos_are_not_called_still(self):
         for vid in ("xqds0B_meys", "0xyxtzD54rM", "FVovq9TGBw0", "tMDFv5m18Pw", "n9h7hU6_VI4"):
             self.assertIsNone(youtube.still_reason(self.best(vid)), vid)
+
+
+class StaleVerdictTests(unittest.TestCase):
+    """2.10.0 on the user's Mac: songs judged "no HD video" by 2.9.x were not searched again for an SD version."""
+
+    def test_old_hd_only_verdicts_are_searched_again_when_sd_is_allowed(self):
+        old = {"video_failed": True}                                   # recorded before 2.10.0: no rule stored
+        self.assertFalse(ingame._failure_still_applies(old, {}, 360))
+        self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 0}, {}, 360))
+        self.assertTrue(ingame._failure_still_applies(old, {}, 0))      # HD-only now: the old verdict stands
+
+    def test_verdicts_under_an_equal_or_more_lenient_rule_stand(self):
+        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360}, {"failed_sd_min": 360}, 360))
+        self.assertTrue(ingame._failure_still_applies({"video_failed_sd_min": 360}, {}, 480))
+        self.assertFalse(ingame._failure_still_applies({"video_failed_sd_min": 480}, {}, 360))  # stricter then

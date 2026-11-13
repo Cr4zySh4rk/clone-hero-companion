@@ -452,10 +452,20 @@ def base_key(song: Song) -> str:
 FAIL_MEMORY_S = 14 * 86400      # how long a real "no HD video" result is trusted
 
 
-def _remember_failure(store: Store, song: Song, bkey: str, why: str) -> None:
+def _remember_failure(store: Store, song: Song, bkey: str, why: str, sd_min: int = 0) -> None:
+    """Remember "no usable video" for a while, with the SD rule it was judged under (0 = HD only)."""
     now = time.time()
-    store.update_song(song.key, video_failed=True, video_failed_at=now, video_failed_reason=why)
-    store.update_song(bkey, failed=why, failed_at=now)
+    store.update_song(song.key, video_failed=True, video_failed_at=now, video_failed_reason=why, video_failed_sd_min=sd_min)
+    store.update_song(bkey, failed=why, failed_at=now, failed_sd_min=sd_min)
+
+
+def _failure_still_applies(info: dict, base: dict, sd_min: int) -> bool:
+    """An earlier "no video" verdict only stands if it was judged under a rule at least as lenient as today's:
+    verdicts from before SD fallback (2.10.0), or made at 480p when 360p is now allowed, are searched again."""
+    if not sd_min:
+        return True
+    judged = [v for v in (info.get("video_failed_sd_min"), base.get("failed_sd_min")) if v is not None]
+    return bool(judged) and all(0 < int(v) <= sd_min for v in judged)
 
 
 def download_video(song: Song, yt: YouTube, store: Store, progress=None, force: bool = False,
@@ -495,7 +505,8 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
     known = None if force else (info.get("video_id") or base.get("video_id"))
     if not chosen and not known and not force:
         failed_at = max(float(info.get("video_failed_at") or 0), float(base.get("failed_at") or 0))
-        if (info.get("video_failed") or base.get("failed")) and time.time() - failed_at < FAIL_MEMORY_S:
+        if (info.get("video_failed") or base.get("failed")) and time.time() - failed_at < FAIL_MEMORY_S \
+                and _failure_still_applies(info, base, sd_min):
             why = base.get("failed") or info.get("video_failed_reason") or _("ingame.reason_earlier")
             raise InGameError(_("ingame.no_hd_cached", why=why))
     if chosen:
@@ -511,7 +522,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
         if known:                      # what this song (or another chart of it) got before
             order = [known] + [x for x in order if x != known][:3]
         if not order:
-            _remember_failure(store, song, bkey, _("ingame.reason_nomatch"))
+            _remember_failure(store, song, bkey, _("ingame.reason_nomatch"), sd_min)
             raise InGameError(_("ingame.no_match"))
     tmpdir = Path(tempfile.mkdtemp(prefix="chc-", dir=cache_dir()))
     made.append(tmpdir)
@@ -615,7 +626,7 @@ def _download_video(song: Song, yt: YouTube, store: Store, progress, force: bool
         if reasons and not transient_seen:
             # every candidate was really checked and rejected for its resolution: remember it for all
             # charts of the song (errors like "age-restricted" or "download failed" are not remembered)
-            _remember_failure(store, song, bkey, why)
+            _remember_failure(store, song, bkey, why, sd_min)
         raise InGameError(_("ingame.no_hd", why=why))
     res_now = int(fmt.get("res_class") or 0)
     sd = bool(res_now and res_now < MIN_HD)        # accepted below HD because no HD version exists
