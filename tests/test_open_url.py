@@ -104,3 +104,27 @@ class NoBrowserFallbackTests(unittest.TestCase):
             c2 = cloud.Cloud(session_path=Path(d) / "s2.json", open_browser=lambda url: True)
             c2.start_login(47823)
             self.assertTrue(c2.browser_opened)
+
+
+class HostEnvWithoutOrigTests(unittest.TestCase):
+    """Exactly what the 2.11.1 AppImage looked like on a desktop without its own LD_LIBRARY_PATH (captured by
+    running the released AppImage with a recording xdg-open): no LD_LIBRARY_PATH_ORIG at all."""
+
+    def test_bundle_entries_are_removed_when_there_is_no_orig(self):
+        bundle = "/tmp/.mount_CloneHeABC/usr/lib/CloneHeroCompanion/_internal"
+        env = {"LD_LIBRARY_PATH": bundle, "PATH": "/usr/bin", "_PYI_ARCHIVE_FILE": "/x", "_PYI_LINUX_PROCESS_NAME": "CloneHeroCompan"}
+        with mock.patch.object(process.sys, "platform", "linux"), mock.patch.object(process.sys, "frozen", True, create=True), \
+                mock.patch.object(process.sys, "_MEIPASS", bundle, create=True), mock.patch.dict(os.environ, env, clear=True):
+            h = process.host_env()
+            self.assertNotIn("LD_LIBRARY_PATH", h)
+            b = process._browser_env()
+            self.assertNotIn("LD_LIBRARY_PATH", b)
+            self.assertNotIn("_PYI_ARCHIVE_FILE", b)
+            self.assertNotIn("_PYI_LINUX_PROCESS_NAME", b)
+
+    def test_users_own_entries_are_kept(self):
+        bundle = "/tmp/.mount_x/usr/lib/CloneHeroCompanion/_internal"
+        with mock.patch.object(process.sys, "platform", "linux"), mock.patch.object(process.sys, "frozen", True, create=True), \
+                mock.patch.object(process.sys, "_MEIPASS", bundle, create=True), \
+                mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": bundle + ":/opt/cuda/lib64"}, clear=True):
+            self.assertEqual(process.host_env()["LD_LIBRARY_PATH"], "/opt/cuda/lib64")

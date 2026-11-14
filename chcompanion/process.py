@@ -21,18 +21,41 @@ class ToolStartError(RuntimeError):
     pass
 
 
+def _bundle_dirs() -> list[str]:
+    """Where this app's own files live (PyInstaller's _internal dir, the AppImage mount)."""
+    dirs = [getattr(sys, "_MEIPASS", None), os.path.dirname(sys.executable), os.environ.get("APPDIR")]
+    return [os.path.realpath(d) for d in dirs if d]
+
+
 def host_env() -> dict | None:
     """Linux AppImage/PyInstaller: the bundle's libraries are first on LD_LIBRARY_PATH. Programs of the host
-    (browser, notify-send, a system ffmpeg) must not load them, so give them the original environment.
-    None means "inherit as is" (every other platform, or running from source)."""
+    (browser, xdg-open, notify-send, a system ffmpeg, Clone Hero) must not load them, so give them the
+    original environment. None means "inherit as is" (every other platform, or running from source).
+
+    PyInstaller only saves LD_LIBRARY_PATH_ORIG when the variable existed before the app started; on a normal
+    desktop it doesn't, so the bundle's entries have to be removed from LD_LIBRARY_PATH itself (2.11.1:
+    Linux Mint, "Sign in" still opened no browser)."""
     if not (sys.platform.startswith("linux") and getattr(sys, "frozen", False)):
         return None
-    if "LD_LIBRARY_PATH_ORIG" not in os.environ:
-        return None
     env = dict(os.environ)
-    orig = env.pop("LD_LIBRARY_PATH_ORIG")
-    if orig:
-        env["LD_LIBRARY_PATH"] = orig
+    if "LD_LIBRARY_PATH_ORIG" in env:
+        orig = env.pop("LD_LIBRARY_PATH_ORIG")
+        if orig:
+            env["LD_LIBRARY_PATH"] = orig
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+        return env
+    bundle = _bundle_dirs()
+
+    def ours(entry: str) -> bool:
+        if not entry:
+            return True
+        real = os.path.realpath(entry)
+        return any(real == b or real.startswith(b + os.sep) for b in bundle)
+
+    keep = [e for e in env.get("LD_LIBRARY_PATH", "").split(os.pathsep) if not ours(e)]
+    if keep:
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(keep)
     else:
         env.pop("LD_LIBRARY_PATH", None)
     return env
@@ -42,7 +65,7 @@ def host_env() -> dict | None:
 _BUNDLE_ONLY_VARS = ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QTWEBENGINEPROCESS_PATH", "QTWEBENGINE_CHROMIUM_FLAGS",
                      "QTWEBENGINE_RESOURCES_PATH", "QTWEBENGINE_LOCALES_PATH", "QT_QPA_PLATFORM", "PYTHONHOME",
                      "PYTHONPATH", "SSL_CERT_FILE", "_MEIPASS2", "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
-                     "_PYI_PARENT_PROCESS_LEVEL")
+                     "_PYI_PARENT_PROCESS_LEVEL", "_PYI_LINUX_PROCESS_NAME")
 
 
 def _browser_env() -> dict | None:
