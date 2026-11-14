@@ -79,7 +79,7 @@ class TermsGateTests(unittest.TestCase):
         self.assertEqual(self.call("POST", "/api/offset", {"kind": "lyrics", "delta": 0.1})[0], 200)
 
     def test_open_only_allows_the_two_documents(self):
-        with mock.patch("webbrowser.open") as wb:
+        with mock.patch("chcompanion.process.open_url") as wb:
             self.assertEqual(self.call("POST", "/api/open", {"url": terms.URL_TERMS})[0], 200)
             self.assertEqual(self.call("POST", "/api/open", {"url": "https://cloneherocompanion.com/evil"})[0], 400)
         wb.assert_called_once_with(terms.URL_TERMS)

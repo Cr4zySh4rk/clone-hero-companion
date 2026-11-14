@@ -155,7 +155,13 @@ class ChLink:
             raise ChLinkError(_("chlink.start_failed"))
         self._cancel.clear()
         self._set("waiting", _("chlink.waiting"), url=url)
-        (self.open_url or self.app.cloud.open_browser)(url)
+        try:
+            opened = (self.open_url or self.app.cloud.open_browser)(url) is not False
+        except Exception as e:                       # noqa: BLE001
+            log.warning("Could not open the browser for CH sign-in: %s", e)
+            opened = False
+        if not opened:                               # show the link so it can be copied into a browser
+            self._set("waiting", _("chlink.waiting"), url=url, opened=False)
         t = threading.Thread(target=self._run, args=(str(rid),), daemon=True, name="ch-link")
         with self.lock:
             self._thread = t

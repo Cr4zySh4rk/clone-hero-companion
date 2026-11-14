@@ -1088,7 +1088,11 @@ function watchLogin() {
   }, 2000);
 }
 async function signIn() {
-  try { await api("/api/cloud/login", {}); toast(tr("toast.finish_google"), 5000); watchLogin(); } catch (e) { toast(e.message, 4500); }
+  try {
+    const r = await api("/api/cloud/login", {});
+    if (r && r.opened === false && r.url) showLinkDialog(r.url); else toast(tr("toast.finish_google"), 5000);
+    watchLogin();
+  } catch (e) { toast(e.message, 4500); }
 }
 async function signOut() { await api("/api/cloud/logout", {}); await loadCloud(); toast(tr("toast.signed_out")); if (currentView === "profile") loadProfile(); }
 async function syncNow() {
@@ -1437,6 +1441,27 @@ function shareData(d, cs, o) {
     rankLabel: tr("profile.rank"), rankValue: nf(R.rank), xpLine: tr("profile.xp_line", { have: nf(R.xp - R.lo), need: nf(R.hi - R.lo), next: nf(R.rank + 1) }),
   };
 }
+// No browser could be opened (seen on Linux): show the sign-in link so it can be copied into one.
+function linkBox(url) {
+  return `<p class="hint">${esc(tr("open.no_browser"))}</p><div class="d-row linkbox"><input class="linkurl" readonly value="${esc(url)}" aria-label="${esc(tr("open.copy_link"))}"><button type="button" class="copylink">${esc(tr("open.copy_link"))}</button></div>`;
+}
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest && ev.target.closest(".copylink");
+  if (!b) return;
+  const inp = b.parentElement.querySelector(".linkurl");
+  try { await navigator.clipboard.writeText(inp.value); toast(tr("open.copied")); }
+  catch (e) { inp.focus(); inp.select(); }
+});
+function showLinkDialog(url) {
+  const d = document.createElement("dialog");
+  d.className = "linkdialog";
+  d.innerHTML = `${linkBox(url)}<div class="d-row"><button type="button" class="closelink">${esc(tr("common.close"))}</button></div>`;
+  d.querySelector(".closelink").onclick = () => { d.close(); d.remove(); };
+  document.body.appendChild(d);
+  d.showModal();
+  const inp = d.querySelector(".linkurl"); inp.focus(); inp.select();
+}
+
 async function openShare(d, cs, o) {
   let dlg = $("#shareDlg"); const form = $("#shareForm");
   const c = shareData(d, cs, o);
@@ -1744,7 +1769,7 @@ async function loadChAccount(signedIn) {
   clearTimeout(chPoll);
   const box = $("#chBody"); if (!box) return;
   const done = () => { toast(tr("toast.linked")); profTab = "ch"; loadProfile(); };
-  const busy = (st) => `<p class="hint" role="status">${esc(st.message || "")}</p><div class="d-row"><button id="chCancel">${esc(tr("common.cancel"))}</button></div>`;
+  const busy = (st) => `<p class="hint" role="status">${esc(st.message || "")}</p>${st.url && st.opened === false ? linkBox(st.url) : ""}<div class="d-row"><button id="chCancel">${esc(tr("common.cancel"))}</button></div>`;
   const signIn = (note, name) => `${name ? `<p class="hint">${esc(name)} · ${esc(tr("profile.ch_unverified"))}</p>` : ""}${note ? `<p class="hint">${esc(note)}</p>` : ""}
     <div class="d-row"><button id="chSignIn" class="primary"${signedIn ? "" : " disabled"}>${esc(tr("profile.ch_signin"))}</button></div>
     ${signedIn ? "" : `<p class="hint">${esc(tr("chlink.need_companion"))}</p>`}<p class="lbnote">${esc(tr("profile.ch_signin_note"))}</p><p class="lbnote">${esc(tr("profile.ch_note"))}</p>`;

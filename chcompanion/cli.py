@@ -7,7 +7,6 @@ import signal
 import sys
 import threading
 import time
-import webbrowser
 
 from . import __version__, youtube
 from .app import Companion, serve
@@ -15,6 +14,7 @@ from . import ingame
 from .library import Library
 from .paths import config_dir, find_data_dir, read_settings, song_dirs
 from .store import Store
+from .process import open_url
 
 BANNER = r"""
   Clone Hero Companion {v} - music videos + sing-along lyrics for Clone Hero
@@ -338,7 +338,7 @@ def cmd_run(args) -> int:
             from .gui import run_window
             run_window(existing, threading.Event(), config_dir() / "window")
         elif not args.no_browser:
-            webbrowser.open(existing)
+            open_url(existing)
         return 0
     logging.info("Clone Hero data folder: %s", data_dir)
     lib.scan()
@@ -396,7 +396,7 @@ def cmd_run(args) -> int:
         first_run = not store.get("opened_once")
         if not args.no_browser and (args.open_browser or first_run):
             store.set("opened_once", True)
-            threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+            threading.Timer(0.8, lambda: open_url(url)).start()
         try:
             while not stop.is_set():
                 stop.wait(1)

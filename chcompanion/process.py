@@ -38,6 +38,56 @@ def host_env() -> dict | None:
     return env
 
 
+# Set by the bundle (PyInstaller, Qt WebEngine, our AppRun) for this app only; a browser must not inherit them.
+_BUNDLE_ONLY_VARS = ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QTWEBENGINEPROCESS_PATH", "QTWEBENGINE_CHROMIUM_FLAGS",
+                     "QTWEBENGINE_RESOURCES_PATH", "QTWEBENGINE_LOCALES_PATH", "QT_QPA_PLATFORM", "PYTHONHOME",
+                     "PYTHONPATH", "SSL_CERT_FILE", "_MEIPASS2", "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                     "_PYI_PARENT_PROCESS_LEVEL")
+
+
+def _browser_env() -> dict | None:
+    env = host_env()
+    if env is None and not (sys.platform.startswith("linux") and getattr(sys, "frozen", False)):
+        return None
+    env = dict(env if env is not None else os.environ)
+    for k in _BUNDLE_ONLY_VARS:
+        env.pop(k, None)
+    return env
+
+
+def open_url(url: str) -> bool:
+    """Open a web page in the user's default browser. Every "open in browser" in the app goes through here.
+
+    Linux: Python's webbrowser launches the browser with this process's environment, and in the AppImage that
+    means the bundle's Qt/OpenSSL libraries on LD_LIBRARY_PATH: the browser then fails to start and nothing
+    happens (2.11.0: "Sign in" opened no browser). So run the desktop's own opener with the host environment,
+    check it actually worked, and only then fall back to webbrowser."""
+    import logging
+    log = logging.getLogger(__name__)
+    if sys.platform.startswith("linux"):
+        env = _browser_env()
+        for cmd in (["xdg-open", url], ["gio", "open", url], ["kde-open5", url], ["kde-open", url],
+                    ["gnome-open", url], ["sensible-browser", url], ["x-www-browser", url]):
+            try:
+                p = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+            except (OSError, ValueError):
+                continue                       # not installed
+            try:
+                code = p.wait(3)
+            except subprocess.TimeoutExpired:
+                return True                    # still running: it is the browser itself (sensible-browser etc.)
+            if code == 0:
+                return True
+            log.info("%s could not open the link (exit %s); trying the next opener", cmd[0], code)
+    import webbrowser
+    try:
+        return bool(webbrowser.open(url))
+    except Exception as e:                     # noqa: BLE001
+        log.warning("Couldn't open %s in a browser: %s", url, e)
+        return False
+
+
 def _options(options: dict) -> dict:
     options = dict(options)
     if "env" not in options:

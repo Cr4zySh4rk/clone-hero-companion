@@ -126,6 +126,16 @@ class ChLinkTests(unittest.TestCase):
         cl = ChLink(app, http=ch_http(script, calls), sleep=lambda s: time.sleep(0.005))
         return app, cl, calls
 
+    def test_no_browser_opened_puts_the_link_in_the_status(self):
+        app = FakeApp(self.tmp.name, link_ok)
+        cl = ChLink(app, http=ch_http([{"status": "pending"}] * 50, []), sleep=lambda s: time.sleep(0.005),
+                    open_url=lambda url: False)
+        st = cl.start()
+        self.assertEqual(st["state"], "waiting")
+        self.assertIs(st.get("opened"), False)
+        self.assertIn("authRequestId=REQ1", st["url"])
+        cl.cancel()
+
     def test_pending_then_complete_links_and_never_stores_the_token(self):
         app, cl, calls = self.make([{"status": "pending"}, {"status": "pending"}, {"status": "complete"}])
         st = cl.start()

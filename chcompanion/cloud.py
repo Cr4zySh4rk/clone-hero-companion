@@ -18,7 +18,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -69,8 +68,10 @@ def song_key(artist: str, name: str, charter: str) -> str:
 
 class Cloud:
     def __init__(self, session_path: Path | None = None, http: Callable = _http,
-                 url: str = URL, key: str = PUBLISHABLE_KEY, open_browser: Callable[[str], object] = webbrowser.open):
+                 url: str = URL, key: str = PUBLISHABLE_KEY, open_browser: Callable[[str], object] | None = None):
         self.session_path = session_path or (config_dir() / "cloud_session.json")
+        if open_browser is None:
+            from .process import open_url as open_browser     # host environment on Linux (AppImage), see process.open_url
         self.http, self.url, self.key, self.open_browser = http, url.rstrip("/"), key, open_browser
         self.lock = threading.RLock()
         self._pending: dict | None = None      # {"verifier", "at"} while a login is in progress
@@ -129,8 +130,10 @@ class Cloud:
         q = urllib.parse.urlencode({"provider": "google", "redirect_to": redirect,
                                     "code_challenge": challenge, "code_challenge_method": "s256"})
         url = f"{self.url}/auth/v1/authorize?{q}"
+        self.browser_opened = False
         try:
-            self.open_browser(url)
+            r = self.open_browser(url)
+            self.browser_opened = r is not False      # process.open_url says False when nothing could open it
         except Exception as e:
             log.warning("Could not open the browser for sign-in: %s", e)
         return url

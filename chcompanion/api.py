@@ -323,7 +323,7 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         return _json(h, c.cloudsync.status()) or True
     if path == "/api/cloud/login" and method == "POST":
         url = c.cloud.start_login(h.server.server_address[1])
-        return _json(h, {"ok": True, "url": url}) or True
+        return _json(h, {"ok": True, "url": url, "opened": getattr(c.cloud, "browser_opened", True)}) or True
     if path in ("/api/cloud/email/send", "/api/cloud/email/verify", "/api/cloud/name") and method == "POST":
         from .cloud import CloudError
         try:
@@ -572,11 +572,11 @@ def handle(h, method: str, path: str, query: dict, body: dict) -> bool:
         url = str(body.get("url") or "")
         if url:        # an external link (the Share buttons) in the system browser; only the known share hosts
             import urllib.parse
-            import webbrowser
+            from .process import open_url
             u = urllib.parse.urlparse(url)
             if u.scheme != "https" or not (u.hostname in SHARE_HOSTS or url in (terms.URL_TERMS, terms.URL_PRIVACY)):
                 return _json(h, {"error": _("api.not_found")}, 400) or True
-            webbrowser.open(url)
+            open_url(url)
             return _json(h, {"ok": True}) or True
         target = Path(body.get("path") or c.data_dir)
         if target.exists():

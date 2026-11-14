@@ -214,7 +214,7 @@ class ShareApiTests(unittest.TestCase):
             rv.assert_not_called()
 
     def test_open_url_only_for_the_share_hosts(self):
-        with mock.patch("webbrowser.open") as wb:
+        with mock.patch("chcompanion.process.open_url") as wb:
             self.assertEqual(self.post("/api/open", {"url": "https://wa.me/?text=hi"}), ({"ok": True}, 200))
             wb.assert_called_once_with("https://wa.me/?text=hi")
             for bad in ("http://wa.me/", "https://evil.example/", "file:///etc/passwd", "javascript:alert(1)"):

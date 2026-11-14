@@ -9,10 +9,10 @@ import shutil
 import subprocess
 import sys
 import threading
-import webbrowser
 from pathlib import Path
 
 from . import process
+from .process import open_url
 
 log = logging.getLogger(__name__)
 TITLE = "Clone Hero Companion"
@@ -226,7 +226,7 @@ def open_extra_window(url: str, title: str = "Now Playing", fullscreen: bool = F
     if proc:
         _extra["procs"].append(proc)
         return "app-window"
-    webbrowser.open(url)
+    open_url(url)
     return "browser"
 
 
@@ -324,7 +324,7 @@ def run_window(url: str, quit_event: threading.Event, profile: Path, smoke: bool
     log.info("Native window unavailable (%s); using a browser window instead", reason)
     proc = _browser_app(url, profile)
     if proc is None:
-        webbrowser.open(url)
+        open_url(url)
         log.info("Opened %s in your browser. Close this window (or press Ctrl+C) to quit.", url)
         try:
             quit_event.wait()

@@ -97,7 +97,7 @@ class FallbackTests(unittest.TestCase):
         stop = threading.Event()
         stop.set()                              # the fallback loop returns at once
         with mock.patch.object(gui, "_browser_app", return_value=None) as app, \
-                mock.patch.object(gui.webbrowser, "open") as opened, \
+                mock.patch.object(gui, "open_url") as opened, \
                 mock.patch.object(gui, "_notice_once") as notice, \
                 mock.patch.dict(gui.os.environ, env or {}):
             gui.run_window("http://127.0.0.1:1/", stop, self.tmp, smoke=smoke)
